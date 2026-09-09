@@ -61,10 +61,11 @@ const ALLOWED_ORIGINS = new Set(
 async function denyReason(req: IncomingMessage, route: string): Promise<string | null> {
   const origin = req.headers.origin;
 
-  // The extension's Origin is chrome-extension://<id>, which can never be a
-  // page on a website, so the cross-site concern the Origin check exists for
-  // does not apply. Pin a specific id with CODETERM_EXT_ORIGIN if you want.
-  if (route === "/ext" && typeof origin === "string" && origin.startsWith("chrome-extension://")) {
+  // A chrome-extension:// origin can never be a page on a website, so the
+  // cross-site concern the Origin check exists for does not apply. This covers
+  // the /ext bridge and the side panel, which opens /ws from an extension page.
+  // Pin a specific id with CODETERM_EXT_ORIGIN.
+  if (typeof origin === "string" && origin.startsWith("chrome-extension://")) {
     const pinned = process.env.CODETERM_EXT_ORIGIN;
     if (pinned && origin !== pinned) return `extension ${origin} is not the pinned one`;
     return identityReason(req);

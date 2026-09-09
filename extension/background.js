@@ -5,6 +5,10 @@
  * traffic resets that timer, so a ping every 20s is what keeps this alive.
  */
 const DEFAULT_URL = "ws://devserver.tailnet-1234.ts.net:8123/ext";
+
+// Clicking the toolbar icon opens the Claude side panel. Settings moved to the
+// options page (right-click the icon -> Options), since the icon is taken.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 const PING_MS = 20_000;
 const RECONNECT_MS = 3_000;
 

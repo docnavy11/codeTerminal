@@ -71,6 +71,30 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## Chrome side panel
+
+The extension also ships the Claude session as a Chrome **side panel** — click
+the toolbar icon. It is the same `/ws` protocol as the web UI, so it is just
+another attached client: open both and they stay on the same conversation,
+live. It carries messages, approvals, questions, the mode selector and the
+status bar, but no terminal — a side panel is too narrow for one, and the
+shell stays in the web UI.
+
+`marked` and `DOMPurify` are bundled under `extension/vendor/` so the panel
+needs nothing from the network but the WebSocket.
+
+Because the panel runs on a `chrome-extension://` origin, the Origin check
+accepts that scheme on `/ws` as well as `/ext` — a `chrome-extension://` URL
+can never be a web page, so the cross-site concern does not apply. `whois`
+still does.
+
+Settings (server URL, on/off) moved to the options page: right-click the
+toolbar icon and choose Options, since the icon now opens the panel.
+
+Note: an unpacked extension gets a fresh id each time Chrome loads it from a
+new profile, so `CODETERM_EXT_ORIGIN` pinning needs the id from
+`chrome://extensions`.
+
 ## Chrome extension
 
 `extension/` is an unpacked MV3 extension that lets the agent read and drive
