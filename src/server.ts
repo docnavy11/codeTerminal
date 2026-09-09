@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { ClientEvent } from "./session.js";
 import { Manager } from "./conversation.js";
+import { BrowserBridge } from "./browser.js";
+import { setBridge } from "./session.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
 
@@ -22,6 +24,10 @@ if (HOST === "0.0.0.0" || HOST === "::") {
   process.exit(1);
 }
 mkdirSync(WORKSPACE, { recursive: true });
+
+// The Chrome extension dials in here; browser tools speak through it.
+const bridge = new BrowserBridge((line) => console.log(`[ext] ${line}`));
+setBridge(bridge);
 
 // Chats live on disk; only the active one has a running SDK session.
 const convo = new Manager(WORKSPACE, join(ROOT, "chats"));
@@ -52,14 +58,28 @@ const ALLOWED_ORIGINS = new Set(
  *   whois   — blocks any device that isn't your tailnet identity
  * Returns null when allowed, or a reason string when denied.
  */
-async function denyReason(req: IncomingMessage): Promise<string | null> {
+async function denyReason(req: IncomingMessage, route: string): Promise<string | null> {
   const origin = req.headers.origin;
+
+  // The extension's Origin is chrome-extension://<id>, which can never be a
+  // page on a website, so the cross-site concern the Origin check exists for
+  // does not apply. Pin a specific id with CODETERM_EXT_ORIGIN if you want.
+  if (route === "/ext" && typeof origin === "string" && origin.startsWith("chrome-extension://")) {
+    const pinned = process.env.CODETERM_EXT_ORIGIN;
+    if (pinned && origin !== pinned) return `extension ${origin} is not the pinned one`;
+    return identityReason(req);
+  }
   // Non-browser clients (curl, scripts) send no Origin. A browser always does,
   // so allowing absence costs nothing against the cross-site vector.
   if (typeof origin === "string" && !ALLOWED_ORIGINS.has(origin)) {
     return `origin ${origin}`;
   }
 
+  return identityReason(req);
+}
+
+/** whois half of the check, shared by every route. */
+async function identityReason(req: IncomingMessage): Promise<string | null> {
   const ip = normaliseIp(req.socket.remoteAddress ?? "");
   if (!ip) return "no peer address";
   if (isLoopback(ip)) return null; // same box — already has a shell
@@ -83,13 +103,13 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", async (req, socket, head) => {
   const route = new URL(req.url ?? "/", `http://${req.headers.host}`).pathname;
-  if (route !== "/ws" && route !== "/pty") {
+  if (route !== "/ws" && route !== "/pty" && route !== "/ext") {
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
     socket.destroy();
     return;
   }
 
-  const deny = await denyReason(req);
+  const deny = await denyReason(req, route);
   if (deny) {
     console.warn(`[deny] ${route} — ${deny}`);
     socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -99,6 +119,7 @@ server.on("upgrade", async (req, socket, head) => {
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     if (route === "/ws") attachAgent(ws);
+    else if (route === "/ext") bridge.attach(ws);
     else attachShell(ws);
   });
 });
@@ -196,5 +217,6 @@ server.listen(PORT, HOST, () => {
   console.log(`identity       ${SELF.dnsName} · tailnet user ${SELF.userId}`);
   console.log(`workspace      ${WORKSPACE}`);
   console.log(`shell          /pty — real PTY, NO approval gate`);
+  console.log(`browser        /ext — extension bridge, tools ungated`);
   console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
 });

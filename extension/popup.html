@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { width:270px; margin:0; padding:12px; background:#0f1115; color:#dfe3ec;
+         font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; }
+  h1 { font-size:12px; margin:0 0 10px; display:flex; align-items:center; gap:7px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#f07178; }
+  .dot.on { background:#7dcfa0; }
+  label { display:block; color:#8b93a7; font-size:10px; margin:10px 0 3px; }
+  input { width:100%; box-sizing:border-box; background:#161922; color:#dfe3ec;
+          border:1px solid #252a36; border-radius:4px; padding:5px 7px; font:inherit; }
+  .row { display:flex; align-items:center; gap:8px; margin-top:12px; }
+  button { flex:1; font:inherit; border:1px solid #252a36; background:#20242f; color:#dfe3ec;
+           padding:5px; border-radius:4px; cursor:pointer; }
+  button.off { border-color:#f07178; color:#f07178; }
+  button.on  { border-color:#7dcfa0; color:#7dcfa0; }
+  p { color:#8b93a7; font-size:10px; margin:10px 0 0; }
+</style>
+<h1><span class="dot" id="dot"></span><span id="state">checking…</span></h1>
+<label>server</label>
+<input id="url" spellcheck="false">
+<div class="row"><button id="toggle">…</button></div>
+<p id="note">Claude can read and drive every tab while this is on.</p>
+<script src="popup.js"></script>

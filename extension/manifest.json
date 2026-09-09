@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "code terminal bridge",
+  "version": "1.0.0",
+  "description": "Lets a code-terminal Claude session read and drive this browser.",
+  "permissions": ["tabs", "scripting", "storage", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "code terminal bridge" }
+}

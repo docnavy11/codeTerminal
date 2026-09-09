@@ -71,6 +71,45 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## Chrome extension
+
+`extension/` is an unpacked MV3 extension that lets the agent read and drive
+your real, logged-in browser. Load it via `chrome://extensions` -> Developer
+mode -> **Load unpacked** -> pick the `extension/` folder. Its popup shows the
+connection state, the server URL, and an on/off toggle.
+
+It dials out to `/ext`. The nine tools reach the agent as an in-process MCP
+server (`createSdkMcpServer`), so there is no separate process:
+
+    list_tabs  read_page  snapshot  navigate  click
+    fill       press      eval      screenshot
+
+**They are ungated by explicit choice.** Every one is in `allowedTools`, so
+none stops to ask - including `eval`, which runs arbitrary JavaScript in
+whatever tab you are logged into. Each call is still written to the
+transcript. To gate them instead, delete `BROWSER_TOOLS` from the
+`allowedTools` line in `src/session.ts` and they fall through to `canUseTool`
+like `Bash` does.
+
+Worth understanding before leaving it on: the agent reads untrusted web pages
+*and* holds your logged-in sessions *and* can act, with no confirmation step.
+A page can contain text addressed to the agent rather than to you. The
+extension's toggle is the off switch.
+
+MV3 note: service workers are evicted after ~30s idle, but since Chrome 116
+WebSocket traffic resets that timer - hence the 20s ping in `background.js`,
+plus a `chrome.alarms` backstop to reconnect if the worker was asleep when the
+socket died.
+
+Auth: the extension's `Origin` is `chrome-extension://<id>`, which can never be
+a website, so the Origin check does not apply to `/ext`; the `tailscale whois`
+check still does. Pin one extension with `CODETERM_EXT_ORIGIN`.
+
+Verified against a real Chrome with the extension loaded: `list_tabs` returned
+the live tab id, `read_page` its real text, `snapshot` its one link,
+`navigate` moved the tab, and `eval` both read `location.href` and mutated the
+live DOM.
+
 ## Chats
 
 Conversations are kept as one JSON file each under `chats/`, listed newest

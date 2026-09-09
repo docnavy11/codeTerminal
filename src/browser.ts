@@ -1,0 +1,75 @@
+import { randomUUID } from "node:crypto";
+import type { WebSocket } from "ws";
+
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
+
+/**
+ * Bridge to the Chrome extension. The extension dials in and holds one socket;
+ * the agent's tools send commands over it and await a matching reply.
+ *
+ * Only one extension is connected at a time — a second connection replaces the
+ * first, so reloading the extension doesn't leave a dead socket in place.
+ */
+export class BrowserBridge {
+  #ws: WebSocket | null = null;
+  #pending = new Map<string, Pending>();
+  #onLog: (line: string) => void;
+  #timeoutMs: number;
+
+  constructor(onLog: (line: string) => void, timeoutMs = 30_000) {
+    this.#onLog = onLog;
+    this.#timeoutMs = timeoutMs;
+  }
+
+  get connected(): boolean { return this.#ws?.readyState === 1; }
+
+  attach(ws: WebSocket): void {
+    this.#ws?.close(4000, "replaced by a newer extension connection");
+    this.#ws = ws;
+    this.#onLog("extension connected");
+
+    ws.on("message", (raw) => {
+      let msg: { id?: string; ok?: boolean; result?: unknown; error?: string; type?: string };
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
+      if (msg.type === "pong") return;                 // keepalive
+      if (!msg.id) return;
+      const p = this.#pending.get(msg.id);
+      if (!p) return;                                   // late reply after timeout
+      this.#pending.delete(msg.id);
+      clearTimeout(p.timer);
+      if (msg.ok) p.resolve(msg.result);
+      else p.reject(new Error(msg.error ?? "extension reported an unknown error"));
+    });
+
+    const drop = () => {
+      if (this.#ws !== ws) return;                      // already replaced
+      this.#ws = null;
+      this.#onLog("extension disconnected");
+      for (const [, p] of this.#pending) {
+        clearTimeout(p.timer);
+        p.reject(new Error("the extension disconnected mid-command"));
+      }
+      this.#pending.clear();
+    };
+    ws.on("close", drop);
+    ws.on("error", drop);
+  }
+
+  /** Send one command and await its reply. Rejects rather than hanging. */
+  send(action: string, params: Record<string, unknown>): Promise<unknown> {
+    if (!this.connected) {
+      return Promise.reject(new Error(
+        "No Chrome extension is connected. Load the extension in Chrome and check its toggle is on.",
+      ));
+    }
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`browser.${action} timed out after ${this.#timeoutMs}ms`));
+      }, this.#timeoutMs);
+      this.#pending.set(id, { resolve, reject, timer });
+      this.#ws!.send(JSON.stringify({ id, action, params }));
+    });
+  }
+}

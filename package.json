@@ -17,7 +17,8 @@
     "express": "^5.1.0",
     "marked": "^18.0.12",
     "node-pty": "^1.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.6.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
