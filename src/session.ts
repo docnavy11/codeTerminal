@@ -13,6 +13,9 @@ export type ClientEvent =
   | { kind: "mode"; mode: PermissionMode }
   | { kind: "commands"; commands: SlashCommand[] }
   | { kind: "local"; text: string }
+  | { kind: "chats"; chats: unknown[]; activeId: string }
+  | { kind: "cleared" }
+  | { kind: "replayed" }
   | { kind: "turn_end"; costUsd: number | null; isError: boolean; denials: number }
   | { kind: "error"; message: string };
 

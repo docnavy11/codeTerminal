@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { ClientEvent } from "./session.js";
-import { Conversation } from "./conversation.js";
+import { Manager } from "./conversation.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
 
@@ -23,8 +23,8 @@ if (HOST === "0.0.0.0" || HOST === "::") {
 }
 mkdirSync(WORKSPACE, { recursive: true });
 
-// One conversation, shared by every tab, outliving all of them.
-const convo = new Conversation(WORKSPACE, join(ROOT, "state.json"));
+// Chats live on disk; only the active one has a running SDK session.
+const convo = new Manager(WORKSPACE, join(ROOT, "chats"));
 await convo.boot();
 
 const resolved = await tailnetSelf();
@@ -141,8 +141,20 @@ function attachAgent(ws: WebSocket): void {
         session.interrupt().catch(() => {});
         return;
 
-      case "reset":
-        convo.reset().catch((e) => send({ kind: "error", message: String(e) }));
+      case "new":
+        convo.create().catch((e: unknown) => send({ kind: "error", message: String(e) }));
+        return;
+
+      case "open":
+        if (typeof msg.id === "string") {
+          convo.open(msg.id).catch((e: unknown) => send({ kind: "error", message: String(e) }));
+        }
+        return;
+
+      case "delete":
+        if (typeof msg.id === "string") {
+          convo.remove(msg.id).catch((e: unknown) => send({ kind: "error", message: String(e) }));
+        }
         return;
     }
   });

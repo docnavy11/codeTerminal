@@ -71,6 +71,21 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## Chats
+
+Conversations are kept as one JSON file each under `chats/`, listed newest
+first in the **Chats** picker. The title is the first thing you said. **New
+chat** starts a fresh one and keeps the current one; the ✕ deletes.
+
+Only the active chat has a running SDK session — each is a `claude` process,
+so keeping every past chat warm would be expensive. Opening an old one resumes
+it by its `sdkSessionId`, which rebuilds the model's context from the
+transcript on disk. Verified: two chats, switch away, switch back, and the
+model still recalled a word from the first one.
+
+Replay is bracketed by `cleared` … `replayed` so a client can tell history
+from live events.
+
 ## Permission modes
 
 The header dropdown maps to the SDK's `setPermissionMode`:

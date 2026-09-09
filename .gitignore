@@ -3,3 +3,4 @@ node_modules/
 workspace/
 sessions.json
 state.json
+chats/

@@ -14,24 +14,24 @@
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; overflow:hidden; }
   body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg);
-         font:14px/1.55 var(--mono); }
+         font:12px/1.5 var(--mono); }
 
   header { display:flex; align-items:center; gap:10px; padding:9px 14px;
            border-bottom:1px solid var(--line); background:var(--panel); flex-shrink:0; }
   header .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); }
   header .dot.on { background:var(--ok); }
-  header .meta { color:var(--dim); font-size:12px; margin-left:auto; }
-  header select { font:inherit; font-size:12px; background:#20242f; color:var(--fg);
+  header .meta { color:var(--dim); font-size:11px; margin-left:auto; }
+  header select { font:inherit; font-size:11px; background:#20242f; color:var(--fg);
                   border:1px solid var(--line); border-radius:4px; padding:3px 6px; }
   header select.hot { border-color:var(--bad); color:var(--bad); }
   header select.warm { border-color:var(--warn); color:var(--warn); }
-  button.small { font-size:12px; padding:3px 9px; }
+  button.small { font-size:11px; padding:3px 8px; }
 
   #split { flex:1; display:flex; min-height:0; }
   .pane { display:flex; flex-direction:column; min-width:0; min-height:0; }
   #left  { flex:1 1 50%; }
   #right { flex:1 1 50%; border-left:1px solid var(--line); background:#0b0d11; }
-  .pane-hd { padding:6px 12px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  .pane-hd { padding:5px 11px; font-size:10px; letter-spacing:.08em; text-transform:uppercase;
              color:var(--dim); border-bottom:1px solid var(--line); background:var(--panel); flex-shrink:0;
              display:flex; align-items:center; gap:8px; }
   .pane-hd .warn { color:var(--warn); text-transform:none; letter-spacing:0; margin-left:auto; font-size:11px; }
@@ -39,7 +39,7 @@
   #grip { width:5px; cursor:col-resize; background:var(--line); flex-shrink:0; }
   #grip:hover { background:var(--accent); }
 
-  #log { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:9px; }
+  #log { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:7px; }
   .msg { white-space:pre-wrap; word-break:break-word; }
   .user { color:var(--accent); border-left:2px solid var(--accent); padding-left:10px; }
 
@@ -61,18 +61,18 @@
   .md table { border-collapse:collapse; font-size:13px; }
   .md th, .md td { border:1px solid var(--line); padding:3px 8px; text-align:left; }
   .md th { background:var(--panel); }
-  .tool { color:var(--dim); font-size:12.5px; }
+  .tool { color:var(--dim); font-size:11px; }
   .tool b { color:var(--warn); font-weight:600; }
   .err  { color:var(--bad); }
-  .end  { color:var(--dim); font-size:12px; border-top:1px dashed var(--line); padding-top:5px; }
+  .end  { color:var(--dim); font-size:11px; border-top:1px dashed var(--line); padding-top:5px; }
   .card { border:1px solid var(--warn); border-radius:6px; padding:11px; background:#1c1a16; }
-  .card h4 { margin:0 0 7px; font-size:13px; color:var(--warn); }
+  .card h4 { margin:0 0 6px; font-size:11.5px; color:var(--warn); }
   .card pre { margin:0 0 9px; padding:8px; background:#0f1115; border-radius:4px;
-              max-height:220px; overflow:auto; font-size:12px; }
+              max-height:200px; overflow:auto; font-size:11px; }
   .card.done { opacity:.45; border-color:var(--line); }
 
   button { font:inherit; border:1px solid var(--line); background:#20242f; color:var(--fg);
-           padding:5px 13px; border-radius:4px; cursor:pointer; }
+           padding:4px 11px; border-radius:4px; cursor:pointer; }
   button:hover:not(:disabled) { border-color:var(--accent); }
   button:disabled { opacity:.4; cursor:default; }
   button.allow { border-color:var(--ok); color:var(--ok); }
@@ -84,6 +84,19 @@
              border-radius:4px; padding:8px 10px; font:inherit; min-height:40px; max-height:160px; }
   textarea:focus { outline:none; border-color:var(--accent); }
 
+  #chatlist { position:absolute; top:30px; width:400px; max-height:340px;
+              overflow-y:auto; background:var(--panel); border:1px solid var(--line);
+              border-radius:6px; display:none; z-index:30; box-shadow:0 8px 28px rgba(0,0,0,.5); }
+  #chatlist.open { display:block; }
+  #chatlist .row { padding:6px 10px; cursor:pointer; display:flex; gap:8px; align-items:baseline; }
+  #chatlist .row:hover { background:#20242f; }
+  #chatlist .row.active { border-left:2px solid var(--accent); }
+  #chatlist .row .t { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #chatlist .row .w { color:var(--dim); font-size:10px; flex-shrink:0; }
+  #chatlist .row .x { color:var(--dim); flex-shrink:0; padding:0 3px; }
+  #chatlist .row .x:hover { color:var(--bad); }
+  #chatlist .empty { padding:10px; color:var(--dim); font-size:11px; }
+
   #menu { position:absolute; bottom:100%; left:12px; right:12px; margin-bottom:6px;
           background:var(--panel); border:1px solid var(--line); border-radius:6px;
           max-height:260px; overflow-y:auto; display:none; z-index:20;
@@ -92,12 +105,12 @@
   #menu .item { padding:6px 11px; cursor:pointer; display:flex; gap:10px; align-items:baseline; }
   #menu .item.sel { background:#20242f; }
   #menu .item .n { color:var(--accent); flex-shrink:0; }
-  #menu .item .h { color:var(--warn); font-size:11px; flex-shrink:0; }
-  #menu .item .d { color:var(--dim); font-size:11.5px; overflow:hidden;
+  #menu .item .h { color:var(--warn); font-size:10px; flex-shrink:0; }
+  #menu .item .d { color:var(--dim); font-size:10.5px; overflow:hidden;
                    text-overflow:ellipsis; white-space:nowrap; }
   footer { position:relative; }
   .local { color:var(--dim); background:#12151c; border-left:2px solid var(--dim);
-           padding:7px 10px; white-space:pre-wrap; font-size:12.5px; border-radius:0 4px 4px 0; }
+           padding:6px 9px; white-space:pre-wrap; font-size:11px; border-radius:0 4px 4px 0; }
 
   #term { flex:1; min-height:0; padding:6px 0 0 8px; }
   .xterm-viewport::-webkit-scrollbar { width:9px; }
@@ -114,7 +127,9 @@
     <option value="plan">Plan only (no changes)</option>
     <option value="bypassPermissions">Never ask</option>
   </select>
+  <button id="chats" class="small">Chats ▾</button>
   <button id="reset" class="small">New chat</button>
+  <div id="chatlist"></div>
   <span class="meta" id="meta">connecting…</span>
 </header>
 
@@ -199,6 +214,9 @@ function connectAgent() {
       case "user": el("msg user", m.text); lastText = null; break;
       case "local": el("local", m.text); lastText = null; break;
       case "commands": COMMANDS = m.commands; break;
+      case "cleared": log.replaceChildren(); cost = 0; lastText = null; break;
+      case "replayed": setBusy(false); lastText = null; break;
+      case "chats": CHATS = m.chats; ACTIVE = m.activeId; renderChats(); break;
       case "mode":
         document.getElementById("mode").value = m.mode;
         modeSel.classList.toggle("hot", m.mode === "bypassPermissions");
@@ -360,17 +378,63 @@ modeSel.onchange = () => {
   agentWs?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
 };
 
+let CHATS = [], ACTIVE = null;
+const chatList = document.getElementById("chatlist");
+
+function ago(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function renderChats() {
+  if (!CHATS.length) {
+    chatList.replaceChildren(Object.assign(document.createElement("div"),
+      { className: "empty", textContent: "No saved chats yet." }));
+    return;
+  }
+  chatList.replaceChildren(...CHATS.map(c => {
+    const row = document.createElement("div");
+    row.className = "row" + (c.id === ACTIVE ? " active" : "");
+    const t = document.createElement("span"); t.className = "t"; t.textContent = c.title;
+    const w = document.createElement("span"); w.className = "w";
+    w.textContent = `${c.turns} turn${c.turns === 1 ? "" : "s"} · ${ago(c.updatedAt)}`;
+    const x = document.createElement("span"); x.className = "x"; x.textContent = "✕"; x.title = "Delete";
+    x.onclick = (e) => {
+      e.stopPropagation();
+      if (confirm(`Delete "${c.title}"?`)) agentWs?.send(JSON.stringify({ type: "delete", id: c.id }));
+    };
+    row.onclick = () => {
+      chatList.classList.remove("open");
+      if (c.id !== ACTIVE) agentWs?.send(JSON.stringify({ type: "open", id: c.id }));
+    };
+    row.append(t, w, x);
+    return row;
+  }));
+}
+
+document.getElementById("chats").onclick = (e) => {
+  e.stopPropagation();
+  // Anchor under the button rather than a guessed offset.
+  const b = e.currentTarget.getBoundingClientRect();
+  chatList.style.left = `${b.left}px`;
+  chatList.classList.toggle("open");
+};
+document.addEventListener("click", (e) => {
+  if (!chatList.contains(e.target)) chatList.classList.remove("open");
+});
+
 document.getElementById("reset").onclick = () => {
-  if (!confirm("Discard this conversation and start a new one?")) return;
-  log.replaceChildren();
-  cost = 0; lastText = null;
-  agentWs?.send(JSON.stringify({ type: "reset" }));
+  agentWs?.send(JSON.stringify({ type: "new" }));
+  chatList.classList.remove("open");
 };
 
 /* ---------------- shell pane ---------------- */
 const term = new Terminal({
   fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
-  fontSize: 13,
+  fontSize: 11,
   cursorBlink: true,
   scrollback: 10000,
   theme: {
