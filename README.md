@@ -71,6 +71,35 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## Permission modes
+
+The header dropdown maps to the SDK's `setPermissionMode`:
+
+| Mode | Behaviour |
+|---|---|
+| Ask before changes | `default` — the gate below |
+| Auto-accept edits | `acceptEdits` — writes go through, Bash still asks |
+| Classifier decides | `auto` — a model classifier approves/denies most calls |
+| Plan only | `plan` — no tool execution at all |
+| Never ask | `bypassPermissions` — nothing is checked |
+
+`bypassPermissions` is refused by the SDK unless the session was launched with
+`allowDangerouslySkipPermissions`, so it is gated behind `CODETERM_ALLOW_BYPASS=1`.
+When unset, the option is disabled in the UI rather than failing on selection.
+
+Enabling the capability does not weaken `default`. Measured, flag on, mode
+left at default:
+
+    gate_fired=true  file_created=false
+
+**"Never ask" does not survive a restart.** It is downgraded to `default` on
+boot, with a notice in the transcript. An unattended agent should not be
+re-armed by a process manager restarting the server.
+
+For "stop asking me about *this*", prefer the per-tool `Always allow` button
+on an approval card — it uses the SDK's own `updatedPermissions` suggestions
+and persists, without disarming everything else.
+
 ## The approval gate
 
 `canUseTool` is awaited by the SDK, so a turn genuinely blocks until you click.

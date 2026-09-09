@@ -131,7 +131,8 @@ function attachAgent(ws: WebSocket): void {
         return;
 
       case "mode":
-        if (msg.mode === "default" || msg.mode === "acceptEdits" || msg.mode === "bypassPermissions") {
+        if (msg.mode === "default" || msg.mode === "acceptEdits" || msg.mode === "auto" ||
+            msg.mode === "plan" || msg.mode === "dontAsk" || msg.mode === "bypassPermissions") {
           session.setMode(msg.mode).catch((e) => send({ kind: "error", message: String(e) }));
         }
         return;

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 /** What the browser receives. One flat, discriminated shape. */
 export type ClientEvent =
-  | { kind: "ready"; sessionId: string; model: string; workspace: string }
+  | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
   | { kind: "user"; text: string }
   | { kind: "text"; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown }
@@ -22,6 +22,13 @@ export type ClientEvent =
  * listed: they exfiltrate, so they go through the gate like Bash and Write.
  */
 const READ_ONLY = ["Read", "Glob", "Grep", "NotebookRead", "TodoWrite"];
+
+/**
+ * 'bypassPermissions' is refused at runtime unless the session was launched
+ * with allowDangerouslySkipPermissions. Off by default: it lets the agent run
+ * Bash and edit files with nobody watching.
+ */
+export const ALLOW_BYPASS = process.env.CODETERM_ALLOW_BYPASS === "1";
 
 /** Set CODETERM_ISOLATED=1 to run without your personal skills and CLAUDE.md. */
 const SETTING_SOURCES: ("user" | "project" | "local")[] =
@@ -85,6 +92,7 @@ export class Session {
         settingSources: SETTING_SOURCES,
         allowedTools: READ_ONLY,
         permissionMode: this.#mode,
+        allowDangerouslySkipPermissions: ALLOW_BYPASS,
         canUseTool: this.#canUseTool,
         ...(resumeId ? { resume: resumeId } : {}),
       },
@@ -141,9 +149,20 @@ export class Session {
   }
 
   async setMode(mode: PermissionMode): Promise<void> {
-    this.#mode = mode;
-    await this.#query?.setPermissionMode(mode);
-    this.#emit({ kind: "mode", mode });
+    if (mode === "bypassPermissions" && !ALLOW_BYPASS) {
+      this.#emit({ kind: "error", message: "\"Never ask\" is disabled. Set CODETERM_ALLOW_BYPASS=1 in .env and restart to enable it." });
+      this.#emit({ kind: "mode", mode: this.#mode });   // snap the UI back
+      return;
+    }
+    const previous = this.#mode;
+    try {
+      await this.#query?.setPermissionMode(mode);
+      this.#mode = mode;
+      this.#emit({ kind: "mode", mode });
+    } catch (err) {
+      this.#emit({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+      this.#emit({ kind: "mode", mode: previous });
+    }
   }
 
   send(text: string): void {
@@ -187,7 +206,7 @@ export class Session {
           for (const c of (msg as { terminal_slash_commands?: string[] }).terminal_slash_commands ?? []) {
             this.#hidden.add(c);
           }
-          this.#emit({ kind: "ready", sessionId: msg.session_id, model: msg.model, workspace: this.#workspace });
+          this.#emit({ kind: "ready", sessionId: msg.session_id, model: msg.model, workspace: this.#workspace, canBypass: ALLOW_BYPASS });
           void this.#publishCommands();
         } else if (msg.subtype === "commands_changed") {
           // The SDK says to REPLACE the cached list, not merge.

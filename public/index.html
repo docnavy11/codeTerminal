@@ -24,6 +24,7 @@
   header select { font:inherit; font-size:12px; background:#20242f; color:var(--fg);
                   border:1px solid var(--line); border-radius:4px; padding:3px 6px; }
   header select.hot { border-color:var(--bad); color:var(--bad); }
+  header select.warm { border-color:var(--warn); color:var(--warn); }
   button.small { font-size:12px; padding:3px 9px; }
 
   #split { flex:1; display:flex; min-height:0; }
@@ -109,6 +110,8 @@
   <select id="mode" title="How much you want to be asked">
     <option value="default">Ask before changes</option>
     <option value="acceptEdits">Auto-accept edits</option>
+    <option value="auto">Classifier decides</option>
+    <option value="plan">Plan only (no changes)</option>
     <option value="bypassPermissions">Never ask</option>
   </select>
   <button id="reset" class="small">New chat</button>
@@ -147,6 +150,7 @@ const url = (path) => `${wsBase}${path}`;
 
 /* ---------------- claude pane ---------------- */
 const log = document.getElementById("log");
+const modeSel = document.getElementById("mode");
 const box = document.getElementById("box");
 const dot = document.getElementById("dot");
 const meta = document.getElementById("meta");
@@ -185,13 +189,20 @@ function connectAgent() {
   agentWs.onmessage = ({ data }) => {
     const m = JSON.parse(data);
     switch (m.kind) {
-      case "ready": meta.textContent = `${m.model} · ${m.workspace}`; break;
+      case "ready": {
+        meta.textContent = `${m.model} · ${m.workspace}`;
+        const opt = modeSel.querySelector('option[value="bypassPermissions"]');
+        opt.disabled = !m.canBypass;
+        opt.textContent = m.canBypass ? "Never ask" : "Never ask (set CODETERM_ALLOW_BYPASS=1)";
+        break;
+      }
       case "user": el("msg user", m.text); lastText = null; break;
       case "local": el("local", m.text); lastText = null; break;
       case "commands": COMMANDS = m.commands; break;
       case "mode":
         document.getElementById("mode").value = m.mode;
-        document.getElementById("mode").classList.toggle("hot", m.mode === "bypassPermissions");
+        modeSel.classList.toggle("hot", m.mode === "bypassPermissions");
+        modeSel.classList.toggle("warm", m.mode === "auto" || m.mode === "acceptEdits");
         break;
       case "text":
         // Text arrives in blocks; keep the raw markdown and re-render the whole
@@ -340,10 +351,10 @@ box.addEventListener("input", () => {
 box.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"), 120));
 stop.onclick = () => agentWs?.send(JSON.stringify({ type: "interrupt" }));
 
-const modeSel = document.getElementById("mode");
+
 modeSel.onchange = () => {
   if (modeSel.value === "bypassPermissions" &&
-      !confirm("Never ask: Claude will run commands and edit files with no approval. Continue?")) {
+      !confirm("Never ask: Claude runs commands and edits files with nobody approving. Continue?")) {
     modeSel.value = "default";
   }
   agentWs?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));

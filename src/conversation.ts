@@ -54,7 +54,14 @@ export class Conversation {
     const prior = this.#load();
     if (prior) {
       this.#events = prior.events;
-      if (prior.mode !== "default") void this.#session.setMode(prior.mode);
+      // Never silently restore "Never ask" across a restart: an unattended
+      // agent should not be re-armed by a process manager. Every other mode
+      // is safe to carry over.
+      const mode = prior.mode === "bypassPermissions" ? "default" : prior.mode;
+      if (mode !== "default") void this.#session.setMode(mode);
+      if (mode !== prior.mode) {
+        this.#record({ kind: "error", message: 'Permission mode reset to "Ask before changes" on restart.' });
+      }
     }
     // Resuming rebuilds the model's context from the transcript on disk.
     this.#session
