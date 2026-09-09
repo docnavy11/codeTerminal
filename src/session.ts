@@ -15,6 +15,14 @@ import { randomUUID } from "node:crypto";
  */
 export type StatusState = "idle" | "thinking" | "tool" | "awaiting" | "compacting";
 
+/** One question from the built-in AskUserQuestion tool. */
+export type AskQuestion = {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: { label: string; description: string; preview?: string }[];
+};
+
 /** What the browser receives. One flat, discriminated shape. */
 export type ClientEvent =
   | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
@@ -30,6 +38,7 @@ export type ClientEvent =
   | { kind: "cleared" }
   | { kind: "replayed" }
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
+  | { kind: "question"; id: string; questions: AskQuestion[] }
   | { kind: "turn_end"; costUsd: number | null; isError: boolean; denials: number }
   | { kind: "error"; message: string };
 
@@ -80,6 +89,8 @@ type Pending = {
   resolve: (r: PermissionResult) => void;
   tool: string;
   suggestions: PermissionUpdate[];
+  /** Set for AskUserQuestion, whose answer rides back in updatedInput. */
+  question?: { input: Record<string, unknown>; questions: AskQuestion[] };
 };
 
 export class Session {
@@ -158,6 +169,16 @@ export class Session {
       resolve({ behavior: "deny", message: "Interrupted before you answered." });
     }, { once: true });
 
+    // AskUserQuestion is not a permission prompt — it is Claude asking you
+    // something. The answer travels back as updatedInput.answers.
+    if (tool === "AskUserQuestion") {
+      const questions = (input.questions as AskQuestion[] | undefined) ?? [];
+      this.#pending.set(id, { resolve, tool, suggestions: sugg, question: { input, questions } });
+      this.#emit({ kind: "question", id, questions });
+      this.#pushStatus();
+      return promise;
+    }
+
     this.#emit({ kind: "approval", id, tool, input, canAlways: sugg.length > 0 });
     this.#pushStatus();
     return promise;
@@ -178,6 +199,17 @@ export class Session {
       p.resolve({ behavior: "allow" });
     }
     this.#emit({ kind: "approval_closed", id, decision });
+    this.#pushStatus();
+    return true;
+  }
+
+  /** Answer an AskUserQuestion. `answers` is keyed by the question text. */
+  answer(id: string, answers: Record<string, string>): boolean {
+    const p = this.#pending.get(id);
+    if (!p?.question) return false;
+    this.#pending.delete(id);
+    p.resolve({ behavior: "allow", updatedInput: { ...p.question.input, answers } });
+    this.#emit({ kind: "approval_closed", id, decision: "allow" });
     this.#pushStatus();
     return true;
   }
@@ -232,7 +264,9 @@ export class Session {
     if (this.#pending.size > 0) {
       state = "awaiting";
       const [first] = [...this.#pending.values()];
-      detail = this.#pending.size > 1 ? `${this.#pending.size} approvals` : first.tool;
+      detail = this.#pending.size > 1
+        ? `${this.#pending.size} things`
+        : first.question ? "a question" : first.tool;
     } else if (this.#compacting) {
       state = "compacting";
     } else if (this.#activeTools.size > 0) {

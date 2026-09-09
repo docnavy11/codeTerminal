@@ -16,7 +16,9 @@ export class Manager {
   #workspace: string;
   #session!: Session;
   #rec!: ChatRecord;
-  #live: ((e: ClientEvent) => void) | null = null;
+  /** Every attached browser. A Set, not one slot: a second tab must not
+   *  silently starve the first of events. */
+  #live = new Set<(e: ClientEvent) => void>();
   #saveTimer: NodeJS.Timeout | null = null;
 
   constructor(workspace: string, dir: string) {
@@ -43,7 +45,7 @@ export class Manager {
 
   #record = (e: ClientEvent): void => {
     // "ready" and "commands" are state, not history — keep only the newest.
-    if (e.kind === "status") { this.#live?.(e); return; }   // live-only, never persisted
+    if (e.kind === "status") { this.#emitAll(e); return; }   // live-only, never persisted
     if (e.kind === "ready" || e.kind === "commands") {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
@@ -51,27 +53,31 @@ export class Manager {
     if (this.#rec.events.length > MAX_EVENTS) {
       this.#rec.events.splice(0, this.#rec.events.length - MAX_EVENTS);
     }
-    this.#live?.(e);
+    this.#emitAll(e);
     this.#scheduleSave();
   };
+
+  #emitAll(e: ClientEvent): void {
+    for (const emit of this.#live) emit(e);
+  }
 
   recordUser(text: string): void {
     this.#record({ kind: "user", text });
     if (this.#rec.title === "New chat") {
       this.#rec.title = titleFrom(this.#rec.events);
       this.#save();
-      this.#live?.({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+      this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
     }
   }
 
   attach(emit: (e: ClientEvent) => void): void {
-    this.#live = emit;
+    this.#live.add(emit);
     for (const e of this.#rec.events) emit(e);
     emit({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
     emit(this.#session.status());   // so a reload mid-turn knows it is busy
   }
 
-  detach(): void { this.#live = null; }
+  detach(emit: (e: ClientEvent) => void): void { this.#live.delete(emit); }
 
   /** Start a fresh chat, keeping the current one on disk. */
   async create(): Promise<void> {
@@ -93,7 +99,7 @@ export class Manager {
       const next = this.#store.list()[0];
       await this.#activate((next && this.#store.read(next.id)) || this.#blank());
     } else {
-      this.#live?.({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+      this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
     }
   }
 
@@ -112,14 +118,11 @@ export class Manager {
 
     // Save first, so the chat we just activated appears in its own list.
     this.#save();
-    if (this.#live) {
-      const emit = this.#live;
-      emit({ kind: "cleared" });
-      for (const e of rec.events) emit(e);
-      emit({ kind: "replayed" });
-      emit({ kind: "chats", chats: this.list(), activeId: rec.id });
-      emit(this.#session.status());
-    }
+    this.#emitAll({ kind: "cleared" });
+    for (const e of rec.events) this.#emitAll(e);
+    this.#emitAll({ kind: "replayed" });
+    this.#emitAll({ kind: "chats", chats: this.list(), activeId: rec.id });
+    this.#emitAll(this.#session.status());
   }
 
   #scheduleSave(): void {

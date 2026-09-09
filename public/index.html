@@ -71,6 +71,26 @@
               max-height:200px; overflow:auto; font-size:11px; }
   .card.done { opacity:.45; border-color:var(--line); }
 
+  /* Claude asking you something — distinct from a permission prompt. */
+  .q { border:1px solid var(--accent); border-radius:6px; padding:11px; background:#141824; }
+  .q.done { opacity:.5; border-color:var(--line); }
+  .q .chip { display:inline-block; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+             color:var(--accent); border:1px solid var(--accent); border-radius:3px;
+             padding:1px 5px; margin-bottom:6px; }
+  .q .qt { margin:0 0 8px; font-size:12px; color:var(--fg); }
+  .q .opt { display:block; width:100%; text-align:left; margin:0 0 5px; padding:6px 9px;
+            border:1px solid var(--line); background:#1a1e29; border-radius:4px; cursor:pointer;
+            color:var(--fg); font:inherit; }
+  .q .opt:hover:not(:disabled) { border-color:var(--accent); }
+  .q .opt.sel { border-color:var(--accent); background:#20263a; }
+  .q .opt .d { display:block; color:var(--dim); font-size:10.5px; margin-top:2px; }
+  .q .opt pre { margin:5px 0 0; padding:6px; background:#0f1115; border-radius:3px;
+                font-size:10px; color:var(--dim); overflow:auto; max-height:150px; }
+  .q .other { width:100%; box-sizing:border-box; background:#0f1115; color:var(--fg);
+              border:1px solid var(--line); border-radius:4px; padding:5px 8px; font:inherit;
+              font-size:11px; margin-top:2px; }
+  .q .send { margin-top:7px; border-color:var(--accent); color:var(--accent); }
+
   button { font:inherit; border:1px solid var(--line); background:#20242f; color:var(--fg);
            padding:4px 11px; border-radius:4px; cursor:pointer; }
   button:hover:not(:disabled) { border-color:var(--accent); }
@@ -247,10 +267,12 @@ function applyStatus(m) {
   // so you can abandon the turn instead of answering the card.
   setBusy(m.state !== "idle");
   stop.disabled = m.state === "idle";
-  box.placeholder = {
-    idle:     "Ask Claude…  (Enter to send, Shift+Enter newline)",
-    awaiting: "Approve or deny above to continue — or press Stop",
-  }[m.state] ?? "Claude is working — press Stop to interrupt";
+  box.placeholder =
+    m.state === "idle"     ? "Ask Claude…  (Enter to send, Shift+Enter newline)"
+  : m.state === "awaiting" ? (m.detail === "a question"
+      ? "Answer the question above to continue — or press Stop"
+      : "Approve or deny above to continue — or press Stop")
+  : "Claude is working — press Stop to interrupt";
 
   clearInterval(statusTick);
   statusTick = null;
@@ -306,6 +328,7 @@ function connectAgent() {
         log.scrollTop = log.scrollHeight;
         break;
       case "tool": {
+        if (m.name === "AskUserQuestion") { lastText = null; break; }  // the card says it better
         const d = el("tool");
         d.innerHTML = "→ <b></b> ";
         d.querySelector("b").textContent = m.name;
@@ -314,6 +337,7 @@ function connectAgent() {
         break;
       }
       case "approval": renderApproval(m); break;
+      case "question": renderQuestion(m); break;
       case "approval_closed": {
         const c = document.querySelector(`[data-approval="${m.id}"]`);
         if (c) {
@@ -339,6 +363,84 @@ function summarize(input) {
   if (typeof input.command === "string") return input.command;
   if (typeof input.file_path === "string") return input.file_path;
   return JSON.stringify(input).slice(0, 160);
+}
+
+/**
+ * Claude asking the user something. The answer goes back keyed by the exact
+ * question text — that is the contract AskUserQuestion's `answers` expects.
+ */
+function renderQuestion(m) {
+  const card = el("q");
+  card.dataset.approval = m.id;
+  card.dataset.tool = "question";
+  const picked = new Map();   // question text -> Set of labels
+
+  for (const q of m.questions) {
+    picked.set(q.question, new Set());
+
+    const chip = document.createElement("span");
+    chip.className = "chip"; chip.textContent = q.header || "question";
+    const title = document.createElement("p");
+    title.className = "qt"; title.textContent = q.question;
+    card.append(chip, title);
+
+    const opts = [...q.options, { label: "Other", description: "Type your own answer", other: true }];
+    for (const o of opts) {
+      const b = document.createElement("button");
+      b.className = "opt"; b.type = "button";
+      b.append(document.createTextNode(o.label));
+      if (o.description) {
+        const d = document.createElement("span"); d.className = "d"; d.textContent = o.description;
+        b.append(d);
+      }
+      if (o.preview) {
+        const pre = document.createElement("pre"); pre.textContent = o.preview;
+        b.append(pre);
+      }
+
+      let otherBox = null;
+      b.onclick = () => {
+        const set = picked.get(q.question);
+        if (!q.multiSelect) {
+          set.clear();
+          card.querySelectorAll(`[data-q="${CSS.escape(q.question)}"]`).forEach(x => x.classList.remove("sel"));
+        }
+        if (o.other) {
+          if (!otherBox) {
+            otherBox = document.createElement("input");
+            otherBox.className = "other"; otherBox.placeholder = "your answer…";
+            otherBox.oninput = () => {
+              set.forEach(v => { if (v.startsWith("\u0000other:")) set.delete(v); });
+              if (otherBox.value.trim()) set.add("\u0000other:" + otherBox.value.trim());
+            };
+            b.after(otherBox);
+          }
+          otherBox.focus();
+        }
+        b.classList.toggle("sel");
+        if (b.classList.contains("sel")) { if (!o.other) set.add(o.label); }
+        else { set.delete(o.label); if (otherBox) { otherBox.remove(); otherBox = null; } }
+      };
+      b.dataset.q = q.question;
+      card.append(b);
+    }
+  }
+
+  const send = document.createElement("button");
+  send.className = "send"; send.textContent = "Answer";
+  send.onclick = () => {
+    const answers = {};
+    for (const [question, set] of picked) {
+      const vals = [...set].map(v => v.startsWith("\u0000other:") ? v.slice(7) : v);
+      if (vals.length) answers[question] = vals.join(", ");
+    }
+    if (!Object.keys(answers).length) return;   // nothing chosen yet
+    agentWs.send(JSON.stringify({ type: "answer", id: m.id, answers }));
+    card.querySelectorAll("button,input").forEach(x => x.disabled = true);
+    card.classList.add("done");
+  };
+  card.append(send);
+  log.scrollTop = log.scrollHeight;
 }
 
 function renderApproval(m) {

@@ -133,7 +133,7 @@ function attachAgent(ws: WebSocket): void {
   convo.attach(send);
 
   ws.on("message", (raw) => {
-    let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string };
+    let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string; answers?: unknown };
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     const session = convo.session;
 
@@ -143,6 +143,12 @@ function attachAgent(ws: WebSocket): void {
         if (session.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
         convo.recordUser(msg.text);
         session.send(msg.text);
+        return;
+
+      case "answer":
+        if (typeof msg.id === "string" && msg.answers && typeof msg.answers === "object") {
+          convo.session.answer(msg.id, msg.answers as Record<string, string>);
+        }
         return;
 
       case "decision":
@@ -181,7 +187,7 @@ function attachAgent(ws: WebSocket): void {
   });
 
   // A closed tab must NOT end the session — that is the whole point.
-  const detach = () => convo.detach();
+  const detach = () => convo.detach(send);
   ws.on("close", detach);
   ws.on("error", detach);
 }

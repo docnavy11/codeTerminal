@@ -125,6 +125,22 @@ model still recalled a word from the first one.
 Replay is bracketed by `cleared` … `replayed` so a client can tell history
 from live events.
 
+## Questions from Claude
+
+`AskUserQuestion` is a built-in tool: Claude uses it to ask *you* something.
+It is not a permission prompt, and rendering it as one leaves the question
+unanswerable — the turn just parks.
+
+The answer travels back through the permission callback. `AskUserQuestionInput`
+carries an `answers` field ("User answers collected by the permission
+component"), keyed by the exact question text, so the host returns
+`{behavior: "allow", updatedInput: {...input, answers}}`.
+
+The UI renders a distinct blue card: a header chip, the question, one button
+per option with its description (and preview, when the option has one), an
+automatic **Other** field for a free-text answer, and multi-select where the
+question asks for it. The status bar reads `waiting for you — a question`.
+
 ## Knowing what it is doing
 
 A status bar sits directly above the input. The state is derived on the server
@@ -146,6 +162,9 @@ cannot produce a negative age.
 **"Waiting for you" is deliberately distinct from "busy".** Those are the two
 states that used to be indistinguishable, and only one of them is your turn to
 act.
+
+Every attached tab gets every event — the manager broadcasts to a set of
+clients, so opening a second tab does not starve the first.
 
 Status is never persisted. It is recomputed and pushed on attach, so a tab
 reloaded mid-turn shows the true state instead of `ready`. Verified: with an
