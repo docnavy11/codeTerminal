@@ -4,6 +4,17 @@ import { browserTools } from "./tools.js";
 import type { BrowserBridge } from "./browser.js";
 import { randomUUID } from "node:crypto";
 
+/**
+ * What the agent is doing right now. Derived, not stored: whichever of these
+ * is true takes precedence, so it cannot drift out of sync with reality.
+ *   awaiting   an approval card is open — waiting on YOU, not on Claude
+ *   tool       a tool is executing
+ *   compacting the SDK is summarising the conversation
+ *   thinking   a turn is running with no tool in flight
+ *   idle       nothing running
+ */
+export type StatusState = "idle" | "thinking" | "tool" | "awaiting" | "compacting";
+
 /** What the browser receives. One flat, discriminated shape. */
 export type ClientEvent =
   | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
@@ -18,6 +29,7 @@ export type ClientEvent =
   | { kind: "chats"; chats: unknown[]; activeId: string }
   | { kind: "cleared" }
   | { kind: "replayed" }
+  | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "turn_end"; costUsd: number | null; isError: boolean; denials: number }
   | { kind: "error"; message: string };
 
@@ -142,10 +154,12 @@ export class Session {
     signal.addEventListener("abort", () => {
       if (!this.#pending.delete(id)) return;
       this.#emit({ kind: "approval_closed", id, decision: "gone" });
+      this.#pushStatus();
       resolve({ behavior: "deny", message: "Interrupted before you answered." });
     }, { once: true });
 
     this.#emit({ kind: "approval", id, tool, input, canAlways: sugg.length > 0 });
+    this.#pushStatus();
     return promise;
   };
 
@@ -164,6 +178,7 @@ export class Session {
       p.resolve({ behavior: "allow" });
     }
     this.#emit({ kind: "approval_closed", id, decision });
+    this.#pushStatus();
     return true;
   }
 
@@ -186,6 +201,8 @@ export class Session {
 
   send(text: string): void {
     this.#busy = true;
+    this.#thinkingTokens = 0;
+    this.#pushStatus();
     this.#input.push({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null });
   }
 
@@ -202,6 +219,39 @@ export class Session {
   }
 
   #hidden = new Set<string>(HIDE_EXTRA);
+  #activeTools = new Map<string, string>();   // tool_use_id -> tool name
+  #compacting = false;
+  #thinkingTokens = 0;
+  #lastStatus = "";
+
+  /** The single source of truth for "is it busy, or is it waiting on me?" */
+  status(): { kind: "status"; state: StatusState; detail: string; tokens: number } {
+    let state: StatusState = "idle";
+    let detail = "";
+
+    if (this.#pending.size > 0) {
+      state = "awaiting";
+      const [first] = [...this.#pending.values()];
+      detail = this.#pending.size > 1 ? `${this.#pending.size} approvals` : first.tool;
+    } else if (this.#compacting) {
+      state = "compacting";
+    } else if (this.#activeTools.size > 0) {
+      state = "tool";
+      const names = [...new Set(this.#activeTools.values())];
+      detail = names.length > 1 ? `${names.length} tools` : names[0];
+    } else if (this.#busy) {
+      state = "thinking";
+    }
+    return { kind: "status", state, detail, tokens: this.#thinkingTokens };
+  }
+
+  #pushStatus(): void {
+    const s = this.status();
+    const key = `${s.state}|${s.detail}|${Math.round(s.tokens / 200)}`;  // throttle token churn
+    if (key === this.#lastStatus) return;
+    this.#lastStatus = key;
+    this.#emit(s);
+  }
 
   /** Rich command list (name, description, argument hint) for the UI menu. */
   async #publishCommands(): Promise<void> {
@@ -232,24 +282,55 @@ export class Session {
           this.#emit({ kind: "commands", commands: this.#visible(msg.commands) });
         } else if (msg.subtype === "local_command_output") {
           this.#emit({ kind: "local", text: msg.content });
+        } else if (msg.subtype === "status") {
+          this.#compacting = msg.status === "compacting";
+          this.#pushStatus();
+        } else if (msg.subtype === "thinking_tokens") {
+          this.#thinkingTokens = msg.estimated_tokens;
+          this.#pushStatus();
         }
+        return;
+
+      // Heartbeats while a tool runs; also how we learn a tool actually started.
+      case "tool_progress":
+        this.#activeTools.set(msg.tool_use_id, msg.tool_name);
+        this.#pushStatus();
         return;
 
       case "assistant":
         for (const block of msg.message.content) {
           if (block.type === "text" && block.text) this.#emit({ kind: "text", text: block.text });
-          else if (block.type === "tool_use") this.#emit({ kind: "tool", id: block.id, name: block.name, input: block.input });
+          else if (block.type === "tool_use") {
+            this.#activeTools.set(block.id, block.name);
+            this.#emit({ kind: "tool", id: block.id, name: block.name, input: block.input });
+          }
+        }
+        this.#pushStatus();
+        return;
+
+      // tool_result blocks tell us a tool finished.
+      case "user": {
+        const content = msg.message.content;
+        if (Array.isArray(content)) {
+          for (const b of content) {
+            if (b.type === "tool_result") this.#activeTools.delete(b.tool_use_id);
+          }
+          this.#pushStatus();
         }
         return;
+      }
 
       case "result":
         this.#busy = false;
+        this.#activeTools.clear();
+        this.#compacting = false;
         this.#emit({
           kind: "turn_end",
           costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null,
           isError: msg.is_error === true,
           denials: msg.permission_denials?.length ?? 0,
         });
+        this.#pushStatus();
         return;
     }
   }

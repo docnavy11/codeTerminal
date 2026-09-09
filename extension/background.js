@@ -185,8 +185,39 @@ async function handle(action, p) {
 
     case "screenshot": {
       const t = await resolveTab(p.tabId);
-      const dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: "png" });
-      return { tabId: t.id, dataUrl };
+      const activate = p.activate !== false;
+
+      // captureVisibleTab captures whatever is VISIBLE in the window - it has no
+      // way to target a background tab. Capturing blind would hand back an image
+      // of an unrelated tab (someone's mail, their bank) labelled as the one that
+      // was asked for, so make the tab visible first or refuse outright.
+      let prior = null;
+      if (!t.active) {
+        if (!activate) {
+          throw new Error(
+            `tab ${t.id} is not the visible tab in window ${t.windowId}; ` +
+            `captureVisibleTab can only capture the visible tab. ` +
+            `Omit activate (or pass activate:true) to focus it for the capture.`
+          );
+        }
+        [prior] = await chrome.tabs.query({ active: true, windowId: t.windowId });
+        await chrome.tabs.update(t.id, { active: true });
+        await new Promise((r) => setTimeout(r, p.settleMs ?? 250)); // let it paint
+      }
+
+      try {
+        const dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: "png" });
+        // Belt and braces: prove what we captured is what was asked for.
+        const [visible] = await chrome.tabs.query({ active: true, windowId: t.windowId });
+        if (visible?.id !== t.id) {
+          throw new Error(`captured tab ${visible?.id} but tab ${t.id} was requested`);
+        }
+        return { tabId: t.id, url: t.url, dataUrl };
+      } finally {
+        if (prior && prior.id !== t.id) {
+          try { await chrome.tabs.update(prior.id, { active: true }); } catch {}
+        }
+      }
     }
 
     default:

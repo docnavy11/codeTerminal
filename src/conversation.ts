@@ -43,6 +43,7 @@ export class Manager {
 
   #record = (e: ClientEvent): void => {
     // "ready" and "commands" are state, not history — keep only the newest.
+    if (e.kind === "status") { this.#live?.(e); return; }   // live-only, never persisted
     if (e.kind === "ready" || e.kind === "commands") {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
@@ -67,6 +68,7 @@ export class Manager {
     this.#live = emit;
     for (const e of this.#rec.events) emit(e);
     emit({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+    emit(this.#session.status());   // so a reload mid-turn knows it is busy
   }
 
   detach(): void { this.#live = null; }
@@ -116,6 +118,7 @@ export class Manager {
       for (const e of rec.events) emit(e);
       emit({ kind: "replayed" });
       emit({ kind: "chats", chats: this.list(), activeId: rec.id });
+      emit(this.#session.status());
     }
   }
 

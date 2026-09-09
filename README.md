@@ -125,6 +125,37 @@ model still recalled a word from the first one.
 Replay is bracketed by `cleared` … `replayed` so a client can tell history
 from live events.
 
+## Knowing what it is doing
+
+A status bar sits directly above the input. The state is derived on the server
+from whichever of these is true, in this order, so it cannot drift:
+
+| State | Shown as |
+|---|---|
+| an approval card is open | `waiting for you — Bash` (amber, pulsing) + *jump to it* |
+| SDK is compacting | `compacting the conversation` |
+| a tool is executing | `running Bash` |
+| a turn is live, no tool | `thinking · 1.2k tokens` |
+| nothing running | `ready` |
+
+Token counts come from the SDK's `thinking_tokens` frames, tool state from
+`tool_progress` plus the `tool_use`/`tool_result` pair. The elapsed timer runs
+client-side from when the message arrived, so a clock skew between machines
+cannot produce a negative age.
+
+**"Waiting for you" is deliberately distinct from "busy".** Those are the two
+states that used to be indistinguishable, and only one of them is your turn to
+act.
+
+Status is never persisted. It is recomputed and pushed on attach, so a tab
+reloaded mid-turn shows the true state instead of `ready`. Verified: with an
+approval open, dropping the socket and reconnecting reports `awaiting (Bash)`
+on the fresh connection.
+
+While a turn is live — including while an approval is open — the input is
+blocked, because the server rejects a second prompt then. Stop stays available
+throughout, so you can abandon a turn instead of answering its card.
+
 ## Permission modes
 
 The header dropdown maps to the SDK's `setPermissionMode`:
