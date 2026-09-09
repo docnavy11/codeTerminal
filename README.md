@@ -196,9 +196,20 @@ left at default:
 
     gate_fired=true  file_created=false
 
-**"Never ask" does not survive a restart.** It is downgraded to `default` on
-boot, with a notice in the transcript. An unattended agent should not be
-re-armed by a process manager restarting the server.
+**Permission mode is app-level, not per-chat.** Set it once and it holds
+across new chats and chat switches; the mode is re-stated to every attached
+tab on each activation, so the dropdown can never show a mode the session is
+not actually in.
+
+It resets to `default` on every server boot, so a process manager restarting
+the server cannot re-arm "Never ask". That is the only case worth guarding —
+an earlier version also downgraded on chat switch, silently, which just meant
+the UI claimed "Never ask" while the session went on prompting.
+
+Measured, so the mode means what it says:
+
+    default              canUseTool fires for mcp__..._list_labels  -> card
+    bypassPermissions    canUseTool does not fire                   -> no card
 
 For "stop asking me about *this*", prefer the per-tool `Always allow` button
 on an approval card — it uses the SDK's own `updatedPermissions` suggestions

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { Session, type ClientEvent } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
 
@@ -21,6 +22,14 @@ export class Manager {
   #live = new Set<(e: ClientEvent) => void>();
   #saveTimer: NodeJS.Timeout | null = null;
 
+  /**
+   * Permission mode is app-level, not per-chat: you set it once and it holds
+   * across new chats and chat switches. It starts at "default" on every boot,
+   * so a process manager restarting the server can never re-arm "Never ask" —
+   * that was the only case the old per-chat downgrade was actually guarding.
+   */
+  #mode: PermissionMode = "default";
+
   constructor(workspace: string, dir: string) {
     this.#workspace = workspace;
     this.#store = new Store(dir);
@@ -30,6 +39,13 @@ export class Manager {
   get activeId() { return this.#rec.id; }
 
   list(): ChatSummary[] { return this.#store.list(); }
+
+  /** Change the mode for the whole app, not just this chat. */
+  async setMode(mode: PermissionMode): Promise<void> {
+    await this.#session.setMode(mode);
+    // Adopt only what the session actually accepted (bypass can be refused).
+    this.#mode = this.#session.mode;
+  }
 
   async boot(): Promise<void> {
     const newest = this.#store.list()[0];
@@ -108,9 +124,7 @@ export class Manager {
     this.#rec = rec;
     this.#session = new Session(this.#workspace, this.#record);
 
-    // "Never ask" must not be re-armed by a restart or by reopening a chat.
-    const mode = rec.mode === "bypassPermissions" ? "default" : rec.mode;
-    if (mode !== "default") void this.#session.setMode(mode);
+    if (this.#mode !== "default") void this.#session.setMode(this.#mode);
 
     this.#session
       .start(rec.sdkSessionId ?? undefined, rec.granted)
@@ -122,6 +136,9 @@ export class Manager {
     for (const e of rec.events) this.#emitAll(e);
     this.#emitAll({ kind: "replayed" });
     this.#emitAll({ kind: "chats", chats: this.list(), activeId: rec.id });
+    // Always state the mode. Letting the UI keep a stale value is how you end
+    // up believing "Never ask" is on while the session is asking.
+    this.#emitAll({ kind: "mode", mode: this.#mode });
     this.#emitAll(this.#session.status());
   }
 

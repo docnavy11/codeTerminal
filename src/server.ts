@@ -160,7 +160,7 @@ function attachAgent(ws: WebSocket): void {
       case "mode":
         if (msg.mode === "default" || msg.mode === "acceptEdits" || msg.mode === "auto" ||
             msg.mode === "plan" || msg.mode === "dontAsk" || msg.mode === "bypassPermissions") {
-          session.setMode(msg.mode).catch((e) => send({ kind: "error", message: String(e) }));
+          convo.setMode(msg.mode).catch((e) => send({ kind: "error", message: String(e) }));
         }
         return;
 
