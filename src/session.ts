@@ -1,4 +1,4 @@
-import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate, type PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate, type PermissionMode, type SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { Pushable, deferred } from "./pushable.js";
 import { randomUUID } from "node:crypto";
 
@@ -11,6 +11,8 @@ export type ClientEvent =
   | { kind: "approval"; id: string; tool: string; input: unknown; canAlways: boolean }
   | { kind: "approval_closed"; id: string; decision: "allow" | "always" | "deny" | "gone" }
   | { kind: "mode"; mode: PermissionMode }
+  | { kind: "commands"; commands: SlashCommand[] }
+  | { kind: "local"; text: string }
   | { kind: "turn_end"; costUsd: number | null; isError: boolean; denials: number }
   | { kind: "error"; message: string };
 
@@ -20,6 +22,22 @@ export type ClientEvent =
  * listed: they exfiltrate, so they go through the gate like Bash and Write.
  */
 const READ_ONLY = ["Read", "Glob", "Grep", "NotebookRead", "TodoWrite"];
+
+/** Set CODETERM_ISOLATED=1 to run without your personal skills and CLAUDE.md. */
+const SETTING_SOURCES: ("user" | "project" | "local")[] =
+  process.env.CODETERM_ISOLATED ? [] : ["user", "project"];
+
+/**
+ * Commands whose UX is bound to a real terminal. The CLI advertises these in
+ * `terminal_slash_commands`; the SDK docs say remote UIs should hide them.
+ * We also drop the ones that would fight our own UI.
+ */
+const HIDE_EXTRA = new Set([
+  // advertised by this CLI in terminal_slash_commands
+  "doctor", "color", "reload-plugins",
+  // would fight this UI, or need a real terminal
+  "exit", "quit", "login", "logout", "statusline", "vim", "terminal-setup",
+]);
 
 type Pending = {
   resolve: (r: PermissionResult) => void;
@@ -60,15 +78,21 @@ export class Session {
       options: {
         cwd: this.#workspace,
         additionalDirectories: [],
-        // Without this, ~/.claude/settings.json loads and its defaultMode:"auto"
-        // hands approval to the classifier instead of the gate below.
-        settingSources: [],
+        // Loads your ~/.claude and project config: custom slash commands,
+        // skills, CLAUDE.md. Measured: this is the difference between 52 and
+        // 82 available commands. It does NOT weaken canUseTool — the explicit
+        // permissionMode below wins over settings' defaultMode.
+        settingSources: SETTING_SOURCES,
         allowedTools: READ_ONLY,
         permissionMode: this.#mode,
         canUseTool: this.#canUseTool,
         ...(resumeId ? { resume: resumeId } : {}),
       },
     });
+
+    // system/init does not arrive until the first prompt, but the menu needs
+    // the list before the user types — so ask straight away.
+    void this.#publishCommands();
 
     try {
       for await (const msg of this.#query) this.#handle(msg);
@@ -139,12 +163,37 @@ export class Session {
     this.#input.end();
   }
 
+  #hidden = new Set<string>(HIDE_EXTRA);
+
+  /** Rich command list (name, description, argument hint) for the UI menu. */
+  async #publishCommands(): Promise<void> {
+    try {
+      const all = await this.#query?.supportedCommands();
+      if (all) this.#emit({ kind: "commands", commands: this.#visible(all) });
+    } catch { /* older CLI without supportedCommands */ }
+  }
+
+  #visible(cmds: SlashCommand[]): SlashCommand[] {
+    return cmds
+      .filter((c) => !this.#hidden.has(c.name) && !c.name.startsWith("__"))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   #handle(msg: SDKMessage): void {
     switch (msg.type) {
       case "system":
         if (msg.subtype === "init") {
           this.sdkSessionId = msg.session_id;
+          for (const c of (msg as { terminal_slash_commands?: string[] }).terminal_slash_commands ?? []) {
+            this.#hidden.add(c);
+          }
           this.#emit({ kind: "ready", sessionId: msg.session_id, model: msg.model, workspace: this.#workspace });
+          void this.#publishCommands();
+        } else if (msg.subtype === "commands_changed") {
+          // The SDK says to REPLACE the cached list, not merge.
+          this.#emit({ kind: "commands", commands: this.#visible(msg.commands) });
+        } else if (msg.subtype === "local_command_output") {
+          this.#emit({ kind: "local", text: msg.content });
         }
         return;
 

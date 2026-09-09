@@ -92,12 +92,39 @@ the gate. Verified:
 If you need *every* Bash call to prompt, a `PreToolUse` hook is the only surface
 that sees them all.
 
+## Slash commands
+
+The input box supports `/` commands with autocomplete (arrows, Tab, Esc).
+The list comes from `Query.supportedCommands()`, refreshed on the SDK's
+`commands_changed` push.
+
+Timing gotcha: with a streaming-input prompt, `system/init` does not arrive
+until the *first* turn — but the menu needs the list before you type. So
+`supportedCommands()` is called as soon as the query object exists, not from
+the init handler.
+
+Not all of them: the CLI advertises `terminal_slash_commands` (here `doctor`,
+`color`, `reload-plugins`) whose UX needs a real terminal, and the SDK docs
+say remote UIs should hide those. Names starting with `__` are internal and
+hidden too. 79 of 82 remain.
+
 ## settingSources
 
-`settingSources: []` is load-bearing. Omit it and the SDK loads
-`~/.claude/settings.json` — whose `defaultMode: "auto"` would hand approval
-decisions to the classifier instead of you, and which pulls in CLAUDE.md,
-skills and plugins (~11k tokens per turn).
+`settingSources: ["user", "project"]` loads your `~/.claude` and project
+config, which is what makes your own skills available as commands. Measured:
+
+    settingSources: []                  52 commands, 18 skills
+    settingSources: ["user","project"]  82 commands, 47 skills
+
+It does **not** weaken the approval gate. An earlier version of this file
+claimed `defaultMode: "auto"` in `~/.claude/settings.json` would shadow
+`canUseTool`; that was wrong. Measured both ways, with a mutating command:
+
+    settingSources: []                  GATE_CALLED=true  file_created=false
+    settingSources: ["user","project"]  GATE_CALLED=true  file_created=false
+
+The explicit `permissionMode` option wins over the settings file's
+`defaultMode`. Set `CODETERM_ISOLATED=1` to opt out of loading your config.
 
 ## Billing
 

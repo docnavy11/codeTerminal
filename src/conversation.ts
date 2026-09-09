@@ -35,8 +35,10 @@ export class Conversation {
 
   /** Buffer every event, and forward it if a browser is attached. */
   #record = (e: ClientEvent): void => {
-    // "ready" fires again on resume; keep only the newest.
-    if (e.kind === "ready") this.#events = this.#events.filter((x) => x.kind !== "ready");
+    // "ready" and "commands" are state, not history — keep only the newest.
+    if (e.kind === "ready" || e.kind === "commands") {
+      this.#events = this.#events.filter((x) => x.kind !== e.kind);
+    }
     this.#events.push(e);
     if (this.#events.length > MAX_EVENTS) this.#events.splice(0, this.#events.length - MAX_EVENTS);
     this.#live?.(e);

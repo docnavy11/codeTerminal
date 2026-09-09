@@ -83,6 +83,21 @@
              border-radius:4px; padding:8px 10px; font:inherit; min-height:40px; max-height:160px; }
   textarea:focus { outline:none; border-color:var(--accent); }
 
+  #menu { position:absolute; bottom:100%; left:12px; right:12px; margin-bottom:6px;
+          background:var(--panel); border:1px solid var(--line); border-radius:6px;
+          max-height:260px; overflow-y:auto; display:none; z-index:20;
+          box-shadow:0 -6px 24px rgba(0,0,0,.45); }
+  #menu.open { display:block; }
+  #menu .item { padding:6px 11px; cursor:pointer; display:flex; gap:10px; align-items:baseline; }
+  #menu .item.sel { background:#20242f; }
+  #menu .item .n { color:var(--accent); flex-shrink:0; }
+  #menu .item .h { color:var(--warn); font-size:11px; flex-shrink:0; }
+  #menu .item .d { color:var(--dim); font-size:11.5px; overflow:hidden;
+                   text-overflow:ellipsis; white-space:nowrap; }
+  footer { position:relative; }
+  .local { color:var(--dim); background:#12151c; border-left:2px solid var(--dim);
+           padding:7px 10px; white-space:pre-wrap; font-size:12.5px; border-radius:0 4px 4px 0; }
+
   #term { flex:1; min-height:0; padding:6px 0 0 8px; }
   .xterm-viewport::-webkit-scrollbar { width:9px; }
   .xterm-viewport::-webkit-scrollbar-thumb { background:var(--line); border-radius:5px; }
@@ -105,6 +120,7 @@
     <div class="pane-hd">claude</div>
     <div id="log"></div>
     <footer>
+      <div id="menu"></div>
       <textarea id="box" placeholder="Ask Claude…  (Enter to send, Shift+Enter newline)" autofocus></textarea>
       <button id="stop" disabled>Stop</button>
     </footer>
@@ -171,6 +187,8 @@ function connectAgent() {
     switch (m.kind) {
       case "ready": meta.textContent = `${m.model} · ${m.workspace}`; break;
       case "user": el("msg user", m.text); lastText = null; break;
+      case "local": el("local", m.text); lastText = null; break;
+      case "commands": COMMANDS = m.commands; break;
       case "mode":
         document.getElementById("mode").value = m.mode;
         document.getElementById("mode").classList.toggle("hot", m.mode === "bypassPermissions");
@@ -246,19 +264,80 @@ function renderApproval(m) {
   log.scrollTop = log.scrollHeight;
 }
 
-box.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" || e.shiftKey) return;
-  e.preventDefault();
+let COMMANDS = [];
+const menu = document.getElementById("menu");
+let matches = [], sel = 0;
+
+/** The menu opens only while the whole box is a single "/word" being typed. */
+function currentQuery() {
+  const v = box.value;
+  if (!v.startsWith("/") || /\s/.test(v)) return null;
+  return v.slice(1).toLowerCase();
+}
+
+function refreshMenu() {
+  const q = currentQuery();
+  if (q === null) { menu.classList.remove("open"); matches = []; return; }
+  matches = COMMANDS
+    .filter(c => c.name.toLowerCase().startsWith(q) ||
+                 (c.aliases ?? []).some(a => a.toLowerCase().startsWith(q)))
+    .slice(0, 60);
+  if (!matches.length) { menu.classList.remove("open"); return; }
+  sel = Math.min(sel, matches.length - 1);
+  menu.replaceChildren(...matches.map((c, i) => {
+    const d = document.createElement("div");
+    d.className = "item" + (i === sel ? " sel" : "");
+    const n = document.createElement("span"); n.className = "n"; n.textContent = "/" + c.name;
+    d.appendChild(n);
+    if (c.argumentHint) { const h = document.createElement("span"); h.className = "h"; h.textContent = c.argumentHint; d.appendChild(h); }
+    const de = document.createElement("span"); de.className = "d"; de.textContent = c.description || "";
+    d.appendChild(de);
+    d.onmousedown = (e) => { e.preventDefault(); pick(i); };
+    return d;
+  }));
+  menu.classList.add("open");
+  menu.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+}
+
+function pick(i) {
+  const c = matches[i];
+  if (!c) return;
+  box.value = "/" + c.name + (c.argumentHint ? " " : "");
+  menu.classList.remove("open");
+  matches = [];
+  box.focus();
+  if (!c.argumentHint) send();
+}
+
+function send() {
   const text = box.value.trim();
   if (!text || busy || agentWs?.readyState !== WebSocket.OPEN) return;
   agentWs.send(JSON.stringify({ type: "prompt", text }));
-  box.value = ""; box.style.height = "auto"; lastText = null;
+  box.value = ""; box.style.height = "auto";
+  menu.classList.remove("open"); matches = [];
+  lastText = null;
   setBusy(true);
+}
+
+box.addEventListener("keydown", (e) => {
+  if (menu.classList.contains("open") && matches.length) {
+    if (e.key === "ArrowDown") { e.preventDefault(); sel = (sel + 1) % matches.length; refreshMenu(); return; }
+    if (e.key === "ArrowUp")   { e.preventDefault(); sel = (sel - 1 + matches.length) % matches.length; refreshMenu(); return; }
+    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); pick(sel); return; }
+    if (e.key === "Escape")    { menu.classList.remove("open"); matches = []; return; }
+  }
+  if (e.key !== "Enter" || e.shiftKey) return;
+  e.preventDefault();
+  send();
 });
+
 box.addEventListener("input", () => {
   box.style.height = "auto";
   box.style.height = Math.min(box.scrollHeight, 160) + "px";
+  sel = 0;
+  refreshMenu();
 });
+box.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"), 120));
 stop.onclick = () => agentWs?.send(JSON.stringify({ type: "interrupt" }));
 
 const modeSel = document.getElementById("mode");
