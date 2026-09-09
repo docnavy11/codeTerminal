@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>code terminal</title>
+<link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+<style>
+  :root {
+    --bg:#0f1115; --panel:#161922; --line:#252a36; --fg:#dfe3ec; --dim:#8b93a7;
+    --accent:#7aa2f7; --ok:#7dcfa0; --warn:#e0af68; --bad:#f07178;
+    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; }
+  body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg);
+         font:14px/1.55 var(--mono); }
+
+  header { display:flex; align-items:center; gap:10px; padding:9px 14px;
+           border-bottom:1px solid var(--line); background:var(--panel); flex-shrink:0; }
+  header .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); }
+  header .dot.on { background:var(--ok); }
+  header .meta { color:var(--dim); font-size:12px; margin-left:auto; }
+  header select { font:inherit; font-size:12px; background:#20242f; color:var(--fg);
+                  border:1px solid var(--line); border-radius:4px; padding:3px 6px; }
+  header select.hot { border-color:var(--bad); color:var(--bad); }
+  button.small { font-size:12px; padding:3px 9px; }
+
+  #split { flex:1; display:flex; min-height:0; }
+  .pane { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  #left  { flex:1 1 50%; }
+  #right { flex:1 1 50%; border-left:1px solid var(--line); background:#0b0d11; }
+  .pane-hd { padding:6px 12px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+             color:var(--dim); border-bottom:1px solid var(--line); background:var(--panel); flex-shrink:0;
+             display:flex; align-items:center; gap:8px; }
+  .pane-hd .warn { color:var(--warn); text-transform:none; letter-spacing:0; margin-left:auto; font-size:11px; }
+
+  #grip { width:5px; cursor:col-resize; background:var(--line); flex-shrink:0; }
+  #grip:hover { background:var(--accent); }
+
+  #log { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:9px; }
+  .msg { white-space:pre-wrap; word-break:break-word; }
+  .user { color:var(--accent); border-left:2px solid var(--accent); padding-left:10px; }
+
+  /* rendered markdown (Claude's replies) */
+  .md { white-space:normal; }
+  .md > :first-child { margin-top:0; }
+  .md > :last-child { margin-bottom:0; }
+  .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin:0 0 8px; }
+  .md h1, .md h2, .md h3, .md h4 { margin:10px 0 6px; font-size:14px; color:var(--fg); }
+  .md h1 { font-size:16px; } .md h2 { font-size:15px; }
+  .md ul, .md ol { padding-left:22px; }
+  .md li { margin:2px 0; }
+  .md code { background:#1c2030; border:1px solid var(--line); border-radius:3px; padding:1px 5px; font-size:12.5px; }
+  .md pre { background:#0b0d11; border:1px solid var(--line); border-radius:5px; padding:9px 11px; overflow-x:auto; }
+  .md pre code { background:none; border:0; padding:0; font-size:12.5px; }
+  .md blockquote { border-left:2px solid var(--dim); color:var(--dim); margin-left:0; padding-left:10px; }
+  .md a { color:var(--accent); }
+  .md hr { border:0; border-top:1px solid var(--line); margin:10px 0; }
+  .md table { border-collapse:collapse; font-size:13px; }
+  .md th, .md td { border:1px solid var(--line); padding:3px 8px; text-align:left; }
+  .md th { background:var(--panel); }
+  .tool { color:var(--dim); font-size:12.5px; }
+  .tool b { color:var(--warn); font-weight:600; }
+  .err  { color:var(--bad); }
+  .end  { color:var(--dim); font-size:12px; border-top:1px dashed var(--line); padding-top:5px; }
+  .card { border:1px solid var(--warn); border-radius:6px; padding:11px; background:#1c1a16; }
+  .card h4 { margin:0 0 7px; font-size:13px; color:var(--warn); }
+  .card pre { margin:0 0 9px; padding:8px; background:#0f1115; border-radius:4px;
+              max-height:220px; overflow:auto; font-size:12px; }
+  .card.done { opacity:.45; border-color:var(--line); }
+
+  button { font:inherit; border:1px solid var(--line); background:#20242f; color:var(--fg);
+           padding:5px 13px; border-radius:4px; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
+  button.allow { border-color:var(--ok); color:var(--ok); }
+  button.deny  { border-color:var(--bad); color:var(--bad); }
+
+  footer { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line);
+           background:var(--panel); flex-shrink:0; }
+  textarea { flex:1; resize:none; background:var(--bg); color:var(--fg); border:1px solid var(--line);
+             border-radius:4px; padding:8px 10px; font:inherit; min-height:40px; max-height:160px; }
+  textarea:focus { outline:none; border-color:var(--accent); }
+
+  #term { flex:1; min-height:0; padding:6px 0 0 8px; }
+  .xterm-viewport::-webkit-scrollbar { width:9px; }
+  .xterm-viewport::-webkit-scrollbar-thumb { background:var(--line); border-radius:5px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span><strong>code terminal</strong>
+  <select id="mode" title="How much you want to be asked">
+    <option value="default">Ask before changes</option>
+    <option value="acceptEdits">Auto-accept edits</option>
+    <option value="bypassPermissions">Never ask</option>
+  </select>
+  <button id="reset" class="small">New chat</button>
+  <span class="meta" id="meta">connecting…</span>
+</header>
+
+<div id="split">
+  <div class="pane" id="left">
+    <div class="pane-hd">claude</div>
+    <div id="log"></div>
+    <footer>
+      <textarea id="box" placeholder="Ask Claude…  (Enter to send, Shift+Enter newline)" autofocus></textarea>
+      <button id="stop" disabled>Stop</button>
+    </footer>
+  </div>
+
+  <div id="grip"></div>
+
+  <div class="pane" id="right">
+    <div class="pane-hd">shell <span class="warn">no approval gate</span></div>
+    <div id="term"></div>
+  </div>
+</div>
+
+<script src="/vendor/xterm/lib/xterm.js"></script>
+<script src="/vendor/addon-fit/lib/addon-fit.js"></script>
+<script src="/vendor/addon-web-links/lib/addon-web-links.js"></script>
+<script src="/vendor/marked/marked.umd.js"></script>
+<script src="/vendor/dompurify/purify.min.js"></script>
+<script>
+// No token: the server authenticates the connection itself, by Origin plus
+// `tailscale whois` on the peer address.
+const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+const url = (path) => `${wsBase}${path}`;
+
+/* ---------------- claude pane ---------------- */
+const log = document.getElementById("log");
+const box = document.getElementById("box");
+const dot = document.getElementById("dot");
+const meta = document.getElementById("meta");
+const stop = document.getElementById("stop");
+let agentWs, busy = false, lastText = null, lastRaw = "", cost = 0;
+
+/* Markdown → sanitized DOM. Model output lands in a page that holds an open
+   shell socket, so it is never trusted: DOMPurify strips scripts/handlers and
+   links are forced to open in a new tab without a referrer. */
+marked.use({ gfm: true, breaks: true });
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") { node.setAttribute("target", "_blank"); node.setAttribute("rel", "noopener noreferrer"); }
+});
+function renderMd(target, raw) {
+  target.innerHTML = DOMPurify.sanitize(marked.parse(raw), { USE_PROFILES: { html: true } });
+}
+
+function el(cls, text) {
+  const d = document.createElement("div");
+  d.className = cls;
+  if (text !== undefined) d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+const setBusy = (v) => { busy = v; stop.disabled = !v; };
+
+function connectAgent() {
+  agentWs = new WebSocket(url("/ws"));
+  agentWs.onopen  = () => { dot.classList.add("on"); meta.textContent = "connected"; };
+  agentWs.onclose = (e) => {
+    dot.classList.remove("on");
+    meta.textContent = e.code === 1006 ? "rejected — not a recognised tailnet peer" : "disconnected";
+    setBusy(false);
+  };
+  agentWs.onmessage = ({ data }) => {
+    const m = JSON.parse(data);
+    switch (m.kind) {
+      case "ready": meta.textContent = `${m.model} · ${m.workspace}`; break;
+      case "user": el("msg user", m.text); lastText = null; break;
+      case "mode":
+        document.getElementById("mode").value = m.mode;
+        document.getElementById("mode").classList.toggle("hot", m.mode === "bypassPermissions");
+        break;
+      case "text":
+        // Text arrives in blocks; keep the raw markdown and re-render the whole
+        // message so constructs spanning blocks (lists, fences) stay intact.
+        if (lastText) lastRaw += "\n" + m.text;
+        else { lastText = el("msg md"); lastRaw = m.text; }
+        renderMd(lastText, lastRaw);
+        log.scrollTop = log.scrollHeight;
+        break;
+      case "tool": {
+        const d = el("tool");
+        d.innerHTML = "→ <b></b> ";
+        d.querySelector("b").textContent = m.name;
+        d.append(summarize(m.input));
+        lastText = null;
+        break;
+      }
+      case "approval": renderApproval(m); break;
+      case "approval_closed": {
+        const c = document.querySelector(`[data-approval="${m.id}"]`);
+        if (c) {
+          c.classList.add("done");
+          c.querySelectorAll("button").forEach(b => b.disabled = true);
+          const label = { allow:"Approved", always:"Always allowed", deny:"Denied", gone:"Expired" }[m.decision] ?? "Closed";
+          c.querySelector("h4").textContent = `${label} ${c.dataset.tool}`;
+        }
+        break;
+      }
+      case "turn_end":
+        if (typeof m.costUsd === "number") cost += m.costUsd;
+        el("end", `done${m.denials ? ` · ${m.denials} denied` : ""} · est. $${cost.toFixed(4)} (list price; not billed on a subscription)`);
+        lastText = null; setBusy(false);
+        break;
+      case "error": el("msg err", m.message); setBusy(false); break;
+    }
+  };
+}
+
+function summarize(input) {
+  if (!input || typeof input !== "object") return "";
+  if (typeof input.command === "string") return input.command;
+  if (typeof input.file_path === "string") return input.file_path;
+  return JSON.stringify(input).slice(0, 160);
+}
+
+function renderApproval(m) {
+  const card = el("card");
+  card.dataset.approval = m.id;
+  card.dataset.tool = m.tool;
+  const h = document.createElement("h4");
+  h.textContent = `Approve ${m.tool}?`;
+  const pre = document.createElement("pre");
+  pre.textContent = typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
+
+  const row = document.createElement("div");
+  const choices = [["Approve", "allow", "allow"], ["Deny", "deny", "deny"]];
+  // "Always" only when the SDK actually offered a rule for this call.
+  if (m.canAlways) choices.splice(1, 0, [`Always allow ${m.tool}`, "always", "allow"]);
+
+  for (const [label, decision, cls] of choices) {
+    const b = document.createElement("button");
+    b.textContent = label; b.className = cls;
+    b.onclick = () => {
+      agentWs.send(JSON.stringify({ type: "decision", id: m.id, decision }));
+      card.querySelectorAll("button").forEach(x => x.disabled = true);
+    };
+    row.append(b, document.createTextNode(" "));
+  }
+  card.append(h, pre, row);
+  log.scrollTop = log.scrollHeight;
+}
+
+box.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey) return;
+  e.preventDefault();
+  const text = box.value.trim();
+  if (!text || busy || agentWs?.readyState !== WebSocket.OPEN) return;
+  agentWs.send(JSON.stringify({ type: "prompt", text }));
+  box.value = ""; box.style.height = "auto"; lastText = null;
+  setBusy(true);
+});
+box.addEventListener("input", () => {
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, 160) + "px";
+});
+stop.onclick = () => agentWs?.send(JSON.stringify({ type: "interrupt" }));
+
+const modeSel = document.getElementById("mode");
+modeSel.onchange = () => {
+  if (modeSel.value === "bypassPermissions" &&
+      !confirm("Never ask: Claude will run commands and edit files with no approval. Continue?")) {
+    modeSel.value = "default";
+  }
+  agentWs?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
+};
+
+document.getElementById("reset").onclick = () => {
+  if (!confirm("Discard this conversation and start a new one?")) return;
+  log.replaceChildren();
+  cost = 0; lastText = null;
+  agentWs?.send(JSON.stringify({ type: "reset" }));
+};
+
+/* ---------------- shell pane ---------------- */
+const term = new Terminal({
+  fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
+  fontSize: 13,
+  cursorBlink: true,
+  scrollback: 10000,
+  theme: {
+    background: "#0b0d11", foreground: "#dfe3ec", cursor: "#7aa2f7",
+    selectionBackground: "#2a3550",
+    black:"#1a1d26", red:"#f07178", green:"#7dcfa0", yellow:"#e0af68",
+    blue:"#7aa2f7", magenta:"#bb9af7", cyan:"#7dcfe0", white:"#dfe3ec",
+  },
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.loadAddon(new WebLinksAddon.WebLinksAddon());
+term.open(document.getElementById("term"));
+fit.fit();
+
+let ptyWs;
+function connectShell() {
+  ptyWs = new WebSocket(url("/pty"));
+  ptyWs.binaryType = "arraybuffer";
+
+  ptyWs.onopen = () => {
+    ptyWs.send(JSON.stringify({ type: "start", cols: term.cols, rows: term.rows }));
+  };
+  ptyWs.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) {
+      term.write(new Uint8Array(ev.data));
+      return;
+    }
+    const m = JSON.parse(ev.data);
+    if (m.type === "exit") term.write(`\r\n\x1b[90m[shell exited (${m.code}) — reload to restart]\x1b[0m\r\n`);
+  };
+  ptyWs.onclose = () => term.write("\r\n\x1b[90m[disconnected]\x1b[0m\r\n");
+}
+
+term.onData((d) => {
+  if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "input", data: d }));
+});
+
+const sendResize = () => {
+  fit.fit();
+  if (ptyWs?.readyState === WebSocket.OPEN) {
+    ptyWs.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+  }
+};
+new ResizeObserver(sendResize).observe(document.getElementById("term"));
+addEventListener("resize", sendResize);
+
+/* ---------------- draggable divider ---------------- */
+const grip = document.getElementById("grip");
+const split = document.getElementById("split");
+const left = document.getElementById("left");
+const right = document.getElementById("right");
+grip.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  grip.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    const pct = Math.min(85, Math.max(15, ((ev.clientX - split.getBoundingClientRect().left) / split.clientWidth) * 100));
+    left.style.flex  = `0 0 ${pct}%`;
+    right.style.flex = `1 1 auto`;
+  };
+  const up = () => {
+    grip.removeEventListener("pointermove", move);
+    grip.removeEventListener("pointerup", up);
+    sendResize();
+  };
+  grip.addEventListener("pointermove", move);
+  grip.addEventListener("pointerup", up);
+});
+
+connectAgent();
+connectShell();
+</script>
+</body>
+</html>
