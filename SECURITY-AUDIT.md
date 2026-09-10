@@ -17,12 +17,17 @@ places where the code promises a narrower boundary than it enforces.
 
 ## HIGH
 
-> **H1 and H2 are FIXED** (this session). Both verified end-to-end on the live
-> server: the zip endpoint no longer leaks a symlinked `/etc` file (0 escaped),
-> and the exfil pixel is blocked at the network layer (a local listener got 1
-> connection without CSP, 0 with it). Tests in `test/files.test.ts` and
-> `test/security.test.ts`; both mutation-checked. Details kept below for the
-> record. **The extension needs a reload** to pick up the manifest CSP.
+> **H1, H2, M1 and M3 are FIXED** (this session), each verified end-to-end on
+> the live server and mutation-checked:
+> - H1 — the zip endpoint no longer follows symlinks out of the root (0 escaped).
+> - H2 — the exfil pixel is blocked at the network layer (a local listener got 1
+>   connection without CSP, 0 with it).
+> - M1 — previewing a 400 MB file now adds ~0 MB RSS instead of 400 MB.
+> - M3 — `~/.claude`, `~/.ssh`, cloud tokens and the server's own `.env` are
+>   refused by the file browser though they sit inside the root.
+>
+> Tests in `test/files.test.ts` and `test/security.test.ts`. **The extension
+> needs a reload** to pick up the manifest CSP. Findings kept below for the record.
 
 ### H1 — Zip endpoint follows symlinks out of `FILES_ROOT`  ·  FIXED · was now: med · oss: high
 `src/files.ts` `collectForZip()` → `walk()` uses `stat()` (follows symlinks)
@@ -64,7 +69,7 @@ Same three call sites: `public/index.html:604`, `extension/sidepanel.js:32`,
 
 ## MEDIUM
 
-### M1 — `readTextPreview` reads the whole file into RAM  ·  now: med · oss: med
+### M1 — `readTextPreview` reads the whole file into RAM  ·  FIXED · was now: med · oss: med
 `src/files.ts:152`. The preview caps the *returned* slice at 256 KB but calls
 `readFile(abs)` first — the entire file. Verified: previewing a 400 MB file drove
 RSS **+400 MB** in 670 ms. A few concurrent previews of large files OOM the
@@ -90,7 +95,7 @@ Fix: require a custom header (e.g. `X-Requested-By`) that only same-origin JS
 can set, or treat a missing Origin on non-loopback, non-extension requests as
 suspicious rather than trusted.
 
-### M3 — File browser root includes `~/.claude/.credentials.json`  ·  now: low · oss: med
+### M3 — File browser root includes `~/.claude/.credentials.json`  ·  FIXED · was now: low · oss: med
 `FILES_ROOT` defaults to `/home/dev`. Verified: `/files/read?path=.claude/
 .credentials.json` returns the OAuth credentials (509 bytes) as text. Anyone who
 passes the gate can download your Claude subscription token — and with it, bill

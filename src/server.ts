@@ -41,6 +41,23 @@ if (HOST === "0.0.0.0" || HOST === "::") {
 }
 mkdirSync(WORKSPACE, { recursive: true });
 
+/**
+ * The file browser opens on the home directory, which holds the credentials
+ * that would let someone bill your Claude account or SSH as you. Block those
+ * subtrees even though they sit inside the root — a shell can read them, but a
+ * one-click download in a browser (and a prompt-injected agent) should not.
+ * Extend with CODETERM_DENY (colon-separated absolute paths).
+ */
+const HOME = process.env.HOME ?? "/home/dev";
+const DENY_DEFAULTS = [
+  ".claude", ".ssh", ".aws", ".config/gh", ".config/gcloud", ".gnupg",
+  ".docker/config.json", ".netrc", ".git-credentials", ".kube",
+].map((p) => join(HOME, p));
+const DENY_EXTRA = (process.env.CODETERM_DENY ?? "").split(":").map((s) => s.trim()).filter(Boolean);
+// The server's own secrets, wherever the project sits.
+const DENY_SELF = [join(ROOT, ".env")];
+await files.setDeniedPaths([...DENY_DEFAULTS, ...DENY_EXTRA, ...DENY_SELF]);
+
 // The Chrome extension dials in here; browser tools speak through it.
 const bridge = new BrowserBridge((line) => console.log(`[ext] ${line}`));
 

@@ -1,4 +1,4 @@
-import { readdir, stat, lstat, readFile, writeFile, mkdir, realpath } from "node:fs/promises";
+import { readdir, stat, lstat, open, writeFile, mkdir, realpath } from "node:fs/promises";
 import { resolve, join, dirname, relative, basename, sep } from "node:path";
 import { createReadStream } from "node:fs";
 
@@ -8,6 +8,29 @@ export type Entry = {
   size: number;
   mtime: number;
 };
+
+/**
+ * Absolute directories the browser must never reach, even though they sit
+ * inside the root. The default root is the home directory, which contains the
+ * Claude OAuth credentials, SSH keys and cloud tokens — reading
+ * `.claude/.credentials.json` through the file browser hands over the account.
+ * Configured once at startup by the server; matched by realpath so a symlink
+ * cannot sidestep it.
+ */
+let DENIED: string[] = [];
+
+/** Set the blocked subtrees. Paths that do not resolve are dropped quietly. */
+export async function setDeniedPaths(paths: string[]): Promise<void> {
+  const out: string[] = [];
+  for (const p of paths) {
+    try { out.push(await realpath(resolve(p))); } catch { /* not present: nothing to hide */ }
+  }
+  DENIED = out;
+}
+
+function isDenied(finalPath: string): boolean {
+  return DENIED.some((d) => finalPath === d || finalPath.startsWith(d + sep));
+}
 
 /**
  * Every path from the client goes through here.
@@ -40,6 +63,9 @@ export async function safePath(root: string, requested: string | undefined): Pro
   if (finalPath !== rootReal && !finalPath.startsWith(rootReal + sep)) {
     throw new Error("path is outside the browsable root");
   }
+  // realpath has resolved any symlink, so a link pointing into ~/.ssh is caught
+  // here just as a direct path would be.
+  if (isDenied(finalPath)) throw new Error("that path is blocked (credentials or keys)");
   return finalPath;
 }
 
@@ -155,15 +181,29 @@ export async function collectForZip(
   return { entries, bytes };
 }
 
-/** Best-effort text sniff: NUL byte in the first 8k means treat it as binary. */
+/**
+ * Best-effort text sniff: NUL byte in the first 8k means treat it as binary.
+ *
+ * Reads at most `maxBytes`, never the whole file. The previous version did
+ * `readFile(abs)` first and sliced after — so previewing a 400 MB log pulled
+ * 400 MB into RSS (measured) before returning a 256 KB slice, and a few at once
+ * could OOM the process and take every live session down with it.
+ */
 export async function readTextPreview(abs: string, maxBytes: number) {
-  const buf = await readFile(abs);
-  const head = buf.subarray(0, Math.min(8192, buf.length));
-  if (head.includes(0)) return null;
-  const slice = buf.subarray(0, maxBytes);
-  return {
-    text: slice.toString("utf8"),
-    truncated: buf.length > maxBytes,
-    bytes: buf.length,
-  };
+  const fh = await open(abs, "r");
+  try {
+    const size = (await fh.stat()).size;
+    const want = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(want);
+    const { bytesRead } = await fh.read(buf, 0, want, 0);
+    const data = buf.subarray(0, bytesRead);
+    if (data.subarray(0, Math.min(8192, data.length)).includes(0)) return null;
+    return {
+      text: data.toString("utf8"),
+      truncated: size > maxBytes,
+      bytes: size,
+    };
+  } finally {
+    await fh.close();
+  }
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, symlink, rm, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { safePath, toRel, list, saveUpload, readTextPreview, collectForZip } from "../src/files.js";
+import { safePath, toRel, list, saveUpload, readTextPreview, collectForZip, setDeniedPaths } from "../src/files.js";
 
 /**
  * safePath is the only thing standing between a path from the browser and the
@@ -137,11 +137,63 @@ describe("text preview", () => {
     assert.equal(r?.truncated, true);
     assert.equal(r?.bytes, 5000);
   });
+
+  // The preview reads at most `maxBytes`, never the whole file — a 400 MB log
+  // used to pull 400 MB into RSS before returning a 256 KB slice. Proven here
+  // by the shape: text is exactly the cap while `bytes` reports the full size,
+  // which is only possible if it read the cap and stat'd the rest.
+  test("reads only up to the cap, not the whole file", async () => {
+    await writeFile(join(root, "huge.txt"), "y".repeat(1_000_000));
+    const p = await safePath(root, "huge.txt");
+    const r = await readTextPreview(p, 4096);
+    assert.equal(r?.text.length, 4096, "returned exactly the cap");
+    assert.equal(r?.bytes, 1_000_000, "reported the full size");
+    assert.equal(r?.truncated, true);
+  });
 });
 
 test("toRel is empty at the root and relative below it", async () => {
   assert.equal(toRel(root, root), "");
   assert.equal(toRel(root, join(root, "sub", "ok.txt")), "sub/ok.txt");
+});
+
+// M3: the file browser opens on the home directory, which holds the Claude
+// credentials and SSH keys. safePath blocks a denylist of subtrees even though
+// they sit inside the root — a browser download of ~/.claude/.credentials.json
+// hands over the account.
+describe("denied paths (credentials, keys)", () => {
+  before(async () => {
+    await mkdir(join(root, "secretdir"), { recursive: true });
+    await writeFile(join(root, "secretdir", "token"), "SENSITIVE");
+    await writeFile(join(root, "loose.key"), "SENSITIVE");
+    await setDeniedPaths([join(root, "secretdir"), join(root, "loose.key")]);
+  });
+  after(async () => { await setDeniedPaths([]); });   // don't leak into other tests
+
+  test("refuses a denied directory and everything under it", async () => {
+    await assert.rejects(() => safePath(root, "secretdir"), /blocked/);
+    await assert.rejects(() => safePath(root, "secretdir/token"), /blocked/);
+  });
+
+  test("refuses a denied file", async () => {
+    await assert.rejects(() => safePath(root, "loose.key"), /blocked/);
+  });
+
+  test("a symlink into a denied subtree is refused too", async () => {
+    await symlink(join(root, "secretdir", "token"), join(root, "sneaky"));
+    await assert.rejects(() => safePath(root, "sneaky"), /blocked/);
+  });
+
+  test("does not block a sibling whose name merely starts the same", async () => {
+    // "secretdir2" must not be caught by a naive prefix match on "secretdir".
+    await mkdir(join(root, "secretdir2"), { recursive: true });
+    await writeFile(join(root, "secretdir2", "ok.txt"), "fine");
+    assert.ok((await safePath(root, "secretdir2/ok.txt")).endsWith("secretdir2/ok.txt"));
+  });
+
+  test("leaves everything else readable", async () => {
+    assert.ok((await safePath(root, "a.txt")).endsWith("a.txt"));
+  });
 });
 
 describe("collectForZip", () => {
