@@ -53,13 +53,13 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
     if (clear) send({ kind: "cleared" });
     next.attach(send, true);
     listFor();
-    send({ kind: "mode", mode: convo.mode });
+    send({ kind: "mode", mode: next.mode });
     sendProject(next);
   };
 
   chat.attach(send, replay);
   listFor();
-  send({ kind: "mode", mode: convo.mode });
+  send({ kind: "mode", mode: chat.mode });
   sendProject(chat);
 
   ws.on("message", (raw) => {
@@ -107,9 +107,11 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
         chat.setProject(resolveProject(convo.projects(), msg.id))
           .catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
         return;
+      // Per chat: only the conversation this client is on. Its other attached
+      // clients hear about it through the session's own "mode" event; a client
+      // on a different chat is untouched.
       case "mode":
-        convo.setMode(msg.mode)
-          .then(() => send({ kind: "mode", mode: convo.mode }))
+        chat.setMode(msg.mode)
           .catch((e: unknown) => send({ kind: "error", message: String(e) }));
         return;
       case "interrupt":

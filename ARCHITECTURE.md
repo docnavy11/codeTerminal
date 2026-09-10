@@ -140,7 +140,7 @@ Files are the database. What lives where:
 | page watches | `WatchRegistry`, memory only | lost on restart, on purpose (a watch is a live observer on a live tab) |
 | browser connections | `BrowserBridge` map keyed by per-profile instance id | until the socket drops |
 | live sessions | `Manager` pool, ≤4 | evicted LRU when idle |
-| permission mode | `Manager.#mode`, **app-global** | reset to `default` on every boot |
+| permission mode | per `LiveChat` | a chat admitted from disk starts `default`; never survives a restart |
 
 `Store` is written by exactly one process, which is what lets its list cache
 be authoritative without invalidation. That assumption is load-bearing: a
@@ -207,12 +207,13 @@ after ~30 s idle — kept alive by socket traffic and a `chrome.alarms` backstop
 hard to leak, but it means the security model is only as good as the network
 boundary, and there is no notion of *which* user — the whole app assumes one.
 
-**App-global permission mode.** `Manager.setMode` applies to every live chat.
-Documented as intentional ("set once, applies everywhere"), and it is the
-decision most likely to surprise: switching to *Never ask* in one browser arms
-every conversation, including one running unattended in another. Per-chat
-mode would be more correct and is a contained change (the plumbing already
-threads a mode into each `LiveChat`).
+**Per-chat permission mode.** Each `LiveChat` carries its own mode; a client's
+mode change reaches only the conversation it is on (its other attached clients
+hear it through the session's own event), and a new chat inherits its creator's.
+This replaced an app-global mode that armed every conversation at once — the
+decision most likely to surprise, and the one that did during testing. A chat
+admitted from disk always starts in `default`, which is what keeps the boot
+guarantee below.
 
 **No build step.** `tsx` runs the TypeScript directly, in production under
 systemd. Convenient; it means a boot compiles the tree, and there is no
@@ -237,9 +238,8 @@ Ranked by how much they would matter if this were shared or scaled.
    protocol loop) and the auth policy into their own modules would make both
    unit-testable and leave the composition root at a few hundred lines.
 
-4. **Single-user globals.** `activeShell` ("the newest pane"), `lastChat`
-   ("the most recently attached"), and the app-global mode are correct for
-   one person and wrong for two. They are the first things to change for any
+4. **Single-user globals.** `activeShell` ("the newest pane") and `lastChat`
+   ("the most recently attached") are correct for one person and wrong for two. They are the first things to change for any
    multi-user story — and the reason there should not be one without that
    change.
 

@@ -60,8 +60,8 @@ The unit is deliberately not sandboxed: the agent runs Bash and edits files by
 design, and `/pty` is a real shell, so `ProtectSystem` and friends would break
 the product rather than secure it.
 
-Permission mode resets to `default` on every boot, so a restart can never
-leave "Never ask" armed.
+Permission mode is per conversation, and a chat loaded from disk always starts
+in `default`, so a restart can never leave "Never ask" armed.
 
 ## Run
 

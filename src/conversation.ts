@@ -272,7 +272,6 @@ export class Manager {
   #projectsRoot: string;
   #deps: Omit<SessionDeps, "chatId">;
   #chats = new Map<string, LiveChat>();
-  #mode: PermissionMode = "default";
 
   /** Told when any chat's title, project or list-visible state changes. */
   onListChanged?: () => void;
@@ -285,8 +284,6 @@ export class Manager {
     this.#projectsRoot = projectsRoot;
     this.#deps = deps;
   }
-
-  get mode(): PermissionMode { return this.#mode; }
 
   list(): ChatSummary[] { return this.#store.list(); }
   read(id: string): ChatRecord | null {
@@ -323,22 +320,27 @@ export class Manager {
 
   create(from?: LiveChat): LiveChat {
     const now = Date.now();
-    // A new chat inherits where you were working, which is almost always what
-    // you want when you start one mid-task.
+    // A new chat inherits where you were working and how gated you were, which
+    // is almost always what you want when you start one mid-task.
     const rec: ChatRecord = {
       id: randomUUID(), title: "New chat", createdAt: now, updatedAt: now,
       sdkSessionId: null, cwd: from?.record.cwd ?? null, project: from?.record.project,
       events: [], granted: [], mode: "default",
     };
     this.#store.write(rec);
-    const chat = this.#admit(rec);
+    const chat = this.#admit(rec, from?.mode ?? "default");
     this.onListChanged?.();
     return chat;
   }
 
-  #admit(rec: ChatRecord): LiveChat {
+  /**
+   * Mode is per chat. A chat admitted from disk always starts in "default" —
+   * that is what keeps the promise that a restart never leaves "Never ask"
+   * armed. A chat created from another one inherits that one's mode.
+   */
+  #admit(rec: ChatRecord, mode: PermissionMode = "default"): LiveChat {
     this.#evictIfFull();
-    const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, this.#mode,
+    const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, mode,
       () => this.onListChanged?.());
     this.#chats.set(rec.id, chat);
     return chat;
@@ -366,13 +368,6 @@ export class Manager {
     this.#store.remove(id);
     this.onChatRemoved?.(id);
     this.onListChanged?.();
-  }
-
-  /** Mode is app-level: set once, applies to every conversation. */
-  async setMode(mode: PermissionMode): Promise<void> {
-    this.#mode = mode;
-    await Promise.all([...this.#chats.values()].map((c) => c.setMode(mode).catch(() => {})));
-    this.#mode = [...this.#chats.values()][0]?.mode ?? mode;
   }
 
   /** Close everything cleanly. */
