@@ -3,6 +3,7 @@ import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { Session, type ClientEvent } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
 import { generateTitle } from "./titles.js";
+import { listProjects, resolveProject, GENERAL_ID, type Project } from "./projects.js";
 
 const MAX_EVENTS = 3000;
 
@@ -32,9 +33,32 @@ export class Manager {
    */
   #mode: PermissionMode = "default";
 
-  constructor(workspace: string, dir: string) {
+  #projectsRoot: string;
+
+  constructor(workspace: string, dir: string, projectsRoot: string) {
     this.#workspace = workspace;
     this.#store = new Store(dir);
+    this.#projectsRoot = projectsRoot;
+  }
+
+  /** Discovered fresh each time: a new checkout should just appear. */
+  projects(): Project[] { return listProjects(this.#projectsRoot, this.#workspace); }
+
+  get project(): Project { return resolveProject(this.projects(), this.#rec?.project); }
+
+  /**
+   * Move this chat to a project. The project's directory becomes the working
+   * directory, so "which project" and "where does it work" cannot drift apart.
+   */
+  async setProject(id: string): Promise<void> {
+    if (this.#session.busy) throw new Error("Finish or stop the current turn first.");
+    const target = resolveProject(this.projects(), id);
+    if (target.id === this.project.id) return;
+    this.#rec.project = target.general ? undefined : target.id;
+    this.#rec.cwd = target.path;
+    this.#save();
+    await this.#activate(this.#rec);
+    this.#record({ kind: "local", text: `Project: ${target.name} — working in ${target.path}` });
   }
 
   get session() { return this.#session; }
@@ -79,7 +103,7 @@ export class Manager {
     return { id: randomUUID(), title: "New chat", createdAt: now, updatedAt: now,
              // A new chat inherits where you are working, which is nearly
              // always what you want when you start one mid-task.
-             sdkSessionId: null, cwd: this.#rec?.cwd ?? null,
+             sdkSessionId: null, cwd: this.#rec?.cwd ?? null, project: this.#rec?.project,
              events: [], granted: [], mode: "default" };
   }
 
@@ -275,6 +299,7 @@ export class Manager {
     // system/init only arrives with the next turn, so the header would show a
     // stale directory until then. Say it now.
     this.#emitAll({ kind: "cwd", path: this.cwd });
+    this.#emitAll({ kind: "project", id: this.project.id, name: this.project.name });
     this.#emitAll(this.#session.status());
   }
 

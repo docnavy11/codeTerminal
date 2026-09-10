@@ -41,6 +41,7 @@ export type ClientEvent =
   | { kind: "chats"; chats: unknown[]; activeId: string }
   | { kind: "cleared" }
   | { kind: "cwd"; path: string }
+  | { kind: "project"; id: string; name: string }
   | { kind: "watch"; description: string; detail: string }
   | { kind: "conversation_reset"; newId: string }
   | { kind: "delta"; text: string }

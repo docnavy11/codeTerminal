@@ -422,6 +422,28 @@ the live tab id, `read_page` its real text, `snapshot` its one link,
 `navigate` moved the tab, and `eval` both read `location.href` and mutated the
 live DOM.
 
+## Projects and the manage page
+
+A **project is a subdirectory of `/home/dev/projects`** — discovered, never
+created. Make a directory and it appears; there is nothing to register. Plus
+one overarching **General** project for chats that are not about a directory,
+which is most of them.
+
+A chat belongs to exactly one project, and the project's directory becomes its
+working directory, so "which project" and "where does it work" cannot drift
+apart. A new chat inherits the project you were in. An unknown project id
+falls back to General rather than erroring.
+
+`/manage.html` is the curation surface: **Chats** (search, rename, move,
+delete), **Prompts** (a real editor, not a 300px popover), **Projects**
+(filter, chat counts, jump to a project's chats). The popovers in the main UI
+stay for in-flow use; this is for the jobs that need room. There are 79
+projects here, so both lists filter.
+
+Moving a chat rebuilds its session, so the server only allows it on the chat
+that is currently open — the manage page says so in the control rather than
+letting it fail.
+
 ## Per-chat working directory
 
 Each chat remembers the directory it works in, so one can be pointed at a repo

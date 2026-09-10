@@ -13,13 +13,17 @@ export type ChatRecord = {
   cwd: string | null;
   /** True while the title is just the opening message, awaiting a real one. */
   titleProvisional?: boolean;
+  /** Project id this chat belongs to; absent means the General project. */
+  project?: string;
   events: ClientEvent[];
   granted: PermissionUpdate[];
   mode: PermissionMode;
 };
 
 /** Summary shown in the chat picker — never carries the whole transcript. */
-export type ChatSummary = Pick<ChatRecord, "id" | "title" | "createdAt" | "updatedAt" | "cwd"> & { turns: number };
+export type ChatSummary =
+  Pick<ChatRecord, "id" | "title" | "createdAt" | "updatedAt" | "cwd"> &
+  { turns: number; project: string | null };
 
 export class Store {
   #dir: string;
@@ -74,6 +78,7 @@ export class Store {
           createdAt: d.createdAt ?? 0,
           updatedAt: d.updatedAt ?? 0,
           cwd: d.cwd ?? null,
+          project: d.project ?? null,
           turns: d.events.filter((e) => e.kind === "user").length,
         });
       } catch { /* skip a corrupt file rather than lose the list */ }

@@ -49,7 +49,8 @@ setShellSource(() => activeShell);
 
 
 // Chats live on disk; only the active one has a running SDK session.
-const convo = new Manager(WORKSPACE, process.env.CODETERM_CHATS ?? join(ROOT, "chats"));
+const PROJECTS_ROOT = process.env.CODETERM_PROJECTS_ROOT ?? "/home/dev/projects";
+const convo = new Manager(WORKSPACE, process.env.CODETERM_CHATS ?? join(ROOT, "chats"), PROJECTS_ROOT);
 await convo.boot();
 
 const prompts = new PromptStore(process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"));
@@ -167,6 +168,45 @@ const guard: express.RequestHandler = (req, res, next) => {
  * in the client, so the plain web UI — which has no idea what your browser is
  * showing — gets the same domain-scoped list as the side panel.
  */
+/**
+ * Chat management over HTTP, for the manage page. The websocket carries the
+ * live list for the running UI; this is for curation, which does not need a
+ * session open.
+ */
+app.get("/chats", guard, (_req, res) => {
+  res.json({ active: convo.activeId, projects: convo.projects(), chats: convo.list() });
+});
+
+app.post("/chats/:id", guard, express.json({ limit: "64kb" }), async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const b = req.body as { title?: string; project?: string };
+    if (typeof b.title === "string" && !convo.rename(id, b.title)) {
+      throw new Error("no such chat");
+    }
+    if (typeof b.project === "string") {
+      if (id !== convo.activeId) throw new Error("open the chat before moving it");
+      await convo.setProject(b.project);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.delete("/chats/:id", guard, async (req, res) => {
+  try {
+    await convo.remove(String(req.params.id));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.get("/projects", guard, (_req, res) => {
+  res.json({ active: convo.project.id, projects: convo.projects() });
+});
+
 app.get("/prompts", guard, async (_req, res) => {
   const tab = (await bridge.activeTab()) ?? {};
   const host = hostOf(tab.url);
@@ -353,6 +393,13 @@ function attachAgent(ws: WebSocket, replay = true): void {
         }
         return;
 
+      case "project":
+        if (typeof msg.id === "string") {
+          convo.setProject(msg.id).catch((e: unknown) =>
+            send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
+        }
+        return;
+
       case "rename":
         if (typeof msg.id === "string" && typeof msg.title === "string") convo.rename(msg.id, msg.title);
         return;
@@ -433,6 +480,7 @@ function announce(): void {
   console.log(`shell          /pty — real PTY, NO approval gate`);
   console.log(`browser        /ext — extension bridge, tools ungated`);
   console.log(`files          ${FILES_ROOT} (browse, upload, download)`);
+  console.log(`projects       ${PROJECTS_ROOT}`);
   console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
 }
 

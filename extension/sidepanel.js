@@ -319,6 +319,8 @@ box.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"
 
 stop.onclick = () => ws?.send(JSON.stringify({ type: "interrupt" }));
 $("newchat").onclick = () => ws?.send(JSON.stringify({ type: "new" }));
+// A 400px column is the wrong place to curate; open the manage page in a tab.
+$("manage").onclick = async () => chrome.tabs.create({ url: (await base()) + "/manage.html" });
 modeSel.onchange = () => ws?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
 
 /* ---- appearance, remembered per browser --------------------------------- */
