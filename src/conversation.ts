@@ -37,6 +37,22 @@ export class Manager {
 
   get session() { return this.#session; }
   get activeId() { return this.#rec.id; }
+  /** Where the active chat works — the shell pane opens here too. */
+  get cwd() { return this.#rec?.cwd ?? this.#workspace; }
+
+  /**
+   * Point this chat at a different directory. The SDK takes cwd only at
+   * launch, so the session is rebuilt and resumed by its sdkSessionId — the
+   * conversation survives, the working directory changes under it.
+   */
+  async setCwd(abs: string): Promise<void> {
+    if (this.#session.busy) throw new Error("Finish or stop the current turn first.");
+    if (abs === this.cwd) return;
+    this.#rec.cwd = abs;
+    this.#save();
+    await this.#activate(this.#rec);
+    this.#record({ kind: "local", text: `Working directory is now ${abs}` });
+  }
 
   list(): ChatSummary[] { return this.#store.list(); }
 
@@ -56,7 +72,10 @@ export class Manager {
   #blank(): ChatRecord {
     const now = Date.now();
     return { id: randomUUID(), title: "New chat", createdAt: now, updatedAt: now,
-             sdkSessionId: null, events: [], granted: [], mode: "default" };
+             // A new chat inherits where you are working, which is nearly
+             // always what you want when you start one mid-task.
+             sdkSessionId: null, cwd: this.#rec?.cwd ?? null,
+             events: [], granted: [], mode: "default" };
   }
 
   #record = (e: ClientEvent): void => {
@@ -98,6 +117,7 @@ export class Manager {
       emit({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
     }
     emit({ kind: "replayed" });
+    emit({ kind: "cwd", path: this.cwd });
     emit(this.#session.status());   // so a reload mid-turn knows it is busy
   }
 
@@ -130,7 +150,7 @@ export class Manager {
   async #activate(rec: ChatRecord): Promise<void> {
     this.#session?.close();
     this.#rec = rec;
-    this.#session = new Session(this.#workspace, this.#record);
+    this.#session = new Session(rec.cwd ?? this.#workspace, this.#record);
 
     if (this.#mode !== "default") void this.#session.setMode(this.#mode);
 
@@ -147,6 +167,9 @@ export class Manager {
     // Always state the mode. Letting the UI keep a stale value is how you end
     // up believing "Never ask" is on while the session is asking.
     this.#emitAll({ kind: "mode", mode: this.#mode });
+    // system/init only arrives with the next turn, so the header would show a
+    // stale directory until then. Say it now.
+    this.#emitAll({ kind: "cwd", path: this.cwd });
     this.#emitAll(this.#session.status());
   }
 

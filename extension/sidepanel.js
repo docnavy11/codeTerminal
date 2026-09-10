@@ -15,6 +15,7 @@ const log = $("log"), box = $("box"), dot = $("dot"), meta = $("meta");
 const stop = $("stop"), modeSel = $("mode");
 const statusEl = $("status"), statusText = $("statustext"), statusTime = $("statustime");
 
+let cwdShown = "";
 let ws = null, busy = false, lastText = null, lastRaw = "", cost = 0;
 let statusSince = 0, statusTick = null, statusState = "idle";
 let retry = null;
@@ -53,8 +54,13 @@ async function connect() {
 
 function handle(m) {
   switch (m.kind) {
+    case "cwd":
+      cwdShown = m.path;
+      meta.textContent = cwdShown.split("/").pop() || cwdShown;
+      meta.title = cwdShown;
+      break;
     case "ready":
-      meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
+      if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
     case "cleared":  log.replaceChildren(); cost = 0; lastText = null; break;
@@ -389,6 +395,7 @@ async function upload(fileList) {
 
 $("fup").onclick = () => browse(parentPath ?? "");
 $("frefresh").onclick = () => browse(cwdPath);
+$("fcwd").onclick = () => ws?.send(JSON.stringify({ type: "cwd", path: cwdPath }));
 $("fupload").onclick = () => fpick.click();
 fpick.onchange = () => { if (fpick.files.length) upload([...fpick.files]); fpick.value = ""; };
 for (const ev of ["dragenter", "dragover"]) flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.add("drop"); });

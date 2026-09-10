@@ -8,6 +8,7 @@ import type { ClientEvent } from "./session.js";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
+import { stat } from "node:fs/promises";
 import { setBridge, setShellSource } from "./session.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
@@ -122,7 +123,7 @@ app.get("/files/info", guard, async (_req, res) => {
   // the browsable root, else the root itself.
   let start = "";
   try { start = files.toRel(FILES_ROOT, await files.safePath(FILES_ROOT, WORKSPACE)); } catch { start = ""; }
-  res.json({ root: FILES_ROOT, start, maxUpload: MAX_UPLOAD });
+  res.json({ root: FILES_ROOT, start, maxUpload: MAX_UPLOAD, cwd: convo.cwd });
 });
 
 app.get("/files/list", guard, async (req, res) => {
@@ -207,7 +208,7 @@ function attachAgent(ws: WebSocket, replay = true): void {
 
   ws.on("message", (raw) => {
     let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string;
-               answers?: unknown; withTab?: boolean };
+               answers?: unknown; withTab?: boolean; path?: string };
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     const session = convo.session;
 
@@ -240,6 +241,20 @@ function attachAgent(ws: WebSocket, replay = true): void {
           session.decide(msg.id, msg.decision);
         }
         return;
+
+      case "cwd": {
+        if (typeof msg.path !== "string") return;
+        // Same containment rule as the file browser, so a typo cannot point
+        // the agent somewhere unexpected.
+        files.safePath(FILES_ROOT, msg.path)
+          .then(async (abs) => {
+            const st = await stat(abs);
+            if (!st.isDirectory()) throw new Error("not a directory");
+            await convo.setCwd(abs);
+          })
+          .catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
+        return;
+      }
 
       case "mode":
         if (msg.mode === "default" || msg.mode === "acceptEdits" || msg.mode === "auto" ||
@@ -293,7 +308,8 @@ function attachShell(ws: WebSocket): void {
     let msg: { type?: string; data?: string; cols?: number; rows?: number };
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     switch (msg.type) {
-      case "start":  shell.start(WORKSPACE, msg.cols ?? 80, msg.rows ?? 24); return;
+      // The shell opens where the chat works, so both panes agree.
+      case "start":  shell.start(convo.cwd, msg.cols ?? 80, msg.rows ?? 24); return;
       case "input":  if (typeof msg.data === "string") shell.write(msg.data); return;
       case "resize": shell.resize(msg.cols ?? 80, msg.rows ?? 24); return;
     }

@@ -9,13 +9,15 @@ export type ChatRecord = {
   createdAt: number;
   updatedAt: number;
   sdkSessionId: string | null;
+  /** Absolute path this chat works in. Null means the server default. */
+  cwd: string | null;
   events: ClientEvent[];
   granted: PermissionUpdate[];
   mode: PermissionMode;
 };
 
 /** Summary shown in the chat picker — never carries the whole transcript. */
-export type ChatSummary = Pick<ChatRecord, "id" | "title" | "createdAt" | "updatedAt"> & { turns: number };
+export type ChatSummary = Pick<ChatRecord, "id" | "title" | "createdAt" | "updatedAt" | "cwd"> & { turns: number };
 
 export class Store {
   #dir: string;
@@ -69,6 +71,7 @@ export class Store {
           title: d.title || "(untitled)",
           createdAt: d.createdAt ?? 0,
           updatedAt: d.updatedAt ?? 0,
+          cwd: d.cwd ?? null,
           turns: d.events.filter((e) => e.kind === "user").length,
         });
       } catch { /* skip a corrupt file rather than lose the list */ }

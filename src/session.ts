@@ -37,6 +37,7 @@ export type ClientEvent =
   | { kind: "local"; text: string }
   | { kind: "chats"; chats: unknown[]; activeId: string }
   | { kind: "cleared" }
+  | { kind: "cwd"; path: string }
   | { kind: "replayed" }
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "question"; id: string; questions: AskQuestion[] }

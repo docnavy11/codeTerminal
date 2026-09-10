@@ -331,6 +331,29 @@ the live tab id, `read_page` its real text, `snapshot` its one link,
 `navigate` moved the tab, and `eval` both read `location.href` and mutated the
 live DOM.
 
+## Per-chat working directory
+
+Each chat remembers the directory it works in, so one can be pointed at a repo
+while another stays in the workspace. Navigate to a directory in the **files**
+tab and press **use here**.
+
+The SDK takes `cwd` only at launch, so changing it rebuilds the session and
+resumes it by `sdkSessionId` — the conversation survives, the directory
+changes under it. Refused while a turn is running.
+
+The path goes through the same `safePath` containment as the file browser, so
+it must be a real directory inside `CODETERM_FILES_ROOT`. A new chat inherits
+where you are working, which is almost always what you want when you start one
+mid-task, and a shell pane opened afterwards starts there too.
+
+The directory is announced on attach, on chat switch and on change, rather
+than waiting for the next turn's `system/init` — otherwise the header shows
+the previous directory until you happen to send a message.
+
+Verified: two chats given different directories each kept their own across
+switching away and back; outside-root and not-a-directory are both refused;
+a shell opened after the switch reported the new path from `pwd`.
+
 ## Chats
 
 Conversations are kept as one JSON file each under `chats/`, listed newest

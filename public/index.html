@@ -255,6 +255,7 @@
         <button id="fup" title="Up one level">↑</button>
         <span id="fpath" class="fpath">/</span>
         <button id="frefresh" title="Refresh">⟳</button>
+        <button id="fcwd" title="Make this the working directory for this chat">use here</button>
         <button id="fupload">Upload</button>
         <input type="file" id="fpick" multiple hidden>
       </div>
@@ -436,8 +437,14 @@ function connectAgent() {
   agentWs.onmessage = ({ data }) => {
     const m = JSON.parse(data);
     switch (m.kind) {
+      case "cwd": {
+        cwdShown = m.path;
+        meta.textContent = modelShown ? `${modelShown} · ${cwdShown}` : cwdShown;
+        break;
+      }
       case "ready": {
-        meta.textContent = `${m.model} · ${m.workspace}`;
+        modelShown = m.model;
+        meta.textContent = `${m.model} · ${cwdShown || m.workspace}`;
         const opt = modeSel.querySelector('option[value="bypassPermissions"]');
         opt.disabled = !m.canBypass;
         opt.textContent = m.canBypass ? "Never ask" : "Never ask (set CODETERM_ALLOW_BYPASS=1)";
@@ -699,7 +706,7 @@ modeSel.onchange = () => {
   agentWs?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
 };
 
-let CHATS = [], ACTIVE = null;
+let CHATS = [], ACTIVE = null, cwdShown = "", modelShown = "";
 const chatList = document.getElementById("chatlist");
 
 function ago(ts) {
@@ -974,6 +981,9 @@ async function upload(fileList) {
 
 document.getElementById("fup").onclick = () => browse(parentPath ?? "");
 document.getElementById("frefresh").onclick = () => browse(cwdPath);
+document.getElementById("fcwd").onclick = () => {
+  agentWs?.send(JSON.stringify({ type: "cwd", path: cwdPath }));
+};
 document.getElementById("fupload").onclick = () => fpick.click();
 fpick.onchange = () => { if (fpick.files.length) upload([...fpick.files]); fpick.value = ""; };
 
