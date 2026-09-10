@@ -49,7 +49,8 @@ export class LiveChat {
   #spawn(deps: Omit<SessionDeps, "chatId">, mode: PermissionMode): Session {
     this.#deps = deps;
     this.#mode = mode;
-    const s = new Session(this.#rec.cwd ?? this.#workspace, this.#record, { ...deps, chatId: this.#rec.id });
+    const s = new Session(this.#rec.cwd ?? this.#workspace, this.#record,
+      { ...deps, chatId: this.#rec.id, prefer: () => this.#extInstance });
     if (mode !== "default") void s.setMode(mode);
     s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted)
       .catch((err) => this.#record({ kind: "error", message: String(err) }));
@@ -64,6 +65,17 @@ export class LiveChat {
   get lastTouched(): number { return this.#rec.updatedAt ?? 0; }
   get cwd(): string { return this.#rec.cwd ?? this.#workspace; }
   get mode(): PermissionMode { return this.#session.mode; }
+
+  /**
+   * The browser this conversation's tools act in — set by whichever client
+   * attached from an extension. Without it, a chat in one browser would drive
+   * tabs in another.
+   */
+  #extInstance: string | undefined;
+  get extInstance(): string | undefined { return this.#extInstance; }
+  useBrowser(instance: string | undefined): void {
+    if (instance) this.#extInstance = instance;
+  }
 
   project(projects: Project[]): Project { return resolveProject(projects, this.#rec.project); }
 

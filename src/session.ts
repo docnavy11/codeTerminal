@@ -79,6 +79,8 @@ export type SessionDeps = {
   getShell: () => Shell | null;
   watches: WatchRegistry | null;
   prompts: PromptStore | null;
+  /** Which browser this conversation's browser tools should act in. */
+  prefer: () => string | undefined;
 };
 
 /**
@@ -170,10 +172,10 @@ export class Session {
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS],
         mcpServers: {
           terminal: terminalTools(this.#deps.getShell),
-          ...(d.bridge ? { browser: browserTools(d.bridge) } : {}),
+          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer) } : {}),
           // The chat id is this session's own, so a watch is always attributed
           // to the conversation that set it.
-          ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId) } : {}),
+          ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
           ...(d.prompts ? { prompts: promptTools(d.prompts) } : {}),
         },
         permissionMode: this.#mode,

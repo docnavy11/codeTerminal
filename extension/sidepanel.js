@@ -43,7 +43,17 @@ async function connect() {
   const url = await agentUrl();
   ws = new WebSocket(url);
 
-  ws.onopen = () => { dot.classList.add("on"); meta.textContent = ""; flushQueued(); };
+  ws.onopen = async () => {
+    dot.classList.add("on");
+    meta.textContent = "";
+    // Tell the server which browser this panel is in, so this conversation's
+    // browser tools act here and not in another browser that is also open.
+    try {
+      const { instanceId } = await chrome.storage.local.get("instanceId");
+      if (instanceId) ws.send(JSON.stringify({ type: "browser", instance: instanceId }));
+    } catch { /* no extension storage: the server falls back to the newest */ }
+    flushQueued();
+  };
   ws.onclose = () => {
     dot.classList.remove("on");
     meta.textContent = "reconnecting…";

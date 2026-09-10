@@ -512,10 +512,16 @@ last.
 Permission mode stays app-level and applies to every conversation, since it is
 a statement about how much you want to be asked, not about one chat.
 
-**Not done: the browser bridge is still single.** All sessions share one
-`/ext` connection, so with two browsers open the browser tools act in whichever
-one holds the bridge. Fine with a single browser; wrong with two. Routing tools
-to the browser a session belongs to is the remaining piece.
+Browser tools follow the browser you are working in. Each extension generates
+a stable instance id per profile (`chrome.runtime.id` is not enough — the same
+unpacked extension shares it across profiles) and sends it on connect; the side
+panel sends the same id when it attaches, and a conversation binds to it **at
+send time**, not at attach time. Two clients can start on the same chat, so
+binding on attach let the second capture it.
+
+If that browser has closed, a browser tool **fails and says so** rather than
+falling back to another open browser — acting in the wrong browser silently is
+worse than not acting.
 
 ## Chats
 

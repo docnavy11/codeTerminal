@@ -58,6 +58,21 @@ let pingTimer = null;
 let enabled = true;
 let serverUrl = DEFAULT_URL;
 
+/**
+ * A stable id for this browser profile, so the server can tell two browsers
+ * apart and send a conversation's browser commands to the right one. Generated
+ * once and kept: chrome.runtime.id is not enough, since the same unpacked
+ * extension in two profiles shares it.
+ */
+let instanceId = null;
+async function getInstanceId() {
+  if (instanceId) return instanceId;
+  const s = await chrome.storage.local.get("instanceId");
+  instanceId = s.instanceId ?? crypto.randomUUID();
+  if (!s.instanceId) await chrome.storage.local.set({ instanceId });
+  return instanceId;
+}
+
 chrome.storage.local.get({ enabled: true, serverUrl: DEFAULT_URL }).then((s) => {
   enabled = s.enabled;
   serverUrl = s.serverUrl || DEFAULT_URL;
@@ -88,8 +103,11 @@ function connect() {
   if (!enabled || (ws && ws.readyState <= 1)) return;
   try { ws = new WebSocket(serverUrl); } catch { return retry(); }
 
-  ws.onopen = () => {
+  ws.onopen = async () => {
     setBadge(true);
+    // Identify this browser before anything else, so no command can be routed
+    // here while the server still has us under a placeholder.
+    ws.send(JSON.stringify({ type: "hello", instance: await getInstanceId() }));
     clearInterval(pingTimer);
     // Traffic on the socket is what keeps this service worker from eviction.
     pingTimer = setInterval(() => {

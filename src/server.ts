@@ -64,7 +64,8 @@ const convo = new Manager(
   WORKSPACE,
   process.env.CODETERM_CHATS ?? join(ROOT, "chats"),
   PROJECTS_ROOT,
-  { bridge, getShell: () => activeShell, watches, prompts },
+  // prefer is replaced per-chat by LiveChat, which knows its own browser.
+  { bridge, getShell: () => activeShell, watches, prompts, prefer: () => undefined },
 );
 convo.onListChanged = () => { for (const f of clients) f(); };
 
@@ -373,6 +374,7 @@ function attachAgent(ws: WebSocket, replay = true): void {
   // Land on the most recent chat; the client can switch immediately.
   const startId = convo.newestId();
   let chat: LiveChat = (startId && convo.get(startId)) || convo.create();
+  let clientBrowser: string | undefined;
   lastChat = chat;
 
   const listFor = () => send({ kind: "chats", chats: convo.list(), activeId: chat.id });
@@ -380,6 +382,7 @@ function attachAgent(ws: WebSocket, replay = true): void {
     chat.detach(send);
     chat = next;
     lastChat = next;
+    next.useBrowser(clientBrowser);
     if (clear) send({ kind: "cleared" });
     next.attach(send, true);
     listFor();
@@ -398,7 +401,8 @@ function attachAgent(ws: WebSocket, replay = true): void {
 
   ws.on("message", (raw) => {
     let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string;
-               answers?: unknown; withTab?: boolean; path?: string; title?: string };
+               answers?: unknown; withTab?: boolean; path?: string; title?: string;
+               instance?: string };
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     switch (msg.type) {
@@ -407,8 +411,12 @@ function attachAgent(ws: WebSocket, replay = true): void {
         if (chat.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
         const text = msg.text;
         const target = chat;
+        // Bind the browser at send time, not at attach time: two clients can
+        // start on the same chat, and the last to attach would otherwise
+        // capture it. Whoever is driving decides where the tools act.
+        target.useBrowser(clientBrowser);
         const attach = msg.withTab !== false && wantsContext(text);
-        void (attach ? bridge.activeTab() : Promise.resolve(null)).then((tab) => {
+        void (attach ? bridge.activeTab(target.extInstance) : Promise.resolve(null)).then((tab) => {
           const context = tab?.url
             ? [`active tab: ${tab.title ?? "(untitled)"} — ${tab.url}`,
                tab.selection ? `selected text:\n${tab.selection}` : null].filter(Boolean).join("\n")
@@ -418,6 +426,12 @@ function attachAgent(ws: WebSocket, replay = true): void {
         });
         return;
       }
+
+      // Which browser this client is in. Applies to the chat it is on, and to
+      // any it switches to, so the tools follow the person.
+      case "browser":
+        if (typeof msg.instance === "string") { clientBrowser = msg.instance; chat.useBrowser(clientBrowser); }
+        return;
 
       case "answer":
         if (typeof msg.id === "string" && msg.answers && typeof msg.answers === "object") {
