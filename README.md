@@ -504,7 +504,7 @@ that sees them all.
 
 ## Slash commands
 
-The input box supports `/` commands with autocomplete (arrows, Tab, Esc).
+Both surfaces support `/` commands with autocomplete (arrows, Tab, Esc).
 The list comes from `Query.supportedCommands()`, refreshed on the SDK's
 `commands_changed` push.
 
@@ -512,6 +512,11 @@ Timing gotcha: with a streaming-input prompt, `system/init` does not arrive
 until the *first* turn — but the menu needs the list before you type. So
 `supportedCommands()` is called as soon as the query object exists, not from
 the init handler.
+
+A slash command never gets ambient tab context attached. The CLI only expands
+a command that is the first thing in the message, and the context block would
+sit in front of it — which is exactly how they silently stopped working once
+tab context shipped.
 
 Not all of them: the CLI advertises `terminal_slash_commands` (here `doctor`,
 `color`, `reload-plugins`) whose UX needs a real terminal, and the SDK docs

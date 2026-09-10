@@ -137,6 +137,18 @@
   #status .t { margin-left:auto; font-variant-numeric:tabular-nums; opacity:.75; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
+  #menu { position:absolute; bottom:100%; left:6px; right:6px; margin-bottom:5px;
+          background:var(--panel); border:1px solid var(--line); border-radius:5px;
+          max-height:220px; overflow-y:auto; display:none; z-index:20;
+          box-shadow:0 -5px 18px rgba(0,0,0,.4); }
+  #menu.open { display:block; }
+  #menu .item { padding:5px 9px; cursor:pointer; display:flex; gap:7px; align-items:baseline; }
+  #menu .item.sel { background:var(--btn); }
+  #menu .item .n { color:var(--accent); flex-shrink:0; }
+  #menu .item .h { color:var(--warn); font-size:0.708rem; flex-shrink:0; }
+  #menu .item .d { color:var(--dim); font-size:0.708rem; overflow:hidden;
+                   text-overflow:ellipsis; white-space:nowrap; }
+  footer { position:relative; }
   footer { display:flex; gap:5px; padding:7px 8px; border-top:1px solid var(--line);
            background:var(--panel); flex-shrink:0; }
   textarea { flex:1; resize:none; background:var(--bg); color:var(--fg); border:1px solid var(--line);
@@ -181,6 +193,7 @@
 
 <div id="status"><span class="pip"></span><span id="statustext">connecting…</span><span class="t" id="statustime"></span></div>
 <footer>
+  <div id="menu"></div>
   <textarea id="box" placeholder="Ask Claude…" autofocus></textarea>
   <button id="stop" disabled>Stop</button>
 </footer>

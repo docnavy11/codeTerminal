@@ -54,6 +54,7 @@ async function connect() {
 
 function handle(m) {
   switch (m.kind) {
+    case "commands": COMMANDS = m.commands ?? []; break;
     case "cwd":
       cwdShown = m.path;
       meta.textContent = cwdShown.split("/").pop() || cwdShown;
@@ -231,18 +232,80 @@ function renderQuestion(m) {
   log.scrollTop = log.scrollHeight;
 }
 
-box.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" || e.shiftKey) return;
-  e.preventDefault();
+let COMMANDS = [];
+const menu = $("menu");
+let matches = [], sel = 0;
+
+/** Only while the whole box is a single "/word" — not mid-sentence. */
+function currentQuery() {
+  const v = box.value;
+  if (!v.startsWith("/") || /\s/.test(v)) return null;
+  return v.slice(1).toLowerCase();
+}
+
+function refreshMenu() {
+  const q = currentQuery();
+  if (q === null) { menu.classList.remove("open"); matches = []; return; }
+  matches = COMMANDS.filter(c =>
+    c.name.toLowerCase().startsWith(q) ||
+    (c.aliases ?? []).some(a => a.toLowerCase().startsWith(q))).slice(0, 60);
+  if (!matches.length) { menu.classList.remove("open"); return; }
+  sel = Math.min(sel, matches.length - 1);
+  menu.replaceChildren(...matches.map((c, i) => {
+    const d = document.createElement("div");
+    d.className = "item" + (i === sel ? " sel" : "");
+    const n = document.createElement("span"); n.className = "n"; n.textContent = "/" + c.name;
+    d.appendChild(n);
+    if (c.argumentHint) {
+      const h = document.createElement("span"); h.className = "h"; h.textContent = c.argumentHint; d.appendChild(h);
+    }
+    const de = document.createElement("span"); de.className = "d"; de.textContent = c.description || "";
+    d.appendChild(de);
+    d.onmousedown = (e) => { e.preventDefault(); pick(i); };
+    return d;
+  }));
+  menu.classList.add("open");
+  menu.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+}
+
+function pick(i) {
+  const c = matches[i];
+  if (!c) return;
+  box.value = "/" + c.name + (c.argumentHint ? " " : "");
+  menu.classList.remove("open");
+  matches = [];
+  box.focus();
+  if (!c.argumentHint) sendBox();
+}
+
+function sendBox() {
   const text = box.value.trim();
   if (!text || busy || ws?.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "prompt", text, withTab }));
-  box.value = ""; box.style.height = "auto"; lastText = null;
+  box.value = ""; box.style.height = "auto";
+  menu.classList.remove("open"); matches = [];
+  lastText = null;
+}
+
+box.addEventListener("keydown", (e) => {
+  if (menu.classList.contains("open") && matches.length) {
+    if (e.key === "ArrowDown") { e.preventDefault(); sel = (sel + 1) % matches.length; refreshMenu(); return; }
+    if (e.key === "ArrowUp")   { e.preventDefault(); sel = (sel - 1 + matches.length) % matches.length; refreshMenu(); return; }
+    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); pick(sel); return; }
+    if (e.key === "Escape")    { menu.classList.remove("open"); matches = []; return; }
+  }
+  if (e.key !== "Enter" || e.shiftKey) return;
+  e.preventDefault();
+  sendBox();
 });
+
 box.addEventListener("input", () => {
   box.style.height = "auto";
   box.style.height = Math.min(box.scrollHeight, 130) + "px";
+  sel = 0;
+  refreshMenu();
 });
+box.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"), 120));
 
 stop.onclick = () => ws?.send(JSON.stringify({ type: "interrupt" }));
 $("newchat").onclick = () => ws?.send(JSON.stringify({ type: "new" }));
