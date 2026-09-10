@@ -2,6 +2,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage } from "node:http";
 import { mkdirSync } from "node:fs";
+import { pipeline } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Manager } from "./conversation.js";
@@ -186,10 +187,26 @@ app.use((_req, res, next) => {
  * Same two checks as a WebSocket upgrade. Static assets stay open — they are
  * inert without a session — but anything touching the filesystem does not.
  */
+/**
+ * One line per refusal, but not without limit: a scan of an exposed port
+ * must not be able to turn the journal into its own log. After DENY_LOG_BURST
+ * lines in a minute the rest of that minute is summed up in one line.
+ */
+const DENY_LOG_BURST = 20;
+let denyWindow = 0, denyCount = 0;
+function logDeny(what: string, why: string): void {
+  const minute = Math.floor(Date.now() / 60_000);
+  if (minute !== denyWindow) {
+    if (denyCount > DENY_LOG_BURST) console.warn(`[deny] …and ${denyCount - DENY_LOG_BURST} more refusals in that minute`);
+    denyWindow = minute; denyCount = 0;
+  }
+  if (++denyCount <= DENY_LOG_BURST) console.warn(`[deny] ${what} — ${why}`);
+}
+
 const guard: express.RequestHandler = (req, res, next) => {
   auth.denyReason(req).then((deny) => {
     if (!deny) return next();
-    console.warn(`[deny] ${req.method} ${req.path} — ${deny}`);
+    logDeny(`${req.method} ${req.path}`, deny);
     res.status(403).json({ error: deny });
   }).catch((e) => res.status(500).json({ error: String(e) }));
 };
@@ -318,7 +335,9 @@ app.get("/files/read", guard, async (req, res) => {
     // Let the browser name the download; the client also sets its own.
     res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(f.name)}"`);
     res.setHeader("Content-Length", String(f.size));
-    files.streamFile(f.abs).pipe(res);
+    // pipeline, not pipe: a client that goes away mid-download destroys the
+    // file stream too, instead of leaving it reading into a dead socket.
+    pipeline(files.streamFile(f.abs), res, () => {});
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -348,7 +367,7 @@ app.post("/files/zip", guard, express.json({ limit: "256kb" }), express.urlencod
 
     const zip = new ZipFile();
     for (const e of entries) zip.addFile(e.abs, e.name);
-    zip.outputStream.pipe(res);
+    pipeline(zip.outputStream, res, () => {});
     zip.end();
   } catch (e) {
     // If the stream already started, a JSON error would corrupt the zip.
@@ -402,7 +421,7 @@ server.on("upgrade", async (req, socket, head) => {
 
   const deny = await auth.denyReason(req);
   if (deny) {
-    console.warn(`[deny] ${route} — ${deny}`);
+    logDeny(route, deny);
     socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
     socket.destroy();
     return;

@@ -153,9 +153,19 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
   ws.on("error", detach);
 }
 
+/** Each /pty socket is a process; a page that opens sockets in a loop must not be able to fork-bomb the host. */
+export const MAX_SHELLS = 8;
+let openShells = 0;
+
 /** The shell: a real PTY, no approval gate. */
 export function attachShell(ws: WebSocket, ctx: AttachContext): void {
   const { state } = ctx;
+  if (openShells >= MAX_SHELLS) {
+    ws.send(JSON.stringify({ type: "exit", code: -1, reason: `too many shells open (${MAX_SHELLS})` }));
+    ws.close(1013, "too many shells");
+    return;
+  }
+  openShells++;
   const shell = new Shell(
     (chunk) => { if (ws.readyState === ws.OPEN) ws.send(Buffer.from(chunk, "utf8"), { binary: true }); },
     (code) => {
@@ -177,7 +187,10 @@ export function attachShell(ws: WebSocket, ctx: AttachContext): void {
     }
   });
 
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true; openShells--;
     if (state.activeShell === shell) state.activeShell = null;   // unless a newer pane took over
     shell.kill();
   };

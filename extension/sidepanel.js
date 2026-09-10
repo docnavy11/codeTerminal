@@ -78,7 +78,10 @@ async function connect() {
     setBusy(false);
     retry = setTimeout(connect, 3000);           // the server may just be restarting
   };
-  ws.onmessage = ({ data }) => handle(JSON.parse(data));
+  ws.onmessage = ({ data }) => {
+    let m; try { m = JSON.parse(data); } catch { return; }   // a bad frame is not worth a broken handler
+    handle(m);
+  };
 }
 
 function handle(m) {
@@ -213,6 +216,7 @@ function renderApproval(m) {
     // "Always" carries the .allow class too, so styling keys off the decision.
     b.dataset.decision = decision;
     b.onclick = () => {
+      if (ws?.readyState !== WebSocket.OPEN) return;   // reconnecting: the server will re-ask
       ws.send(JSON.stringify({ type: "decision", id: m.id, decision }));
       card.querySelectorAll("button").forEach((x) => (x.disabled = true));
     };
@@ -273,6 +277,7 @@ function renderQuestion(m) {
     const answers = {};
     for (const [q, set] of picked) if (set.size) answers[q] = [...set].join(", ");
     if (!Object.keys(answers).length) return;
+    if (ws?.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "answer", id: m.id, answers }));
     card.querySelectorAll("button,input").forEach((x) => (x.disabled = true));
     card.classList.add("done");

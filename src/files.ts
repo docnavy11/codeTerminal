@@ -83,12 +83,22 @@ export async function list(root: string, requested?: string) {
   const st = await stat(abs);
   if (!st.isDirectory()) throw new Error("not a directory");
 
+  const rootReal = await realpath(resolve(root));
   const names = await readdir(abs);
   const entries: Entry[] = [];
   for (const name of names) {
     try {
-      // lstat semantics via stat(): a broken symlink should not kill the listing.
-      const s = await stat(join(abs, name));
+      const full = join(abs, name);
+      // A symlink that points outside the root cannot be opened (safePath
+      // refuses it), so do not list it as an ordinary file either.
+      if ((await lstat(full)).isSymbolicLink()) {
+        const real = await realpath(full);
+        if (real !== rootReal && !real.startsWith(rootReal + sep)) {
+          entries.push({ name, kind: "other", size: 0, mtime: 0 });
+          continue;
+        }
+      }
+      const s = await stat(full);
       entries.push({
         name,
         kind: s.isDirectory() ? "dir" : s.isFile() ? "file" : "other",
@@ -227,6 +237,18 @@ export async function collectForZip(
  * 400 MB into RSS (measured) before returning a 256 KB slice, and a few at once
  * could OOM the process and take every live session down with it.
  */
+/** Bytes at the end of `b` that begin a UTF-8 sequence the buffer does not finish. */
+export function partialUtf8Tail(b: Uint8Array): number {
+  for (let back = 1; back <= 3 && back <= b.length; back++) {
+    const c = b[b.length - back];
+    if ((c & 0xc0) !== 0x80) {                       // a lead byte (or ASCII)
+      const need = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+      return need > back ? back : 0;
+    }
+  }
+  return 0;
+}
+
 export async function readTextPreview(abs: string, maxBytes: number) {
   const fh = await open(abs, "r");
   try {
@@ -234,8 +256,11 @@ export async function readTextPreview(abs: string, maxBytes: number) {
     const want = Math.min(size, maxBytes);
     const buf = Buffer.alloc(want);
     const { bytesRead } = await fh.read(buf, 0, want, 0);
-    const data = buf.subarray(0, bytesRead);
+    let data = buf.subarray(0, bytesRead);
     if (data.subarray(0, Math.min(8192, data.length)).includes(0)) return null;
+    // The cap can land inside a multibyte character; drop the partial tail
+    // rather than show U+FFFD at the end of every truncated preview.
+    if (size > maxBytes) data = data.subarray(0, data.length - partialUtf8Tail(data));
     return {
       text: data.toString("utf8"),
       truncated: size > maxBytes,

@@ -115,28 +115,21 @@ href>`; only the extension needs the blob path.
 
 ---
 
-## Low
+## Low — all fixed
 
-- **Response streams are not tied to client abort** (`server.ts:325, 352`):
-  `.pipe(res)` leaves the file/zip stream reading after the client goes away.
-  Use `pipeline`.
-- **`ws.onmessage` parses unguarded** (`sidepanel.js:62`): a malformed frame
-  throws inside the handler.
-- **`ws.send` without `?.`** in `renderApproval`/`renderQuestion`
-  (`sidepanel.js:197, 257`): TypeError if clicked before the first connection.
-- **`projects()` does sync `readdir`+`stat`** of the projects root on every
-  attach and every `/chats` (79 directories here) — sync FS on a hot path.
-- **`close()` does not `interrupt()`**: deleting a busy chat lets the SDK
-  finish the turn first (wasted tokens).
-- **Timing-based tests** (heartbeat at 20 ms, whois memo `>2 ms`, upload
-  `RSS < 40 MB`) are flaky risks under CI load.
-- **Deny logging is unbounded**: one `console.warn` per refused request.
-- **`readTextPreview`** can split a multibyte UTF-8 character at the cap.
-- **`list()`** shows an escaping symlink as a normal file (opening it is
-  blocked by `safePath`; cosmetic).
-- **`MAX_LIVE = 4`** is really eight processes; there is no cap on `/pty`
-  shells per client.
-- **`.env` is 0644** (no secrets in it today).
+| Item | Fix | Verified |
+|------|-----|----------|
+| Response streams not tied to client abort | `pipeline()` for `/files/read` and `/files/zip` | 30 aborted downloads of an 81 MB file: server fds **32 → 62 before, 34 → 34 after** |
+| Unguarded `JSON.parse` in `ws.onmessage` | try/catch, bad frame ignored | code-read |
+| `ws.send` without a guard in approval/question cards | `readyState` check | code-read |
+| Sync `readdir`+`stat` in `projects()` on every attach / `/chats` | 5 s memo in `Manager.projects()` | code-read |
+| `close()` without `interrupt()` | a busy session is interrupted on close | code-read (needs a real turn to prove) |
+| Timing-based tests | heartbeat on `mock.timers`; whois memo counts an injected lookup instead of timing a spawn | suite green; the RSS < 40 MB upload check kept (120 MB in, margin is 3×) |
+| Deny logging unbounded | 20 lines per minute, then one summary | 40 cross-site requests: **40 lines before, 20 after** |
+| `readTextPreview` splits a multibyte char at the cap | `partialUtf8Tail()` drops the partial sequence | tests: 2/3/4-byte partials; `"ab€€€"` cut at 4 bytes → `"ab"`, no U+FFFD |
+| `list()` shows an escaping symlink as a normal file | `lstat` + realpath containment → `kind: "other"`; internal links keep their kind | test: escaping link `other`, internal alias `file` |
+| No cap on `/pty` shells | `MAX_SHELLS = 8`, refused with close 1013 | 10 sockets: **8 open, 2 refused**, a new one accepted after a close |
+| `.env` was 0644 | `chmod 600` | `ls -la` |
 
 ---
 

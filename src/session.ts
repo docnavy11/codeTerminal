@@ -286,6 +286,9 @@ export class Session {
   /** Real shutdown — not called merely because a browser tab went away. */
   close(): void {
     this.#closed = true;
+    // Ending the input does not stop a turn already running; without this a
+    // deleted chat kept spending tokens until the model finished on its own.
+    if (this.#busy) void this.#query?.interrupt().catch(() => {});
     for (const [id, p] of this.#pending) {
       this.#emit({ kind: "approval_closed", id, decision: "gone" });
       p.resolve({ behavior: "deny", message: "Session closed." });

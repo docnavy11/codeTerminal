@@ -3,26 +3,33 @@ import assert from "node:assert/strict";
 import { whois, clearWhoisCache, WHOIS_TTL_MS } from "../src/tailnet.js";
 
 // whois spawns `tailscale`. Memoised per IP so a burst of guarded requests is
-// not a burst of subprocesses. Proven by timing: a spawn is tens of ms, a memo
-// hit is microseconds — a 10x margin is robust on any box.
+// not a burst of subprocesses. Counted, not timed: the lookup is injectable.
 describe("whois memo", () => {
   before(() => clearWhoisCache());
+  const counting = () => { let n = 0; const fn = async () => { n++; return null; }; return { fn, get n() { return n; } }; };
 
   test("a repeat lookup inside the TTL does not spawn again", async () => {
-    const ip = "198.51.100.7";   // documentation range: never on a tailnet
-    const t0 = performance.now(); const a = await whois(ip, 1, 1000); const first = performance.now() - t0;
-    const t1 = performance.now(); const b = await whois(ip, 1, 1000 + WHOIS_TTL_MS - 1); const second = performance.now() - t1;
+    const ip = "198.51.100.7";
+    const c = counting();
+    const a = await whois(ip, 1, 1000, c.fn);
+    const b = await whois(ip, 1, 1000 + WHOIS_TTL_MS - 1, c.fn);
     assert.equal(a, b);
-    assert.ok(first > 2, `first call should have spawned (took ${first.toFixed(2)}ms)`);
-    assert.ok(second < first / 10, `memo hit took ${second.toFixed(3)}ms vs spawn ${first.toFixed(1)}ms`);
+    assert.equal(c.n, 1, "second call must be a memo hit");
   });
 
   test("the memo expires after the TTL", async () => {
     clearWhoisCache();
     const ip = "198.51.100.8";
-    await whois(ip, 1, 5000);
-    const t = performance.now(); await whois(ip, 1, 5000 + WHOIS_TTL_MS + 1); const again = performance.now() - t;
-    assert.ok(again > 2, `should have re-spawned after TTL (took ${again.toFixed(2)}ms)`);
+    const c = counting();
+    await whois(ip, 1, 5000, c.fn);
+    await whois(ip, 1, 5000 + WHOIS_TTL_MS + 1, c.fn);
+    assert.equal(c.n, 2, "must look up again after the TTL");
+  });
+
+  test("the real lookup is what runs when nothing is injected", async () => {
+    clearWhoisCache();
+    // documentation range: never on a tailnet, so this exercises the spawn path and its null answer
+    assert.equal(await whois("198.51.100.9", 1, 9000), null);
   });
 });
 

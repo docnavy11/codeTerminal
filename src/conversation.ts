@@ -321,7 +321,17 @@ export class Manager {
     try { return this.#store.read(id); } catch { return null; }
   }
 
+  // listProjects is a sync readdir + one stat per entry (79 here), and it ran
+  // on every attach and every /chats. A short memo keeps it off the hot path;
+  // a new directory shows up within the TTL.
+  #projectsMemo: { at: number; list: Project[] } | null = null;
+  static readonly PROJECTS_TTL_MS = 5_000;
+
   projects(): Project[] {
+    const now = Date.now();
+    if (!this.#projectsMemo || now - this.#projectsMemo.at > Manager.PROJECTS_TTL_MS) {
+      this.#projectsMemo = { at: now, list: listProjects(this.#projectsRoot, this.#workspace) };
+    }
     const usage = new Map<string, { lastUsed: number; chats: number }>();
     for (const c of this.#store.list()) {
       const id = c.project ?? GENERAL_ID;
@@ -331,7 +341,7 @@ export class Manager {
         chats: (prev?.chats ?? 0) + 1,
       });
     }
-    return orderByRecency(listProjects(this.#projectsRoot, this.#workspace), usage);
+    return orderByRecency(this.#projectsMemo.list, usage);
   }
 
   /** The chat a client with no preference should land on. */

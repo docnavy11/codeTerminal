@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, symlink, rm, readFile, realpath, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { safePath, toRel, list, saveUpload, saveUploadStream, readTextPreview, collectForZip, setDeniedPaths } from "../src/files.js";
+import { safePath, toRel, list, saveUpload, saveUploadStream, readTextPreview, collectForZip, setDeniedPaths, partialUtf8Tail } from "../src/files.js";
 import { Readable } from "node:stream";
 
 /**
@@ -301,5 +301,50 @@ describe("saveUploadStream (streamed upload)", () => {
     assert.equal(r.size, 120 * MB);
     assert.ok(grew < 40, `RSS grew ${grew.toFixed(0)} MB for a 120 MB upload — it is buffering`);
     await rm(join(root, "stream.bin"), { force: true });
+  });
+});
+
+describe("preview does not split a multibyte character", () => {
+  test("partialUtf8Tail", () => {
+    const e = new TextEncoder();
+    assert.equal(partialUtf8Tail(e.encode("abc")), 0);
+    assert.equal(partialUtf8Tail(e.encode("aé")), 0);                 // complete 2-byte
+    assert.equal(partialUtf8Tail(e.encode("aé").subarray(0, 2)), 1);  // lead byte only
+    assert.equal(partialUtf8Tail(e.encode("a€").subarray(0, 3)), 2);  // 2 of 3 bytes
+    assert.equal(partialUtf8Tail(e.encode("😀").subarray(0, 3)), 3);  // 3 of 4 bytes
+    assert.equal(partialUtf8Tail(new Uint8Array(0)), 0);
+  });
+  test("a truncated preview ends on a whole character", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const d = await mkdtemp(join(tmpdir(), "ct-utf8-"));
+    const p = join(d, "u.txt");
+    await writeFile(p, "ab€€€");            // 2 + 3*3 = 11 bytes
+    const r = await readTextPreview(p, 4);  // cuts inside the first €
+    assert.equal(r?.text, "ab");
+    assert.equal(r?.truncated, true);
+    assert.ok(!r?.text.includes("\uFFFD"));
+    await rm(d, { recursive: true, force: true });
+  });
+});
+
+describe("list marks a symlink that escapes the root", () => {
+  test("an escaping link is 'other', an internal one keeps its kind", async () => {
+    const { mkdtemp, writeFile, symlink, rm, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const base = await mkdtemp(join(tmpdir(), "ct-ln-"));
+    const root = join(base, "root"); await mkdir(root);
+    await writeFile(join(base, "secret.txt"), "outside");
+    await writeFile(join(root, "in.txt"), "inside");
+    await symlink(join(base, "secret.txt"), join(root, "escape"));
+    await symlink(join(root, "in.txt"), join(root, "alias"));
+    const { entries } = await list(root);
+    const kind = (n: string) => entries.find((e) => e.name === n)?.kind;
+    assert.equal(kind("escape"), "other");
+    assert.equal(kind("alias"), "file");
+    assert.equal(kind("in.txt"), "file");
+    await rm(base, { recursive: true, force: true });
   });
 });
