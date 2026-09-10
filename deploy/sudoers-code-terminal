@@ -1,8 +1,16 @@
-# Lets the dev user manage the code-terminal service without a password.
+# Removes the password prompt for twelve commands. It does NOT grant dev a new
+# ability: dev is in the sudo group and already has (ALL : ALL) ALL, so it
+# could always restart this unit — after typing a password.
 #
-# Deliberately narrow: exact commands, one unit, no wildcards. A wildcard such
-# as "systemctl restart *" would be equivalent to root, since it could restart
-# any unit on the box.
+# The password is the whole point. The agent's /pty shell runs as dev with no
+# password to offer, so a NOPASSWD rule is the only sudo it can actually use.
+# That is why this file is scoped to the narrowest useful set rather than
+# leaning on the blanket rule dev already has.
+#
+# No escalation: the unit runs as dev:dev and its file is root-owned, so
+# restarting it starts dev's own code as dev. Exact commands, one unit, no
+# wildcards — "systemctl restart *" would be equivalent to root, since it
+# could restart any unit on the box.
 #
 # "status" is deliberately ABSENT. It needs no privilege to run, and under sudo
 # it would spawn a pager as root — and a pager runs shell commands (!sh), so

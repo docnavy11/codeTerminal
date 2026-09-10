@@ -7,6 +7,27 @@ stops for your approval.
 Runs on this box (`ubuntu-16gb-nbg1-1-dev-server`) against the Claude Code
 OAuth credentials in `~/.claude` — **no `ANTHROPIC_API_KEY`, no API credits.**
 
+## Managing the service
+
+`deploy/sudoers-code-terminal` removes the password prompt for
+restart/start/stop of this one unit:
+
+    sudo install -m 0440 -o root -g root \
+      deploy/sudoers-code-terminal /etc/sudoers.d/code-terminal
+
+It grants no new ability — `dev` is in the sudo group and already has
+`(ALL : ALL) ALL`. What it removes is the *password*, which matters because
+the agent's `/pty` shell runs as `dev` with no password to offer, so a
+NOPASSWD rule is the only sudo reachable from inside the product.
+
+No escalation: the unit runs as `dev:dev` and its file is root-owned, so a
+restart starts dev's own code as dev.
+
+`status` is deliberately absent. It needs no privilege, and under `sudo` it
+spawns a pager as root — and a pager runs shell commands (`!sh`), so including
+it would hand out a root shell. Same reasoning keeps `journalctl` out; both
+already work unprivileged.
+
 ## Running as a service
 
     sudo deploy/install.sh
