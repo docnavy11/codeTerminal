@@ -41,6 +41,10 @@ export type SessionDeps = {
   prompts: PromptStore | null;
   /** Which browser this conversation's browser tools should act in. */
   prefer: () => string | undefined;
+  /** The SDK entry point. Tests inject a scripted one; production leaves it unset. */
+  spawnQuery?: typeof query;
+  /** Names a chat from its first message. Also an SDK call, also injectable. */
+  titler?: (firstUser: string) => Promise<string | null>;
 };
 
 /**
@@ -123,7 +127,7 @@ export class Session {
     // here, clamping a bypass the deployment has not enabled back to default so
     // the launch can never be more permissive than the runtime guard allows.
     this.#mode = mode === "bypassPermissions" && !ALLOW_BYPASS ? "default" : mode;
-    this.#query = query({
+    this.#query = (d.spawnQuery ?? query)({
       prompt: this.#input,
       options: {
         cwd: this.#workspace,
@@ -167,6 +171,7 @@ export class Session {
     // pushed into an input nobody read, so the prompt vanished silently.
     this.#dead = true;
     this.#busy = false;
+    this.#input.end();          // nothing reads it any more; a later send() is dropped, not queued
     this.#activeTools.clear();
     this.#compacting = false;
     for (const [id, p] of this.#pending) {

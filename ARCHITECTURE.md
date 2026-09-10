@@ -242,7 +242,9 @@ aborted downloads, unbounded caches and logs — were found and closed in
 
 3. ~~`server.ts` as four things.~~ Done: `auth.ts` (policy, unit-tested with
    injected tailscale calls) and `attach.ts` (the client loops); `server.ts`
-   is the composition root and router at 457 lines.
+   is the composition root and router, now as an exported `boot(config)`
+   with injection points for the SDK, the titler and tailscale — which is
+   what lets the whole server run in-process under test (see README, Tests).
 
 4. **Single-user globals.** `activeShell` ("the newest pane") and `lastChat`
    ("the most recently attached") are correct for one person and wrong for two. They are the first things to change for any

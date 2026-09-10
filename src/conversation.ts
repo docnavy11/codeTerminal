@@ -167,8 +167,10 @@ export class LiveChat {
       this.#rec.titleProvisional = true;
       this.#save();
       this.#onChange();
-      void this.#maybeTitle();
     }
+    // Retried on later turns while still provisional: the titler can fail
+    // (offline, rate-limited) and used to get exactly one attempt.
+    if (this.#rec.titleProvisional) void this.#maybeTitle();
   }
 
   rename(title: string): boolean {
@@ -205,6 +207,10 @@ export class LiveChat {
 
   /** Rebuild the session in place, resuming the same conversation. */
   #restart(): void {
+    // Flush first: the resume id arrives with `ready` and is saved on a
+    // debounce, so a rebuild inside that window would otherwise start a
+    // brand-new conversation instead of resuming this one.
+    this.#save();
     this.#session.close();
     this.#session = this.#spawn(this.#deps, this.#mode);
     this.#emitAll({ kind: "cwd", path: this.cwd });
@@ -242,7 +248,7 @@ export class LiveChat {
 
     this.#titling = true;
     let title: string | null = null;
-    try { title = await generateTitle(firstUser.text); } finally { this.#titling = false; }
+    try { title = await (this.#deps.titler ?? generateTitle)(firstUser.text); } finally { this.#titling = false; }
 
     if (!title) {
       // Give up after a few turns rather than paying for a call on every one.

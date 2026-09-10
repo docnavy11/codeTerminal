@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm test",
-    "test:e2e": "CODETERM_E2E=1 node --import tsx --test test/e2e.test.ts"
+    "test:e2e": "CODETERM_E2E=1 node --import tsx --test test/e2e.test.ts",
+    "test:browser": "cd test/browser && python3 -m pytest -q -p no:cacheprovider",
+    "coverage": "node --import tsx --test --experimental-test-coverage test/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.266",

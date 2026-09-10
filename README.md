@@ -414,22 +414,58 @@ It never throws. Cleaning up must not be able to fail a capture.
     npm run check     # typecheck + tests
     npm run test:e2e  # boots a real server and session; needs credentials
 
-276 tests. The core is still the two places where a mistake is a security
-hole rather than a bug:
+402 unit tests, plus a 12-test browser suite. Measured line coverage of
+`src/` is 97.7% (`npm run coverage`); every module is above 85%, and the
+ones that matter most — auth, files, protocol, store, session, conversation,
+attach, browser bridge, tools — are at 98–100%.
 
-- `safePath` — what the browser may reach. Traversal, absolute paths,
-  symlinks pointing out, files reached through them, and the paths that must
-  still work (a not-yet-existing upload target, a nested one).
-- `saveUpload` — filenames go through `basename`, so `../../../../tmp/x`
-  lands as `x` in the current directory.
+The suite is built around three fakes in `test/fakes/`, because the code
+under test talks to a `claude` subprocess, a Chrome extension and a tailnet,
+none of which a test may touch:
+
+- **`sdk.ts` — a scripted SDK.** `Session` takes the SDK's `query()` through
+  `deps.spawnQuery`; the fake records every prompt the session sends, lets a
+  test emit any SDK message, end the stream cleanly, or make it throw, and
+  exposes `canUseTool` so the approval gate is driven from both sides. Title
+  generation (also an SDK call) is injected the same way.
+- **`ws.ts` — a socket as the server sees it**, with `frame()` for inbound
+  messages and the parsed outbound ones collected.
+- **`server.ts` — the whole server in-process** on a free port with temp
+  dirs and the fake SDK, so routes and upgrades are exercised over real HTTP
+  and real WebSockets without tailscale or credentials. `server.ts` exports
+  `boot(config)` for exactly this; the process entry point is a few lines
+  under it.
+
+What the tests cover, and deliberately the failure paths as much as the
+happy ones: the session's event machine, approvals allowed/always/denied/
+aborted/answered/decided-twice, `bypassPermissions` refused, the SDK stream
+ending, throwing, and being closed by us; the prompt busy window, dead-session
+respawn (with the resume id flushed first — a bug the test found), `/clear`
+vs an unasked-for reset, the 3000-event cap, save failures reported once per
+outage, pool eviction rules, empty-chat reuse; every WebSocket message kind
+including malformed, unknown and ill-typed frames and the bad ids that used
+to crash the process; the shell cap; every HTTP route with its 400/403/404s
+(traversal, the denylist, over-limit uploads leaving nothing behind, zip
+over the cap, cross-site refusal and the deny-log burst cap); the bridge's
+hello/replace/timeout/late-reply/disconnect paths; the MCP tools with a fake
+extension; graceful shutdown flushing a debounced save and closing sockets
+with 1001.
+
+`npm run test:browser` (Playwright, Python) drives the real client against
+a fixture server whose scripted SDK answers prompts, asks for approvals and
+asks questions: reconnect without duplicating the transcript, the pty pane
+coming back, a prompt typed while offline being queued and sent, streaming
+at one render per frame, approval and question cards round-tripping, new
+chat and switching back, per-chat mode surviving a reload, downloads with no
+blob in page memory, garbage events not breaking the client, and the mobile
+page fitting the viewport.
 
 Plus `stripAnsi`, since what the agent reads from the shell pane is raw pty
-output and the prompt emits an OSC title before every command. Around those:
-the auth policy with injected tailscale calls, CIDR parsing, the protocol
-union (and a coverage check that the JavaScript client handles every kind),
-the heartbeat on fake timers, the whois memo with an injected lookup, the
-store's archive-on-delete and write-failure paths, upload streaming (RSS
-measured), the manager's cold-record edits, and the nav/mobile layouts.
+output and the prompt emits an OSC title before every command; the auth
+policy with injected tailscale calls, CIDR parsing, the protocol union (and
+a coverage check that the JavaScript client handles every kind), the
+heartbeat on fake timers, the whois memo with an injected lookup, upload
+streaming (RSS measured), and the nav/mobile layouts.
 
 Two reviews live next to the code and record what was found, what was fixed,
 and how each fix was verified: `SECURITY-AUDIT.md` (the trust boundary) and

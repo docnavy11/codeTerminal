@@ -1,0 +1,138 @@
+"""The shared client in a real browser against the fixture server: the paths
+that only exist in the DOM — reconnects, streaming, cards, downloads, layout."""
+import os, time
+from conftest import open_ui, send, wait, wait_reply, last_reply
+
+
+def test_prompt_round_trip(page, server):
+    open_ui(page, server)
+    send(page, "hello there")
+    wait(page, "() => document.querySelectorAll('.msg.user').length === 1", what="user turn")
+    wait_reply(page, "You said: hello there")
+    wait(page, "() => !!document.querySelector('#log .end')", what="turn end")
+    assert page.input_value("#box") == ""
+    assert page.errors == []
+
+
+def test_reconnect_does_not_duplicate_the_transcript(page, server):
+    open_ui(page, server)
+    send(page, "first"); wait_reply(page, "You said: first")
+    count = lambda: page.evaluate("() => ({u: document.querySelectorAll('.msg.user').length, n: document.querySelectorAll('#log > *').length})")
+    before = count()
+    for _ in range(2):
+        server.restart()
+        wait(page, "() => document.querySelector('#dot').classList.contains('on')", 20, "reconnect")
+        time.sleep(1)
+        assert count() == before
+    assert page.errors == []
+
+
+def test_pty_pane_reconnects_after_a_restart(page, server):
+    open_ui(page, server)
+    wait(page, "() => ptyWs && ptyWs.readyState === 1", what="pty open")
+    server.restart()
+    wait(page, "() => ptyWs && ptyWs.readyState === 1", 20, "pty reopen")
+    wait(page, "() => (document.querySelector('#term .xterm-rows')?.textContent || '').includes('reconnected')", 10, "reconnected banner")
+
+
+def test_prompt_typed_while_offline_is_queued_then_sent(page, server):
+    open_ui(page, server)
+    server.stop()
+    wait(page, "() => !document.querySelector('#dot').classList.contains('on')", what="disconnect noticed")
+    send(page, "queued one")
+    assert page.input_value("#box") == ""
+    assert "queued" in page.text_content("#meta")
+    server.start()
+    wait_reply(page, "You said: queued one", 20)
+
+
+def test_streaming_renders_once_per_frame(page, server):
+    open_ui(page, server)
+    r = page.evaluate("""() => {
+      const word = 'lorem ipsum **dolor** sit `amet` \\n'; const N = 700;
+      const t0 = performance.now();
+      for (let i = 0; i < N; i++) handle({ kind: 'delta', text: word });
+      const sync = performance.now() - t0;
+      return new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => {
+        const el = document.querySelector('#log .msg.md:last-child');
+        res({ mainThreadMs: sync, rendered: !!el && el.textContent.includes('amet') && el.textContent.length > 15000 });
+      })));
+    }""")
+    assert r["rendered"]
+    assert r["mainThreadMs"] < 300, r   # 6092 ms before the per-frame render
+    page.evaluate("() => handle({ kind: 'text', text: 'done' })")
+
+
+def test_approval_card_round_trip(page, server):
+    open_ui(page, server)
+    send(page, "approve-me")
+    page.wait_for_selector(".card[data-tool=Bash]", timeout=10000)
+    assert "rm -rf build" in page.text_content(".card[data-tool=Bash] pre")
+    page.click(".card[data-tool=Bash] button[data-decision=deny]")
+    wait(page, "() => [...document.querySelectorAll('.card[data-tool=Bash] button')].every(b => b.disabled)", what="card disabled")
+    wait_reply(page, "decision: deny")
+
+
+def test_question_card_round_trip(page, server):
+    open_ui(page, server)
+    send(page, "ask-me")
+    page.wait_for_selector(".q[data-tool=question]", timeout=10000)
+    page.click(".q .opt:has-text('Blue')")
+    page.click(".q button.allow:has-text('Answer')")
+    wait_reply(page, '"Which colour?":"Blue"')
+
+
+def test_new_chat_and_switching_back(page, server):
+    open_ui(page, server)
+    send(page, "remember me"); wait_reply(page, "You said: remember me")
+    page.click("#newchat")
+    wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="cleared")
+    page.click("#chatsbtn")
+    page.wait_for_selector("#clist .c", timeout=5000)
+    assert page.locator("#clist .c").count() >= 2
+    page.click("#clist .c:has(.ct:text-is('remember me'))")
+    wait(page, "() => [...document.querySelectorAll('.msg.user')].some(m => m.textContent.includes('remember me'))", what="old transcript")
+
+
+def test_mode_is_remembered_per_chat_across_reload(page, server):
+    open_ui(page, server)
+    page.select_option("#mode", "acceptEdits")
+    time.sleep(0.5)
+    page.reload()
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect")
+    wait(page, "() => document.querySelector('#mode').value === 'acceptEdits'", what="mode restated")
+    page.select_option("#mode", "default"); time.sleep(0.3)
+
+
+def test_downloads_stream_without_a_blob(page, server):
+    open_ui(page, server)
+    page.click(".tabs .tab[data-view=files]")
+    page.wait_for_selector("#flist .row", timeout=5000)
+    with page.expect_download(timeout=10000) as dl:
+        page.click("#flist .row:has(.n:text-is('blob.txt')) .dl")
+    d = dl.value; path = os.path.join(server.root, "dl.txt"); d.save_as(path)
+    assert d.suggested_filename == "blob.txt" and os.path.getsize(path) == 300_000
+    page.click("#flist .row:has(.n:text-is('hello.txt')) .ck"); page.click("#flist .row:has(.n:text-is('note.txt')) .ck")
+    with page.expect_download(timeout=10000) as dl2:
+        page.click("#fsel button:text-is('zip')")
+    z = os.path.join(server.root, "sel.zip"); dl2.value.save_as(z)
+    assert dl2.value.suggested_filename == "selection.zip" and open(z, "rb").read(2) == b"PK"
+    assert page.evaluate("() => performance.getEntriesByType('resource').filter(e => e.name.startsWith('blob:')).length") == 0
+
+
+def test_client_survives_garbage_events(page, server):
+    open_ui(page, server)
+    page.evaluate("() => { handle({ kind: 'nonsense' }); handle({}); ws.onmessage({ data: '{bad json' }); handle({ kind: 'delta', text: 1 }); }")
+    send(page, "still alive"); wait_reply(page, "You said: still alive")
+    assert page.errors == []
+
+
+def test_mobile_page_fits_the_viewport(browser, server):
+    ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True)
+    pg = ctx.new_page()
+    open_ui(pg, server, "/m")
+    m = pg.evaluate("() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, header: document.querySelector('header').getBoundingClientRect().height })")
+    assert m["sw"] <= m["cw"], m
+    assert m["header"] < 120, m
+    send(pg, "on a phone"); wait_reply(pg, "You said: on a phone")
+    ctx.close()

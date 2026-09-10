@@ -41,3 +41,41 @@ describe("stripAnsi", () => {
     assert.ok(!out.includes("\x1b"), "no escape bytes should remain");
   });
 });
+
+describe("Shell lifecycle", async () => {
+  const { Shell } = await import("../src/shell.js");
+  const { tmpdir } = await import("node:os");
+  const until = async (c: () => boolean, ms = 8000) => { const t0 = Date.now(); while (!c()) { if (Date.now() - t0 > ms) throw new Error("timeout"); await new Promise((r) => setTimeout(r, 20)); } };
+
+  test("before start: write, resize, kill and recent() are all safe no-ops", () => {
+    const s = new Shell(() => {}, () => {});
+    s.write("x"); s.resize(10, 10); s.kill();
+    assert.equal(s.hasOutput, false);
+    assert.deepEqual(s.recent(), { lines: 0, text: "" });
+  });
+
+  test("start twice keeps one pty; output is captured, stripped and trimmed; kill ends it once", async () => {
+    let chunks = 0; const exits: number[] = [];
+    const s = new Shell(() => { chunks++; }, (c) => exits.push(c));
+    s.start(tmpdir(), 80, 24); s.start(tmpdir(), 80, 24);
+    await until(() => s.hasOutput);
+    s.write("printf 'A\\033[31mB\\033[0m\\n\\n\\n'\n");
+    await until(() => s.recent().text.includes("AB"));
+    const r = s.recent(2);
+    assert.ok(r.lines <= 2);
+    assert.ok(!r.text.includes("\x1b"), "ANSI removed");
+    assert.ok(!r.text.endsWith("\n"), "trailing blank lines trimmed");
+    s.kill(); s.kill();
+    await until(() => exits.length > 0);
+    assert.equal(exits.length, 1);
+    assert.ok(chunks > 0);
+  });
+
+  test("clamps absurd sizes instead of throwing", async () => {
+    const s = new Shell(() => {}, () => {});
+    s.start(tmpdir(), 0, 100000);
+    s.resize(-5, NaN);
+    await until(() => s.hasOutput);
+    s.kill();
+  });
+});

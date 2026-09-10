@@ -9,3 +9,5 @@ chats-archive/
 prompts.json
 chats-snapshots/
 usage.json
+__pycache__/
+.pytest_cache/
