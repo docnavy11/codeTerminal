@@ -1,6 +1,9 @@
 import { readdir, stat, lstat, open, writeFile, mkdir, realpath } from "node:fs/promises";
 import { resolve, join, dirname, relative, basename, sep } from "node:path";
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { Transform, type Readable } from "node:stream";
+import { rename, unlink } from "node:fs/promises";
 
 export type Entry = {
   name: string;
@@ -130,6 +133,41 @@ export async function saveUpload(root: string, dir: string | undefined, name: st
   const target = await safePath(root, join(toRel(root, dirAbs), clean));
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, body);
+  const s = await stat(target);
+  return { path: toRel(root, target), size: s.size };
+}
+
+/**
+ * Streaming upload: bytes go straight to a .tmp beside the target and are
+ * renamed into place at the end, so a 100 MB upload never sits in memory.
+ * The limit is enforced while streaming; an oversize body is cut off and the
+ * partial file removed.
+ */
+export async function saveUploadStream(
+  root: string, dir: string | undefined, name: string, body: Readable, limitBytes: number,
+) {
+  const clean = basename(name);
+  if (!clean || clean === "." || clean === "..") throw new Error("bad filename");
+  const dirAbs = await safePath(root, dir);
+  const target = await safePath(root, join(toRel(root, dirAbs), clean));
+  await mkdir(dirname(target), { recursive: true });
+
+  const tmp = `${target}.upload-${process.pid}-${Date.now()}.tmp`;
+  let seen = 0;
+  const guard = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      seen += chunk.length;
+      if (seen > limitBytes) return cb(new Error(`upload exceeds ${limitBytes} bytes`));
+      cb(null, chunk);
+    },
+  });
+  try {
+    await pipeline(body, guard, createWriteStream(tmp, { mode: 0o600 }));
+    await rename(tmp, target);
+  } catch (e) {
+    await unlink(tmp).catch(() => {});
+    throw e;
+  }
   const s = await stat(target);
   return { path: toRel(root, target), size: s.size };
 }

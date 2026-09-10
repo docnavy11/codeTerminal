@@ -108,11 +108,16 @@ bridge.onEvent((msg) => {
   // the watch stays on the list for `watch list` to report.
   const chat = convo.live(w.chatId);
   if (!chat) { console.log(`[watch] its chat is not live; left on the list`); return; }
+  // The detail is page-derived (title/url from the extension), so it goes in
+  // the untrusted block rather than inline in the instruction — the same rule
+  // composePrompt applies to tab context. The description is the model's own
+  // words from when it set the watch.
   chat.watchFired(
     w.description,
     detail,
     `A page watch you set has fired. You were waiting for: ${w.description}. ` +
-      `What happened: ${detail}. Tell the user, briefly. Do not re-set the watch unless asked.`,
+      `The page's report is in the untrusted block above. Tell the user, briefly. ` +
+      `Do not re-set the watch unless asked.`,
   );
 });
 
@@ -228,7 +233,10 @@ const CSP = [
 app.use((_req, res, next) => {
   res.setHeader("Content-Security-Policy", CSP);
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
+  // same-origin, not no-referrer: manage.html reads document.referrer to send a
+  // phone back to /m.html, and that is a same-origin hop. Cross-origin
+  // navigations still leak nothing.
+  res.setHeader("Referrer-Policy", "same-origin");
   next();
 });
 
@@ -277,6 +285,14 @@ app.post("/chats/:id", guard, express.json({ limit: "64kb" }), async (req, res) 
       const chat = convo.get(id);
       if (!chat) throw new Error("no such chat");
       await chat.setProject(resolveProject(convo.projects(), b.project));
+    }
+    // "open in the terminal": a fresh attach lands on the newest chat, so make
+    // this one the newest. The flag used to be accepted and ignored, and the
+    // redirect landed on whichever chat happened to be most recent.
+    if (b.open === true) {
+      const chat = convo.get(id);
+      if (!chat) throw new Error("no such chat");
+      chat.touch();
     }
     res.json({ ok: true });
   } catch (e) {
@@ -400,12 +416,15 @@ app.post("/files/zip", guard, express.json({ limit: "256kb" }), async (req, res)
   }
 });
 
-app.post("/files/upload", guard, express.raw({ type: "*/*", limit: MAX_UPLOAD }), async (req, res) => {
+// Streamed to disk. express.raw() held the whole body in memory — up to
+// MAX_UPLOAD (100 MB) per request — which is the same OOM shape as the old
+// file preview, just on the write side.
+app.post("/files/upload", guard, async (req, res) => {
   try {
     const name = String(req.query.name ?? "");
     const dir = typeof req.query.path === "string" ? req.query.path : undefined;
     if (!name) throw new Error("missing ?name=");
-    res.json(await files.saveUpload(FILES_ROOT, dir, name, req.body as Buffer));
+    res.json(await files.saveUploadStream(FILES_ROOT, dir, name, req, MAX_UPLOAD));
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -428,7 +447,9 @@ app.use("/vendor/marked", express.static(join(ROOT, "node_modules/marked/lib")))
 app.use("/vendor/dompurify", express.static(join(ROOT, "node_modules/dompurify/dist")));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ noServer: true });
+// Default maxPayload is 100 MB, JSON.parsed in one go. The largest legitimate
+// frame is a screenshot data URL over /ext (a few MB); 32 MB leaves headroom.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
 
 server.on("upgrade", async (req, socket, head) => {
   const route = new URL(req.url ?? "/", `http://${req.headers.host}`).pathname;

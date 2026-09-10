@@ -29,8 +29,12 @@ export class UsageLog {
     } catch { /* no history yet */ }
   }
 
+  /** There are a few dozen real controls; anything past this is not usage data. */
+  static readonly MAX_KEYS = 200;
+
   record(control: string): boolean {
     if (!UsageLog.VALID.test(control)) return false;
+    if (!this.#counts.has(control) && this.#counts.size >= UsageLog.MAX_KEYS) return false;
     this.#counts.set(control, (this.#counts.get(control) ?? 0) + 1);
     this.#scheduleSave();
     return true;

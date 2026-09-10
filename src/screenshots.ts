@@ -58,6 +58,8 @@ export async function pruneScreenshots(dir = SHOT_DIR, opts: PruneOptions = {}):
   let removed = 0;
   for (const [i, f] of files.entries()) {
     const age = now - f.mtime;
+    // Files written by an older build are 0644; make every survivor private.
+    await chmod(f.path, 0o600).catch(() => {});
     if (age < keepRecentMs) continue;
     if (age <= maxAgeMs && i < maxFiles) continue;
     try {

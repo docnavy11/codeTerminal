@@ -195,3 +195,42 @@ workspace.
 5. Rewrite the README auth section: it still says "one shared token" (L-doc) —
    token auth was removed; the model is Origin + tailscale whois. State the
    `<all_urls>` blast radius (L4) plainly.
+
+---
+
+## Recheck (after all fixes were live)
+
+A second full pass, re-measuring every fix against the running server rather
+than re-reading the claims, and looking specifically for what the fixes
+themselves might have broken. All 11 original findings re-verified live
+(H1 0 escapes · H2 pixel blocked, blob images still render · M1 +0 MB RSS on a
+300 MB preview · M2 cross-site 403 / same-origin 200 / extension path intact ·
+M3 blocked, workspace lists · M4 mode precedes launch · L1 cached · L2 server
+ping observed at 30.0 s · L5 dir 0700). The pass found eight more things:
+
+**Regression I introduced**
+- `Referrer-Policy: no-referrer` blanked `document.referrer` on the same-origin
+  `m.html → manage.html` hop, which the mobile back-link reads. Now
+  `same-origin`: keeps that hop, still sends nothing cross-origin.
+
+**Missed by the first audit**
+- **Watch reports bypassed L3.** The page-derived `detail` of a fired watch was
+  inlined into an instruction prompt — the exact hole L3 closed for tab
+  context, on a second path. It now travels as context inside the nonce block.
+- **"Open in the terminal" opened the wrong chat.** `POST /chats/:id {open:true}`
+  was declared in the type and never read; the redirect landed on whichever
+  chat was newest. The flag now touches the chat so it *is* the newest.
+- **Uploads buffered up to 100 MB in memory** (`express.raw`) — the write-side
+  twin of M1. Now streamed to a `.tmp` and renamed into place; a 90 MB upload
+  measured **+0 MB** server RSS, the limit is enforced mid-stream, and an
+  oversize body leaves nothing on disk.
+- **`whois` spawned per request, no rate limit** — the file browser fires
+  dozens a second. Memoised per IP for 15 s (a spawn is ~26 ms, a hit is
+  microseconds). A peer's identity does not change inside that window.
+- **WebSocket frames** were capped at the 100 MB `ws` default; now 32 MB, which
+  still clears the largest legitimate frame (a screenshot data URL).
+- **`UsageLog` keys** were unbounded for an authenticated caller; capped at 200.
+- **L5 was half done:** the dir was made 0700 but files an older build had
+  written stayed 0644. The boot sweep now makes every survivor 0600.
+
+Ten new tests, each mutation-checked. 224 pass.

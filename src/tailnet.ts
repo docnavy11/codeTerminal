@@ -5,8 +5,30 @@ const run = promisify(execFile);
 
 export type Identity = { userId: number; loginName: string; nodeName: string };
 
-/** Who owns this tailnet address, according to the local tailscaled. */
-export async function whois(ip: string, port: number): Promise<Identity | null> {
+/**
+ * Who owns this tailnet address, according to the local tailscaled.
+ *
+ * Memoised per IP for a few seconds. Every guarded request and every socket
+ * upgrade spawns `tailscale whois` (~26 ms measured); the file browser fires
+ * dozens per second while listing, and there is no rate limit, so a burst of
+ * requests was a burst of subprocesses. A peer's identity does not change
+ * inside the window; a revoked node is a tailnet-level event well outside it.
+ */
+export const WHOIS_TTL_MS = 15_000;
+const cache = new Map<string, { at: number; who: Identity | null }>();
+
+export async function whois(ip: string, port: number, now = Date.now()): Promise<Identity | null> {
+  const hit = cache.get(ip);
+  if (hit && now - hit.at < WHOIS_TTL_MS) return hit.who;
+  const who = await whoisUncached(ip, port);
+  cache.set(ip, { at: now, who });
+  return who;
+}
+
+/** Test hook: drop the memo. */
+export function clearWhoisCache(): void { cache.clear(); }
+
+async function whoisUncached(ip: string, port: number): Promise<Identity | null> {
   const addr = ip.includes(":") ? `[${ip}]:${port}` : `${ip}:${port}`;
   try {
     const { stdout } = await run("tailscale", ["whois", "--json", addr], { timeout: 4000 });

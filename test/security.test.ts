@@ -52,3 +52,19 @@ describe("H2 — replies cannot exfiltrate to an off-origin URL", () => {
     }
   });
 });
+
+describe("recheck: header and frame-size choices", () => {
+  const src = read("src/server.ts");
+  // no-referrer blanked document.referrer on the same-origin m.html -> manage
+  // hop that the mobile back-link reads. same-origin keeps that and still
+  // sends nothing cross-origin.
+  test("Referrer-Policy is same-origin, not no-referrer", () => {
+    assert.match(src, /Referrer-Policy",\s*"same-origin"/);
+    assert.ok(!/Referrer-Policy",\s*"no-referrer"/.test(src));
+  });
+  test("WebSocket frames are capped below the 100 MB default", () => {
+    const m = src.match(/maxPayload:\s*(\d+)\s*\*\s*1024\s*\*\s*1024/);
+    assert.ok(m, "maxPayload is set");
+    assert.ok(Number(m![1]) <= 64, `cap is ${m![1]} MB`);
+  });
+});

@@ -82,3 +82,16 @@ describe("Store.list caching (L1)", () => {
     assert.equal(b.list()[0].title, "ondisk");
   });
 });
+
+describe("touch semantics: re-writing a chat makes it newest", () => {
+  test("list()[0] follows the most recent write", () => {
+    const s = new Store(join(root, "touch"));
+    const mk = (id: string, t: number) => ({ id, title: id.slice(-2), createdAt: t, updatedAt: t,
+      sdkSessionId: null, cwd: null, events: [{ kind: "user", text: "x" } as never], granted: [], mode: "default" as const });
+    s.write(mk("00000000-0000-4000-8000-0000000000a1", 1));
+    s.write(mk("00000000-0000-4000-8000-0000000000b2", 2));
+    assert.equal(s.list()[0].id.slice(-2), "b2");
+    s.write(mk("00000000-0000-4000-8000-0000000000a1", 3));   // touched
+    assert.equal(s.list()[0].id.slice(-2), "a1", "the touched chat is now where a fresh attach lands");
+  });
+});

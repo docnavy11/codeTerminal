@@ -196,8 +196,16 @@ export class LiveChat {
     this.#emitAll({ kind: "watch", description, detail });
     this.#record({ kind: "local", text: `Watch fired — ${description}: ${detail}` });
     if (this.#session.busy) return "noted";
-    this.#session.send(prompt);
+    // The detail is page-derived; sending it as context puts it inside the
+    // nonce-delimited untrusted block rather than inline in the instruction.
+    this.#session.send(prompt, `watch report: ${detail}`);
     return "woken";
+  }
+
+  /** Make this the most recently used chat, so a fresh attach lands on it. */
+  touch(): void {
+    this.#save();          // stamps updatedAt = now
+    this.#onChange();
   }
 
   close(): void {

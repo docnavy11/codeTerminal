@@ -1,9 +1,10 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, symlink, rm, readFile, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, symlink, rm, readFile, realpath, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { safePath, toRel, list, saveUpload, readTextPreview, collectForZip, setDeniedPaths } from "../src/files.js";
+import { safePath, toRel, list, saveUpload, saveUploadStream, readTextPreview, collectForZip, setDeniedPaths } from "../src/files.js";
+import { Readable } from "node:stream";
 
 /**
  * safePath is the only thing standing between a path from the browser and the
@@ -268,5 +269,37 @@ describe("collectForZip", () => {
   test("reports the total size", async () => {
     const { bytes } = await collectForZip(root, "", ["a.txt"], 1e9);
     assert.equal(bytes, 1);
+  });
+});
+
+describe("saveUploadStream (streamed upload)", () => {
+
+  test("writes the body to the target and basenames the client name", async () => {
+    const r = await saveUploadStream(root, "sub", "../../evil/up.txt", Readable.from([Buffer.from("hello"), Buffer.from(" world")]), 1e6);
+    assert.equal(r.path, "sub/up.txt");
+    assert.equal(await readFile(join(root, "sub", "up.txt"), "utf8"), "hello world");
+  });
+
+  test("refuses an oversize body mid-stream and leaves no partial file", async () => {
+    await assert.rejects(
+      () => saveUploadStream(root, "sub", "big.bin", Readable.from([Buffer.alloc(600), Buffer.alloc(600)]), 1000),
+      /exceeds/);
+    const left = (await readdir(join(root, "sub"))).filter((n) => n.includes("big.bin"));
+    assert.deepEqual(left, [], `partial/temp files left behind: ${left}`);
+  });
+
+  // The whole point: express.raw() held up to MAX_UPLOAD in memory. Stream
+  // 120 MB through and the process must not grow by anything like that.
+  test("does not buffer the upload in memory", async () => {
+    const MB = 1048576;
+    const chunk = Buffer.alloc(MB, 7);
+    async function* gen() { for (let i = 0; i < 120; i++) yield chunk; }
+    (globalThis as { gc?: () => void }).gc?.();
+    const before = process.memoryUsage().rss;
+    const r = await saveUploadStream(root, "", "stream.bin", Readable.from(gen()), 200 * MB);
+    const grew = (process.memoryUsage().rss - before) / MB;
+    assert.equal(r.size, 120 * MB);
+    assert.ok(grew < 40, `RSS grew ${grew.toFixed(0)} MB for a 120 MB upload — it is buffering`);
+    await rm(join(root, "stream.bin"), { force: true });
   });
 });

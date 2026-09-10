@@ -53,3 +53,13 @@ describe("UsageLog", () => {
     assert.deepEqual(new UsageLog(p).counts(), { chats: 3 });
   });
 });
+
+describe("UsageLog key cap", () => {
+  test("stops accepting new keys past MAX_KEYS but keeps counting known ones", () => {
+    const u = new UsageLog(join(dir, "cap.json"));
+    for (let i = 0; i < UsageLog.MAX_KEYS; i++) assert.equal(u.record(`k${i}`), true);
+    assert.equal(u.record("one-too-many"), false, "a fresh key past the cap is refused");
+    assert.equal(u.record("k0"), true, "an existing key still counts");
+    assert.equal(Object.keys(u.counts()).length, UsageLog.MAX_KEYS);
+  });
+});
