@@ -12,6 +12,7 @@ import { wantsContext } from "./prompt.js";
 import { pruneScreenshots } from "./screenshots.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
+import { ZipFile } from "yazl";
 import { stat } from "node:fs/promises";
 import { setBridge, setShellSource, setWatchSource, setPromptStore } from "./session.js";
 import { Shell } from "./shell.js";
@@ -28,6 +29,7 @@ const WORKSPACE = process.env.CODETERM_WORKSPACE ?? join(ROOT, "workspace");
 // in the workspace.
 const FILES_ROOT = process.env.CODETERM_FILES_ROOT ?? "/home/dev";
 const MAX_UPLOAD = Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024);
+const MAX_ZIP = Number(process.env.CODETERM_MAX_ZIP ?? 500 * 1024 * 1024);
 
 const EXTRA_ORIGINS = (process.env.CODETERM_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -271,6 +273,36 @@ app.get("/files/read", guard, async (req, res) => {
     res.setHeader("Content-Length", String(f.size));
     files.streamFile(f.abs).pipe(res);
   } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+/**
+ * Zip a selection. Streamed straight to the response rather than written to a
+ * temp file: the whole point is to hand over a large selection, and nothing
+ * needs it on disk.
+ */
+app.post("/files/zip", guard, express.json({ limit: "256kb" }), async (req, res) => {
+  try {
+    const b = req.body as { path?: string; names?: string[] };
+    const names = Array.isArray(b.names) ? b.names.filter((n) => typeof n === "string") : [];
+    if (!names.length) throw new Error("nothing selected");
+
+    const { entries, bytes } = await files.collectForZip(FILES_ROOT, b.path, names, MAX_ZIP);
+    if (!entries.length) throw new Error("nothing to zip — the selection held no files");
+
+    const stem = names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection";
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${stem}.zip"`);
+    console.log(`[zip] ${entries.length} file(s), ${(bytes / 1024).toFixed(0)}KB`);
+
+    const zip = new ZipFile();
+    for (const e of entries) zip.addFile(e.abs, e.name);
+    zip.outputStream.pipe(res);
+    zip.end();
+  } catch (e) {
+    // If the stream already started, a JSON error would corrupt the zip.
+    if (res.headersSent) { res.destroy(); return; }
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
   }
 });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, symlink, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { safePath, toRel, list, saveUpload, readTextPreview } from "../src/files.js";
+import { safePath, toRel, list, saveUpload, readTextPreview, collectForZip } from "../src/files.js";
 
 /**
  * safePath is the only thing standing between a path from the browser and the
@@ -142,4 +142,50 @@ describe("text preview", () => {
 test("toRel is empty at the root and relative below it", async () => {
   assert.equal(toRel(root, root), "");
   assert.equal(toRel(root, join(root, "sub", "ok.txt")), "sub/ok.txt");
+});
+
+describe("collectForZip", () => {
+  test("collects the named files", async () => {
+    const { entries } = await collectForZip(root, "", ["a.txt"], 1e9);
+    assert.deepEqual(entries.map((e) => e.name), ["a.txt"]);
+  });
+
+  test("walks a directory rather than skipping it", async () => {
+    // Ticking a folder means "and everything in it".
+    const { entries } = await collectForZip(root, "", ["sub"], 1e9);
+    assert.ok(entries.some((e) => e.name === "sub/ok.txt"), JSON.stringify(entries));
+  });
+
+  test("a crafted name is basenamed rather than followed", async () => {
+    // "../../etc/passwd" must become "passwd" inside the root. An earlier test
+    // put a file of that name there, so this resolves to the fixture — never
+    // to /etc/passwd. Asserting the resolved path is the point; asserting a
+    // rejection would pass for the wrong reason on a machine without it.
+    const { entries } = await collectForZip(root, "", ["../../etc/passwd"], 1e9);
+    assert.deepEqual(entries.map((e) => e.name), ["passwd"]);
+    assert.ok(entries[0].abs.startsWith(root + "/"), entries[0].abs);
+    assert.ok(!entries[0].abs.startsWith("/etc/"), "must not reach the real /etc");
+  });
+
+  test("a name that does not exist is refused", async () => {
+    await assert.rejects(() => collectForZip(root, "", ["nope-not-here.txt"], 1e9));
+  });
+
+  test("a symlink pointing outside the root is refused", async () => {
+    await assert.rejects(() => collectForZip(root, "", ["escape-file"], 1e9));
+  });
+
+  test("refuses a selection over the size limit", async () => {
+    await assert.rejects(() => collectForZip(root, "", ["big.txt"], 10), /too large/);
+  });
+
+  test("skips . and .. without throwing", async () => {
+    const { entries } = await collectForZip(root, "", [".", "..", "a.txt"], 1e9);
+    assert.deepEqual(entries.map((e) => e.name), ["a.txt"]);
+  });
+
+  test("reports the total size", async () => {
+    const { bytes } = await collectForZip(root, "", ["a.txt"], 1e9);
+    assert.equal(bytes, 1);
+  });
 });

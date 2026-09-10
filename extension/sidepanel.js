@@ -387,6 +387,8 @@ async function fjson(path, opts) {
 
 async function browse(path = "") {
   fview.hidden = true; flist.hidden = false;
+  if (path !== cwdPath) selected.clear();
+  renderSelection();
   try {
     const d = await fjson(`/files/list?path=${encodeURIComponent(path)}`);
     cwdPath = d.path; parentPath = d.parent;
@@ -400,10 +402,52 @@ async function browse(path = "") {
   }
 }
 
+const selected = new Set();
+const fsel = $("fsel");
+
+function renderSelection() {
+  fsel.hidden = selected.size === 0;
+  if (!selected.size) return;
+  fsel.replaceChildren();
+  fsel.append(Object.assign(document.createElement("span"),
+    { className: "n", textContent: `${selected.size} selected` }));
+  const zip = document.createElement("button");
+  zip.textContent = "zip"; zip.title = "Download the selection as a zip";
+  zip.onclick = () => downloadZip([...selected]);
+  const clr = document.createElement("button");
+  clr.className = "clear"; clr.textContent = "clear";
+  clr.onclick = () => { selected.clear(); browse(cwdPath); };
+  fsel.append(zip, clr);
+}
+
+async function downloadZip(names) {
+  const r = await fetch((await base()) + "/files/zip", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: cwdPath, names }),
+  });
+  if (!r.ok) { alert((await r.json().catch(() => ({}))).error ?? `zip failed (${r.status})`); return; }
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = (names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection") + ".zip";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 function rowFor(e) {
   const row = document.createElement("div");
   row.className = "row" + (e.kind === "dir" ? " dir" : "");
   const full = cwdPath ? `${cwdPath}/${e.name}` : e.name;
+
+  const ck = document.createElement("input");
+  ck.type = "checkbox"; ck.className = "ck"; ck.checked = selected.has(e.name);
+  ck.onclick = (ev) => {
+    ev.stopPropagation();
+    if (ck.checked) selected.add(e.name); else selected.delete(e.name);
+    row.classList.toggle("sel", ck.checked);
+    renderSelection();
+  };
+  row.append(ck);
   const n = document.createElement("span");
   n.className = "n"; n.textContent = e.kind === "dir" ? e.name + "/" : e.name;
   const sz = document.createElement("span");

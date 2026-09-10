@@ -68,6 +68,13 @@
   .flist .row .n { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .flist .row.dir .n { color:var(--accent); }
   .flist .row .s { color:var(--dim); font-size:0.708rem; flex-shrink:0; font-variant-numeric:tabular-nums; }
+  .flist .row .ck { flex-shrink:0; margin:0; accent-color:var(--accent); }
+  .flist .row.sel { background:var(--btn); }
+  .fsel { display:flex; align-items:center; gap:5px; padding:3px 7px; flex-shrink:0;
+          border-bottom:1px solid var(--line); background:var(--btn); font-size:0.75rem; }
+  .fsel .n { color:var(--accent); }
+  .fsel button { font-size:0.708rem; padding:1px 5px; }
+  .fsel .clear { margin-left:auto; }
   .flist .row .dl { color:var(--dim); flex-shrink:0; padding:0 2px; }
   .flist .row .dl:hover { color:var(--ok); }
   .flist.drop { outline:2px dashed var(--accent); outline-offset:-3px; }
@@ -212,6 +219,7 @@
     <button id="fupload">Upload</button>
     <input type="file" id="fpick" multiple hidden>
   </div>
+  <div id="fsel" class="fsel" hidden></div>
   <div id="flist" class="flist"></div>
   <div id="fview" class="fview" hidden></div>
 </div>

@@ -245,6 +245,14 @@ shell as this user — but the root is enforced properly all the same.
 behind the same Origin + `tailscale whois` guard as the WebSockets. Static
 assets stay open, since they are inert without a session.
 
+Tick the checkboxes to select several, then **Download as zip**. Ticking a
+directory takes everything under it. The zip is built with `yazl` and streamed
+straight to the response — nothing is written to disk, since the whole point is
+handing over a large selection. Capped by `CODETERM_MAX_ZIP` (500MB default).
+
+The selection clears when you navigate, because carrying it across directories
+would zip things you can no longer see.
+
 Downloads go through `fetch` into a blob rather than a plain `<a href>`: a
 top-level navigation sends no `Origin` header, and the guard wants one.
 

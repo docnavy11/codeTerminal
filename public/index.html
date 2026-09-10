@@ -220,6 +220,13 @@
   .flist .row.dir .n { color:var(--accent); }
   .flist .row .s { color:var(--dim); font-size:0.792rem; flex-shrink:0;
                    font-variant-numeric:tabular-nums; }
+  .flist .row .ck { flex-shrink:0; margin:0; accent-color:var(--accent); }
+  .flist .row.sel { background:var(--btn); }
+  .fsel { display:flex; align-items:center; gap:6px; padding:4px 9px; flex-shrink:0;
+          border-bottom:1px solid var(--line); background:var(--btn); font-size:0.833rem; }
+  .fsel .n { color:var(--accent); }
+  .fsel button { font-size:0.792rem; padding:1px 7px; }
+  .fsel .clear { margin-left:auto; }
   .flist .row .dl { color:var(--dim); flex-shrink:0; padding:0 3px; }
   .flist .row .dl:hover { color:var(--ok); }
   .flist.drop { outline:2px dashed var(--accent); outline-offset:-4px; }
@@ -284,6 +291,7 @@
         <button id="fupload">Upload</button>
         <input type="file" id="fpick" multiple hidden>
       </div>
+      <div id="fsel" class="fsel" hidden></div>
       <div id="flist" class="flist"></div>
       <div id="fview" class="fview" hidden></div>
     </div>
@@ -921,6 +929,8 @@ async function fjson(url, opts) {
 
 async function browse(path = "") {
   fview.hidden = true; flist.hidden = false;
+  if (path !== cwdPath) selected.clear();
+  renderSelection();
   try {
     const d = await fjson(`/files/list?path=${encodeURIComponent(path)}`);
     cwdPath = d.path; parentPath = d.parent;
@@ -939,10 +949,54 @@ async function browse(path = "") {
   }
 }
 
+/* Selection is by name within the current directory, and cleared on navigate —
+   carrying a selection across directories would zip things you cannot see. */
+const selected = new Set();
+const fsel = document.getElementById("fsel");
+
+function renderSelection() {
+  fsel.hidden = selected.size === 0;
+  if (!selected.size) return;
+  fsel.replaceChildren();
+  fsel.append(Object.assign(document.createElement("span"),
+    { className: "n", textContent: `${selected.size} selected` }));
+  const zip = document.createElement("button");
+  zip.textContent = "Download as zip";
+  zip.onclick = () => downloadZip([...selected]);
+  const clr = document.createElement("button");
+  clr.className = "clear"; clr.textContent = "clear";
+  clr.onclick = () => { selected.clear(); browse(cwdPath); };
+  fsel.append(zip, clr);
+}
+
+async function downloadZip(names) {
+  const r = await fetch("/files/zip", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: cwdPath, names }),
+  });
+  if (!r.ok) { alert((await r.json().catch(() => ({}))).error ?? `zip failed (${r.status})`); return; }
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = (names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection") + ".zip";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 function rowFor(e) {
   const row = document.createElement("div");
   row.className = "row" + (e.kind === "dir" ? " dir" : "");
   const full = cwdPath ? `${cwdPath}/${e.name}` : e.name;
+
+  const ck = document.createElement("input");
+  ck.type = "checkbox"; ck.className = "ck"; ck.checked = selected.has(e.name);
+  ck.onclick = (ev) => {
+    ev.stopPropagation();
+    if (ck.checked) selected.add(e.name); else selected.delete(e.name);
+    row.classList.toggle("sel", ck.checked);
+    renderSelection();
+  };
+  row.append(ck);
 
   const n = document.createElement("span");
   n.className = "n";

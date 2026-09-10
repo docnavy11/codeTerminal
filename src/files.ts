@@ -108,6 +108,46 @@ export async function saveUpload(root: string, dir: string | undefined, name: st
   return { path: toRel(root, target), size: s.size };
 }
 
+/**
+ * Resolve a batch of names inside one directory for zipping.
+ *
+ * Every name goes through safePath, so a crafted entry cannot reach outside
+ * the root, and directories are walked rather than silently skipped — a user
+ * ticking a folder means "and everything in it".
+ */
+export async function collectForZip(
+  root: string,
+  dir: string | undefined,
+  names: string[],
+  limitBytes: number,
+): Promise<{ entries: { abs: string; name: string }[]; bytes: number }> {
+  const dirAbs = await safePath(root, dir);
+  const entries: { abs: string; name: string }[] = [];
+  let bytes = 0;
+
+  const walk = async (abs: string, rel: string): Promise<void> => {
+    const st = await stat(abs);
+    if (st.isDirectory()) {
+      for (const child of await readdir(abs)) {
+        await walk(join(abs, child), `${rel}/${child}`);
+      }
+      return;
+    }
+    if (!st.isFile()) return;                 // sockets, devices: skip quietly
+    bytes += st.size;
+    if (bytes > limitBytes) throw new Error("selection is too large to zip");
+    entries.push({ abs, name: rel });
+  };
+
+  for (const raw of names) {
+    const clean = basename(raw);
+    if (!clean || clean === "." || clean === "..") continue;
+    const abs = await safePath(root, join(toRel(root, dirAbs), clean));
+    await walk(abs, clean);
+  }
+  return { entries, bytes };
+}
+
 /** Best-effort text sniff: NUL byte in the first 8k means treat it as binary. */
 export async function readTextPreview(abs: string, maxBytes: number) {
   const buf = await readFile(abs);
