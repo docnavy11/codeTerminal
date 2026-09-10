@@ -497,6 +497,11 @@ side panel, can hold two different conversations running simultaneously —
 before this there was a single active chat and every screen showed it, so
 switching in one switched everywhere.
 
+Sharing still works: point two clients at the same chat and they both see it
+live — the same words streaming into both, either one able to type. A chat
+holds a set of clients, not one. So the choice is yours per window: same
+conversation on two screens, or two conversations side by side.
+
 `LiveChat` owns one conversation: its record, its session, and the clients
 watching it. `Manager` is a pool of up to four, since each is a real `claude`
 subprocess. When the pool is full the least recently touched **idle** chat is
