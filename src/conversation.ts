@@ -63,7 +63,9 @@ export class LiveChat {
   get record(): ChatRecord { return this.#rec; }
   get session(): Session { return this.#session; }
   get clients(): number { return this.#live.size; }
-  get busy(): boolean { return this.#session.busy; }
+  /** Busy from the moment a prompt is accepted, not from when the SDK sees it. */
+  get busy(): boolean { return this.#sending || this.#session.busy; }
+  #sending = false;
   get lastTouched(): number { return this.#rec.updatedAt ?? 0; }
   get cwd(): string { return this.#rec.cwd ?? this.#workspace; }
   get mode(): PermissionMode { return this.#session.mode; }
@@ -138,6 +140,25 @@ export class LiveChat {
 
   /* ---------------- input ---------------- */
 
+  /**
+   * Accept a prompt. The context (active tab) may take up to a few seconds to
+   * arrive; the chat counts as busy for that whole time, so a second prompt in
+   * the gap is refused rather than queued behind the first. A session whose
+   * stream has ended is rebuilt first, resuming the same conversation.
+   */
+  async prompt(text: string, context: () => Promise<string | undefined>): Promise<void> {
+    if (this.busy) throw new Error("Still working — press Stop first.");
+    this.#sending = true;
+    try {
+      const ctx = await context();
+      if (this.#session.dead) this.#restart();
+      this.recordUser(text, ctx);
+      this.#session.send(text, ctx);
+    } finally {
+      this.#sending = false;
+    }
+  }
+
   recordUser(text: string, context?: string): void {
     if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
     this.#record({ kind: "user", text, context });
@@ -151,10 +172,7 @@ export class LiveChat {
   }
 
   rename(title: string): boolean {
-    const t = title.trim().slice(0, 64);
-    if (!t) return false;
-    this.#rec.title = t;
-    this.#rec.titleProvisional = false;
+    if (!applyTitle(this.#rec, title)) return false;
     this.#save();
     this.#onChange();
     return true;
@@ -195,7 +213,8 @@ export class LiveChat {
   watchFired(description: string, detail: string, prompt: string): "woken" | "noted" {
     this.#emitAll({ kind: "watch", description, detail });
     this.#record({ kind: "local", text: `Watch fired — ${description}: ${detail}` });
-    if (this.#session.busy) return "noted";
+    if (this.busy) return "noted";
+    if (this.#session.dead) this.#restart();
     // The detail is page-derived; sending it as context puts it inside the
     // nonce-delimited untrusted block rather than inline in the instruction.
     this.#session.send(prompt, `watch report: ${detail}`);
@@ -209,6 +228,7 @@ export class LiveChat {
   }
 
   close(): void {
+    if (this.#saveTimer) { clearTimeout(this.#saveTimer); this.#saveTimer = null; }
     this.#save();
     this.#session.close();
   }
@@ -287,7 +307,12 @@ export class Manager {
 
   list(): ChatSummary[] { return this.#store.list(); }
   read(id: string): ChatRecord | null {
-    return this.#chats.get(id)?.record ?? this.#store.read(id);
+    return this.#chats.get(id)?.record ?? this.#read(id);
+  }
+
+  /** The store throws on an id that is not a uuid; off the wire that is "no such chat". */
+  #read(id: string): ChatRecord | null {
+    try { return this.#store.read(id); } catch { return null; }
   }
 
   projects(): Project[] {
@@ -313,9 +338,51 @@ export class Manager {
   get(id: string): LiveChat | null {
     const existing = this.#chats.get(id);
     if (existing) return existing;
-    const rec = this.#store.read(id);
+    const rec = this.#read(id);
     if (!rec) return null;
     return this.#admit(rec);
+  }
+
+  /**
+   * Edit a chat's record without waking it. get() admits the chat into the
+   * pool, and admitting spawns the SDK session — measured: a rename from the
+   * manage page started a Claude subprocess per row. A live chat is edited in
+   * place; anything else is edited on disk.
+   */
+  rename(id: string, title: string): boolean {
+    const live = this.#chats.get(id);
+    if (live) return live.rename(title);
+    const rec = this.#read(id);
+    if (!rec || !applyTitle(rec, title)) return false;
+    this.#store.write(rec);
+    this.onListChanged?.();
+    return true;
+  }
+
+  /** Make a chat the most recently used one (a fresh attach lands on it). */
+  touch(id: string): boolean {
+    const live = this.#chats.get(id);
+    if (live) { live.touch(); return true; }
+    const rec = this.#read(id);
+    if (!rec) return false;
+    rec.updatedAt = Date.now();
+    this.#store.write(rec);
+    this.onListChanged?.();
+    return true;
+  }
+
+  /** Point a chat at a project. Live: the session restarts there; on disk: it launches there next time. */
+  async setProject(id: string, target: Project): Promise<boolean> {
+    const live = this.#chats.get(id);
+    if (live) { await live.setProject(target); return true; }
+    const rec = this.#read(id);
+    if (!rec) return false;
+    rec.project = target.general ? undefined : target.id;
+    rec.cwd = target.path;
+    rec.updatedAt = Date.now();
+    this.#store.write(rec);
+    this.onListChanged?.();
+    return true;
   }
 
   create(from?: LiveChat): LiveChat {
@@ -365,11 +432,23 @@ export class Manager {
   remove(id: string): void {
     const live = this.#chats.get(id);
     if (live) { live.close(); this.#chats.delete(id); }
-    this.#store.remove(id);
+    try { this.#store.remove(id); } catch { return; }   // not a uuid: nothing to remove
     this.onChatRemoved?.(id);
     this.onListChanged?.();
   }
 
-  /** Close everything cleanly. */
-  shutdown(): void { for (const c of this.#chats.values()) c.close(); }
+  /** Close everything cleanly: every live chat is saved, then its session ended. */
+  shutdown(): void {
+    for (const c of this.#chats.values()) c.close();
+    this.#chats.clear();
+  }
+}
+
+/** Title rule shared by live and on-disk renames. */
+function applyTitle(rec: ChatRecord, title: string): boolean {
+  const t = title.trim().slice(0, 64);
+  if (!t) return false;
+  rec.title = t;
+  rec.titleProvisional = false;
+  return true;
 }

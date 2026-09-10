@@ -219,22 +219,18 @@ app.post("/chats/:id", guard, express.json({ limit: "64kb" }), async (req, res) 
   try {
     const id = String(req.params.id);
     const b = req.body as { title?: string; project?: string; open?: boolean };
+    // None of these wake the chat: editing a record must not cost a subprocess.
     if (typeof b.title === "string") {
-      const chat = convo.get(id);
-      if (!chat?.rename(b.title)) throw new Error("no such chat");
+      if (!convo.rename(id, b.title)) throw new Error("no such chat");
     }
     if (typeof b.project === "string") {
-      const chat = convo.get(id);
-      if (!chat) throw new Error("no such chat");
-      await chat.setProject(resolveProject(convo.projects(), b.project));
+      if (!(await convo.setProject(id, resolveProject(convo.projects(), b.project)))) throw new Error("no such chat");
     }
     // "open in the terminal": a fresh attach lands on the newest chat, so make
     // this one the newest. The flag used to be accepted and ignored, and the
     // redirect landed on whichever chat happened to be most recent.
     if (b.open === true) {
-      const chat = convo.get(id);
-      if (!chat) throw new Error("no such chat");
-      chat.touch();
+      if (!convo.touch(id)) throw new Error("no such chat");
     }
     res.json({ ok: true });
   } catch (e) {
@@ -450,6 +446,25 @@ function announce(): void {
   console.log(`files          ${FILES_ROOT} (browse, upload, download)`);
   console.log(`projects       ${PROJECTS_ROOT}`);
 }
+
+// systemd stops the unit with SIGTERM. Without this the process died mid
+// debounce: up to 400ms of transcript and 1s of usage counts were lost on every
+// restart, and the SDK children were killed by the cgroup rather than closed.
+let stopping = false;
+function shutdown(signal: string): void {
+  if (stopping) return;
+  stopping = true;
+  console.log(`[${signal}] shutting down`);
+  try { convo.shutdown(); } catch (e) { console.error("shutdown: chats", e); }
+  try { usage.save(); } catch (e) { console.error("shutdown: usage", e); }
+  for (const ws of wss.clients) ws.close(1001, "server restarting");
+  server.close();
+  // The SDK subprocesses take a moment to exit after their input ends; give
+  // them that, then leave regardless.
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 // A restart is a good moment to drop what the previous run left behind.
 void pruneScreenshots().then((n) => { if (n) console.log(`[shots] pruned ${n} old screenshots`); });

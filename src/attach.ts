@@ -6,7 +6,7 @@ import { Shell } from "./shell.js";
 import * as files from "./files.js";
 import { wantsContext } from "./prompt.js";
 import { resolveProject } from "./projects.js";
-import { parseAgentMessage, type ClientEvent, type ShellMessage } from "./protocol.js";
+import { parseAgentMessage, type AgentMessage, type ClientEvent, type ShellMessage } from "./protocol.js";
 
 /**
  * The per-connection protocol loops for /ws (agent) and /pty (shell). Pulled
@@ -68,22 +68,29 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
     const msg = parseAgentMessage(parsed);
     if (!msg) return;
 
+    // A throw here would be an uncaught exception — one bad message from an
+    // authorised client took the whole server down. Report it to that client.
+    try { dispatch(msg); }
+    catch (e) { send({ kind: "error", message: e instanceof Error ? e.message : String(e) }); }
+  });
+
+  function dispatch(msg: AgentMessage): void {
     switch (msg.type) {
       case "prompt": {
-        if (chat.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
         const target = chat;
         // Bind the browser at send time, not attach time: two clients can start
         // on the same chat and the last to attach would otherwise capture it.
         target.useBrowser(clientBrowser);
         const attach = msg.withTab !== false && wantsContext(msg.text);
-        void (attach ? bridge.activeTab(target.extInstance) : Promise.resolve(null)).then((tab) => {
-          const context = tab?.url
+        // The chat is busy from here on, including while the tab lookup (up to
+        // 2.5s) is still pending — a second prompt in that window is refused.
+        target.prompt(msg.text, async () => {
+          const tab = attach ? await bridge.activeTab(target.extInstance) : null;
+          return tab?.url
             ? [`active tab: ${tab.title ?? "(untitled)"} — ${tab.url}`,
                tab.selection ? `selected text:\n${tab.selection}` : null].filter(Boolean).join("\n")
             : undefined;
-          target.recordUser(msg.text, context);
-          target.session.send(msg.text, context);
-        });
+        }).catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
         return;
       }
       // Which browser this client is in; follows the person across chats.
@@ -126,7 +133,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
         return;
       }
       case "rename":
-        convo.get(msg.id)?.rename(msg.title); return;
+        convo.rename(msg.id, msg.title); return;
       case "delete": {
         const removingCurrent = msg.id === chat.id;
         convo.remove(msg.id);
@@ -137,7 +144,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
         return;
       }
     }
-  });
+  }
 
   const refresh = () => listFor();
   ctx.clients.add(refresh);

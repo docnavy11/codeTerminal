@@ -45,6 +45,10 @@ async function connect() {
   ws.onopen = async () => {
     dot.classList.add("on");
     meta.textContent = "";
+    // The server replays the whole transcript on every attach. Without this
+    // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
+    // was already on screen — measured: the transcript doubled each time.
+    log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = "";
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
     try {

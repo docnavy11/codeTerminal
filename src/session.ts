@@ -156,12 +156,34 @@ export class Session {
     // the list before the user types — so ask straight away.
     void this.#publishCommands();
 
+    let cause = "";
     try {
       for await (const msg of this.#query) this.#handle(msg);
     } catch (err) {
-      this.#emit({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+      cause = err instanceof Error ? err.message : String(err);
+    }
+    // The iterable ending is the only signal that the subprocess is gone. It
+    // used to be ignored: #busy stayed wherever it was and the next send()
+    // pushed into an input nobody read, so the prompt vanished silently.
+    this.#dead = true;
+    this.#busy = false;
+    this.#activeTools.clear();
+    this.#compacting = false;
+    for (const [id, p] of this.#pending) {
+      this.#emit({ kind: "approval_closed", id, decision: "gone" });
+      p.resolve({ behavior: "deny", message: "Session ended." });
+    }
+    this.#pending.clear();
+    if (!this.#closed) {
+      this.#emit({ kind: "error", message: `Claude session ended${cause ? ` (${cause})` : ""} — it restarts on your next message.` });
+      this.#pushStatus();
     }
   }
+
+  #dead = false;
+  #closed = false;
+  /** True once the SDK stream has ended, for whatever reason. send() would be lost. */
+  get dead() { return this.#dead; }
 
   /** The approval gate. The SDK awaits this, so the turn genuinely blocks here. */
   #canUseTool = (
@@ -263,6 +285,7 @@ export class Session {
 
   /** Real shutdown — not called merely because a browser tab went away. */
   close(): void {
+    this.#closed = true;
     for (const [id, p] of this.#pending) {
       this.#emit({ kind: "approval_closed", id, decision: "gone" });
       p.resolve({ behavior: "deny", message: "Session closed." });
