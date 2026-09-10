@@ -1,26 +1,21 @@
 import express from "express";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage } from "node:http";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type { ClientEvent } from "./protocol.js";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
-import { wantsContext } from "./prompt.js";
 import { pruneScreenshots } from "./screenshots.js";
 import { UsageLog } from "./usage.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
 import { resolveProject } from "./projects.js";
 import { ZipFile } from "yazl";
-import { stat } from "node:fs/promises";
-import type { LiveChat } from "./conversation.js";
-import { Shell } from "./shell.js";
 import { heartbeat } from "./heartbeat.js";
-import { whois, self as tailnetSelf, normaliseIp, isLoopback, isLoopbackHost } from "./tailnet.js";
-import { parseTrustedCidrs, ipInAny, type Cidr } from "./cidr.js";
+import { createAuth, AuthRefused, type Auth } from "./auth.js";
+import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -63,15 +58,14 @@ await files.setDeniedPaths([...DENY_DEFAULTS, ...DENY_EXTRA, ...DENY_SELF]);
 // The Chrome extension dials in here; browser tools speak through it.
 const bridge = new BrowserBridge((line) => console.log(`[ext] ${line}`));
 
-// The most recently opened shell pane. Several tabs can each have one; the
-// agent reads the newest, which is the one the user is looking at.
-let activeShell: Shell | null = null;
-
-/** Every attached client's list refresher, so a rename shows up everywhere. */
+/**
+ * State shared across connections by design: the newest shell pane (the agent
+ * reads that one) and the most recently attached chat (a new shell opens in
+ * its cwd). Lives in one object so the attach loops can update it.
+ */
+const state: AttachContext["state"] = { lastChat: null, activeShell: null };
 const clients = new Set<() => void>();
-/** The chat most recently attached to, used when a shell pane asks for a cwd. */
-let lastChat: LiveChat | null = null;
-const lastChatCwd = () => lastChat?.cwd ?? WORKSPACE;
+const lastChatCwd = () => state.lastChat?.cwd ?? WORKSPACE;
 
 
 
@@ -85,7 +79,7 @@ const convo = new Manager(
   process.env.CODETERM_CHATS ?? join(ROOT, "chats"),
   PROJECTS_ROOT,
   // prefer is replaced per-chat by LiveChat, which knows its own browser.
-  { bridge, getShell: () => activeShell, watches, prompts, prefer: () => undefined },
+  { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined },
 );
 convo.onListChanged = () => { for (const f of clients) f(); };
 
@@ -129,115 +123,17 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
-/**
- * Two ways to run:
- *
- *   tailnet mode    — a tailnet identity is found; non-loopback peers are
- *                     authenticated by `tailscale whois`. This is the VPS.
- *   localhost mode  — no identity (tailscale absent, or CODETERM_LOCALHOST=1);
- *                     the server serves this machine only. A laptop with no
- *                     tailnet runs here with zero setup.
- *
- * The one rule that keeps localhost mode safe: it must be bound to loopback. A
- * network-reachable bind with no identity would be an ungated shell with no
- * authentication at all, so that combination refuses to start.
- */
-const FORCE_LOCAL = process.env.CODETERM_LOCALHOST === "1";
-const SELF: { userId: number; dnsName: string } | null =
-  FORCE_LOCAL ? null : await tailnetSelf();
-
-/**
- * Extra peer addresses to trust like loopback — for a non-tailscale VPN
- * (WireGuard, etc.): bind the tunnel interface and trust its subnet. Every
- * entry must be a private range; a public one is refused here so a typo cannot
- * open the shell to the internet.
- */
-let TRUSTED_CIDRS: Cidr[];
+let auth: Auth;
 try {
-  TRUSTED_CIDRS = parseTrustedCidrs(process.env.CODETERM_TRUSTED_CIDRS);
+  auth = await createAuth({
+    host: HOST, port: PORT, extraOrigins: EXTRA_ORIGINS,
+    forceLocal: process.env.CODETERM_LOCALHOST === "1",
+    trustedCidrSpec: process.env.CODETERM_TRUSTED_CIDRS,
+    extOrigin: process.env.CODETERM_EXT_ORIGIN,
+  });
 } catch (e) {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-}
-
-// A non-loopback bind needs *some* authenticator: a tailnet identity, or a
-// trusted-CIDR allowlist. Without either it would be an ungated shell reachable
-// with no authentication, so refuse.
-if (!SELF && !isLoopbackHost(HOST) && TRUSTED_CIDRS.length === 0) {
-  console.error(
-    FORCE_LOCAL
-      ? "CODETERM_LOCALHOST=1 serves this machine only, so it needs a loopback bind."
-      : "No tailnet identity (`tailscale status --json` failed), and not bound to loopback.",
-  );
-  console.error("Refusing to start: that would be an ungated shell reachable with no authentication.");
-  console.error("Fixes: run tailscale · CODETERM_HOST=127.0.0.1 for localhost only ·");
-  console.error("       or CODETERM_TRUSTED_CIDRS=<your VPN subnet> and bind the tunnel interface.");
-  process.exit(1);
-}
-const LOCALHOST_ONLY = !SELF && TRUSTED_CIDRS.length === 0;
-
-/**
- * Origins a browser may legitimately be on. A cross-origin page gets rejected
- * here — WebSockets have no same-origin policy of their own, so without this
- * any site you visit could open /pty. In localhost mode there is no tailnet
- * dnsName; localhost/127.0.0.1 (always present) cover it.
- */
-const ALLOWED_ORIGINS = new Set(
-  [HOST, SELF?.dnsName, SELF?.dnsName?.split(".")[0], "localhost", "127.0.0.1", ...EXTRA_ORIGINS]
-    .filter(Boolean)
-    .flatMap((h) => [`http://${h}:${PORT}`, `https://${h}:${PORT}`]),
-);
-
-/**
- * Two independent checks, both must pass:
- *   origin  — blocks a malicious page in your own browser
- *   whois   — blocks any device that isn't your tailnet identity
- * Returns null when allowed, or a reason string when denied.
- */
-async function denyReason(req: IncomingMessage, route: string): Promise<string | null> {
-  const origin = req.headers.origin;
-
-  // A chrome-extension:// origin can never be a page on a website, so the
-  // cross-site concern the Origin check exists for does not apply. This covers
-  // the /ext bridge and the side panel, which opens /ws from an extension page.
-  // Pin a specific id with CODETERM_EXT_ORIGIN.
-  if (typeof origin === "string" && origin.startsWith("chrome-extension://")) {
-    const pinned = process.env.CODETERM_EXT_ORIGIN;
-    if (pinned && origin !== pinned) return `extension ${origin} is not the pinned one`;
-    return identityReason(req);
-  }
-  // A simple cross-site request (an <img>, a <form> GET, a <script>) carries no
-  // Origin, so the check above never sees it — yet it still issues from the
-  // authorised browser. Sec-Fetch-Site closes that gap: the browser sets it,
-  // page JS cannot forge it, and "cross-site" is exactly the case to refuse.
-  // Same-origin/same-site requests and non-browser clients (which omit it) pass.
-  const site = req.headers["sec-fetch-site"];
-  if (site === "cross-site") return "cross-site request";
-
-  // Non-browser clients (curl, scripts) send no Origin. A browser always does,
-  // so allowing absence costs nothing against the cross-site vector.
-  if (typeof origin === "string" && !ALLOWED_ORIGINS.has(origin)) {
-    return `origin ${origin}`;
-  }
-
-  return identityReason(req);
-}
-
-/** whois half of the check, shared by every route. */
-async function identityReason(req: IncomingMessage): Promise<string | null> {
-  const ip = normaliseIp(req.socket.remoteAddress ?? "");
-  if (!ip) return "no peer address";
-  if (isLoopback(ip)) return null; // same box — already has a shell
-  if (ipInAny(ip, TRUSTED_CIDRS)) return null; // an explicitly trusted VPN subnet
-
-  // With no tailnet identity there is nothing to authenticate a remote peer
-  // against beyond the trusted-CIDR list just checked, so refuse the rest.
-  if (!SELF) return "localhost-only mode: only same-machine and trusted-CIDR connections are allowed";
-
-  const who = await whois(ip, req.socket.remotePort ?? 0);
-  if (!who) return `${ip} is not on this tailnet`;
-  if (who.userId !== SELF.userId) return `${who.loginName} is not the owner`;
-  return null;
+  if (e instanceof AuthRefused) { console.error(e.message); process.exit(1); }
+  throw e;
 }
 
 const app = express();
@@ -291,7 +187,7 @@ app.use((_req, res, next) => {
  * inert without a session — but anything touching the filesystem does not.
  */
 const guard: express.RequestHandler = (req, res, next) => {
-  denyReason(req, "/files").then((deny) => {
+  auth.denyReason(req).then((deny) => {
     if (!deny) return next();
     console.warn(`[deny] ${req.method} ${req.path} — ${deny}`);
     res.status(403).json({ error: deny });
@@ -505,7 +401,7 @@ server.on("upgrade", async (req, socket, head) => {
     return;
   }
 
-  const deny = await denyReason(req, route);
+  const deny = await auth.denyReason(req);
   if (deny) {
     console.warn(`[deny] ${route} — ${deny}`);
     socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -515,201 +411,13 @@ server.on("upgrade", async (req, socket, head) => {
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     heartbeat(ws);
-    if (route === "/ws") attachAgent(ws, new URL(req.url ?? "/", "http://x").searchParams.get("observe") !== "1");
+    if (route === "/ws") attachAgent(ws, ctx, new URL(req.url ?? "/", "http://x").searchParams.get("observe") !== "1");
     else if (route === "/ext") bridge.attach(ws);
-    else attachShell(ws);
+    else attachShell(ws, ctx);
   });
 });
 
-/**
- * Every attached client picks its own conversation, so two browsers can hold
- * two different chats at once. Before this there was a single active chat and
- * every screen showed it.
- */
-function attachAgent(ws: WebSocket, replay = true): void {
-  const send = (e: ClientEvent) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(e)); };
-
-  // Land on the most recent chat; the client can switch immediately.
-  const startId = convo.newestId();
-  let chat: LiveChat = (startId && convo.get(startId)) || convo.create();
-  let clientBrowser: string | undefined;
-  lastChat = chat;
-
-  const listFor = () => send({ kind: "chats", chats: convo.list(), activeId: chat.id });
-  const enter = (next: LiveChat, clear: boolean) => {
-    chat.detach(send);
-    chat = next;
-    lastChat = next;
-    next.useBrowser(clientBrowser);
-    if (clear) send({ kind: "cleared" });
-    next.attach(send, true);
-    listFor();
-    send({ kind: "mode", mode: convo.mode });
-    const p = next.project(convo.projects());
-    send({ kind: "project", id: p.id, name: p.name });
-  };
-
-  chat.attach(send);
-  listFor();
-  send({ kind: "mode", mode: convo.mode });
-  {
-    const p = chat.project(convo.projects());
-    send({ kind: "project", id: p.id, name: p.name });
-  }
-
-  ws.on("message", (raw) => {
-    let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string;
-               answers?: unknown; withTab?: boolean; path?: string; title?: string;
-               instance?: string };
-    try { msg = JSON.parse(raw.toString()); } catch { return; }
-
-    switch (msg.type) {
-      case "prompt": {
-        if (typeof msg.text !== "string" || !msg.text.trim()) return;
-        if (chat.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
-        const text = msg.text;
-        const target = chat;
-        // Bind the browser at send time, not at attach time: two clients can
-        // start on the same chat, and the last to attach would otherwise
-        // capture it. Whoever is driving decides where the tools act.
-        target.useBrowser(clientBrowser);
-        const attach = msg.withTab !== false && wantsContext(text);
-        void (attach ? bridge.activeTab(target.extInstance) : Promise.resolve(null)).then((tab) => {
-          const context = tab?.url
-            ? [`active tab: ${tab.title ?? "(untitled)"} — ${tab.url}`,
-               tab.selection ? `selected text:\n${tab.selection}` : null].filter(Boolean).join("\n")
-            : undefined;
-          target.recordUser(text, context);
-          target.session.send(text, context);
-        });
-        return;
-      }
-
-      // Which browser this client is in. Applies to the chat it is on, and to
-      // any it switches to, so the tools follow the person.
-      case "browser":
-        if (typeof msg.instance === "string") { clientBrowser = msg.instance; chat.useBrowser(clientBrowser); }
-        return;
-
-      case "answer":
-        if (typeof msg.id === "string" && msg.answers && typeof msg.answers === "object") {
-          chat.session.answer(msg.id, msg.answers as Record<string, string>);
-        }
-        return;
-
-      case "decision":
-        if (typeof msg.id === "string" &&
-            (msg.decision === "allow" || msg.decision === "always" || msg.decision === "deny")) {
-          chat.session.decide(msg.id, msg.decision);
-        }
-        return;
-
-      case "cwd": {
-        if (typeof msg.path !== "string") return;
-        const target = chat;
-        files.safePath(FILES_ROOT, msg.path)
-          .then(async (abs) => {
-            const st = await stat(abs);
-            if (!st.isDirectory()) throw new Error("not a directory");
-            await target.setCwd(abs);
-          })
-          .catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
-        return;
-      }
-
-      case "project":
-        if (typeof msg.id === "string") {
-          chat.setProject(resolveProject(convo.projects(), msg.id))
-            .catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
-        }
-        return;
-
-      case "mode":
-        if (msg.mode === "default" || msg.mode === "acceptEdits" || msg.mode === "auto" ||
-            msg.mode === "plan" || msg.mode === "dontAsk" || msg.mode === "bypassPermissions") {
-          convo.setMode(msg.mode)
-            .then(() => send({ kind: "mode", mode: convo.mode }))
-            .catch((e: unknown) => send({ kind: "error", message: String(e) }));
-        }
-        return;
-
-      case "interrupt":
-        chat.session.interrupt().catch(() => {});
-        return;
-
-      case "new":
-        enter(convo.create(chat), true);
-        return;
-
-      // Switches THIS client only. Another browser keeps whatever it was on.
-      case "open": {
-        if (typeof msg.id !== "string" || msg.id === chat.id) return;
-        const next = convo.get(msg.id);
-        if (next) enter(next, true);
-        return;
-      }
-
-      case "rename":
-        if (typeof msg.id === "string" && typeof msg.title === "string") {
-          convo.get(msg.id)?.rename(msg.title);
-        }
-        return;
-
-      case "delete":
-        if (typeof msg.id === "string") {
-          const removingCurrent = msg.id === chat.id;
-          convo.remove(msg.id);
-          if (removingCurrent) {
-            const nextId = convo.newestId();
-            enter((nextId && convo.get(nextId)) || convo.create(), true);
-          } else listFor();
-        }
-        return;
-    }
-  });
-
-  const detach = () => { chat.detach(send); clients.delete(refresh); };
-  ws.on("close", detach);
-  ws.on("error", detach);
-
-  // Keep every client's chat list current when a title or project changes.
-  const refresh = () => listFor();
-  clients.add(refresh);
-}
-
-/** The shell: a real PTY, no approval gate. */
-function attachShell(ws: WebSocket): void {
-  const shell: Shell = new Shell(
-    (chunk) => { if (ws.readyState === ws.OPEN) ws.send(Buffer.from(chunk, "utf8"), { binary: true }); },
-    (code) => {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "exit", code }));
-      ws.close();
-    },
-  );
-
-  activeShell = shell;
-
-  ws.on("message", (raw, isBinary) => {
-    if (isBinary) { shell.write(raw.toString("utf8")); return; }
-    let msg: { type?: string; data?: string; cols?: number; rows?: number };
-    try { msg = JSON.parse(raw.toString()); } catch { return; }
-    switch (msg.type) {
-      // The shell opens where the chat works, so both panes agree.
-      // The shell opens where the newest attached chat works.
-      case "start":  shell.start(lastChatCwd(), msg.cols ?? 80, msg.rows ?? 24); return;
-      case "input":  if (typeof msg.data === "string") shell.write(msg.data); return;
-      case "resize": shell.resize(msg.cols ?? 80, msg.rows ?? 24); return;
-    }
-  });
-
-  const close = () => {
-    // Only clear it if a newer pane has not already taken over.
-    if (activeShell === shell) activeShell = null;
-    shell.kill();
-  };
-  ws.on("close", close);
-  ws.on("error", close);
-}
+const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state };
 
 /**
  * At boot this can start before tailscaled has assigned the address, and
@@ -735,21 +443,12 @@ function listenWithRetry(attempt = 0): void {
 
 function announce(): void {
   console.log(`code-terminal  http://${HOST}:${PORT}`);
-  console.log(`identity       ${SELF ? `${SELF.dnsName} · tailnet user ${SELF.userId}` : "no tailnet identity"}`);
+  for (const line of auth.banner()) console.log(line);
   console.log(`workspace      ${WORKSPACE}`);
   console.log(`shell          /pty — real PTY, NO approval gate`);
   console.log(`browser        /ext — extension bridge, tools ungated`);
   console.log(`files          ${FILES_ROOT} (browse, upload, download)`);
   console.log(`projects       ${PROJECTS_ROOT}`);
-  console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
-  if (LOCALHOST_ONLY) {
-    console.log(`mode           localhost only — reachable from this machine, not the network`);
-  } else if (!SELF) {
-    console.log(`mode           trusted-CIDR only — no tailnet; peers authenticated by CODETERM_TRUSTED_CIDRS`);
-  }
-  if (TRUSTED_CIDRS.length) {
-    console.log(`trusted        ${process.env.CODETERM_TRUSTED_CIDRS} (treated like loopback)`);
-  }
 }
 
 // A restart is a good moment to drop what the previous run left behind.
