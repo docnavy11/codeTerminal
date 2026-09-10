@@ -88,13 +88,20 @@ export class Store {
     }
   }
 
-  write(rec: ChatRecord): void {
+  /** False when the record could not be written; the failure is logged, never thrown. */
+  write(rec: ChatRecord): boolean {
     try {
       const p = this.#path(rec.id);
       writeFileSync(`${p}.tmp`, JSON.stringify(rec));
       renameSync(`${p}.tmp`, p);
       this.#summaries.set(rec.id, this.#summaryOf(rec));   // keep the cache in step
-    } catch { /* losing history is not worth crashing over */ }
+      return true;
+    } catch (err) {
+      // Losing history is not worth crashing over, but it was silent: a full
+      // disk lost transcripts with nothing in the journal.
+      console.error(`[store] write failed for ${rec.id}: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
   }
 
   /**

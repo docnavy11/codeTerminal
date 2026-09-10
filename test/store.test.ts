@@ -95,3 +95,20 @@ describe("touch semantics: re-writing a chat makes it newest", () => {
     assert.equal(s.list()[0].id.slice(-2), "a1", "the touched chat is now where a fresh attach lands");
   });
 });
+
+describe("Store.write failure", () => {
+  // A full disk used to lose the record with nothing in the journal.
+  test("returns false and logs instead of failing silently", async () => {
+    const s = new Store(join(root, "ro"));
+    const { chmod } = await import("node:fs/promises");
+    await chmod(join(root, "ro"), 0o500);
+    const logged: string[] = [];
+    const orig = console.error; console.error = (...a: unknown[]) => { logged.push(a.map(String).join(" ")); };
+    try {
+      assert.equal(s.write(rec(ID, "unsaved")), false);
+    } finally { console.error = orig; await chmod(join(root, "ro"), 0o700); }
+    assert.equal(logged.length, 1);
+    assert.match(logged[0], /\[store\] write failed/);
+    assert.equal(s.write(rec(ID, "saved")), true);
+  });
+});

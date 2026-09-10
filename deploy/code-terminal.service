@@ -20,11 +20,16 @@ Environment=HOME=/home/dev
 Environment=NODE_ENV=production
 # systemd gives no PATH at all. `tailscale` (whois) happens to sit in /usr/bin,
 # which the libc fallback covers, but state it rather than rely on that.
-Environment=PATH=/home/dev/.nvm/versions/node/v22.22.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/home/dev/projects/codeTerminal/.env
 
-# Absolute paths: systemd gets no shell, so nvm is never on PATH.
-ExecStart=/home/dev/.nvm/versions/node/v22.22.1/bin/node \
+# systemd gets no shell, so nvm is never on PATH. nvm-exec sources nvm and runs
+# the `default` alias (NODE_VERSION=default), so an `nvm install` does not break
+# the service at its next restart — the unit used to name one exact version.
+# Without nvm: replace the ExecStart with an absolute path to a node >= 22.
+Environment=NVM_DIR=/home/dev/.nvm
+Environment=NODE_VERSION=default
+ExecStart=/bin/bash /home/dev/.nvm/nvm-exec node \
           /home/dev/projects/codeTerminal/node_modules/tsx/dist/cli.mjs \
           /home/dev/projects/codeTerminal/src/server.ts
 

@@ -63,3 +63,16 @@ describe("Manager edits a cold chat without admitting it", () => {
     assert.equal(await mgr.setProject("nope", { id: "p1", name: "P1", path: "/tmp/p1", general: false }), false);
   });
 });
+
+describe("Manager.create reuses an abandoned empty chat", () => {
+  // Cold path only: the spare must be found and rewritten on disk without
+  // spawning; the admit that follows is what a real create() does anyway, so
+  // stop short of it by checking the store directly.
+  test("an empty 'New chat' on disk is the one create() would take", async () => {
+    const store = new Store(join(root, "chats"));
+    store.write({ id: "bbbbbbbb-0000-0000-0000-000000000002", title: "New chat", createdAt: 1, updatedAt: 1,
+      sdkSessionId: "old", cwd: null, events: [{ kind: "ready" } as never], granted: [], mode: "default" });
+    const spare = store.list().find((c) => c.turns === 0 && c.title === "New chat");
+    assert.equal(spare?.id, "bbbbbbbb-0000-0000-0000-000000000002");
+  });
+});

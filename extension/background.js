@@ -226,6 +226,21 @@ const watches = new Map();          // id -> {tabId, condition, baseline}
 const POLL_MS = 6000;
 let pollTimer = null;
 
+// Chrome evicts this worker whenever it likes; an in-memory map was gone with
+// it while the server still listed the watch, which then never fired. Mirror
+// the map into session storage (cleared when the browser closes, which is
+// also when the tabs go) and rebuild it every time the worker starts.
+function persistWatches() {
+  chrome.storage.session.set({ watches: [...watches] }).catch(() => {});
+}
+async function restoreWatches() {
+  try {
+    const s = await chrome.storage.session.get("watches");
+    for (const [id, w] of s.watches ?? []) if (!watches.has(id)) watches.set(id, w);
+  } catch { /* nothing stored yet */ }
+  ensurePolling();
+}
+
 function ensurePolling() {
   if (pollTimer || watches.size === 0) return;
   pollTimer = setInterval(pollWatches, POLL_MS);
@@ -261,7 +276,7 @@ async function pollWatches() {
       r = res?.result;
     } catch (e) {
       // Tab closed, or navigated somewhere we cannot script. Report and stop.
-      watches.delete(id);
+      watches.delete(id); persistWatches();
       report(id, `stopped: the tab is no longer reachable (${String(e?.message ?? e).slice(0, 80)})`);
       continue;
     }
@@ -272,12 +287,12 @@ async function pollWatches() {
     else if (w.condition.kind === "missing" && r.contains === false) fired = `"${w.condition.value}" is gone`;
     else if (w.condition.kind === "selector" && r.hasSelector) fired = `element "${w.condition.value}" appeared`;
     else if (w.condition.kind === "changes") {
-      if (w.baseline === undefined) w.baseline = r.snapshot;      // first poll sets the baseline
+      if (w.baseline === undefined) { w.baseline = r.snapshot; persistWatches(); }   // first poll sets the baseline
       else if (r.snapshot !== w.baseline) fired = "the watched content changed";
     }
 
     if (fired) {
-      watches.delete(id);
+      watches.delete(id); persistWatches();
       report(id, `${fired} on ${r.title || r.url} (${r.url})`);
     }
   }
@@ -322,6 +337,7 @@ async function handle(action, p) {
     case "watch_start": {
       const t = await resolveTab(p.tabId);
       watches.set(p.watchId, { tabId: t.id, condition: p.condition, baseline: undefined });
+      persistWatches();
       ensurePolling();
       // Prime the baseline immediately so "changes" measures from now, not
       // from six seconds from now.
@@ -331,6 +347,7 @@ async function handle(action, p) {
 
     case "watch_stop": {
       const had = watches.delete(p.watchId);
+      persistWatches();
       stopPollingIfIdle();
       return { stopped: had };
     }
@@ -473,3 +490,5 @@ async function handle(action, p) {
       throw new Error("unknown action: " + action);
   }
 }
+
+restoreWatches();

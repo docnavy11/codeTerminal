@@ -569,18 +569,41 @@ function renderSelection() {
   fsel.append(zip, clr);
 }
 
+/* Downloads. The desktop and mobile pages are served by the server itself, so
+   the browser can stream a file straight to disk from a plain link or form —
+   nothing passes through page memory. The extension panel is a different
+   origin, where a link would open the file instead of saving it, so only
+   there is the response fetched into a blob first (which holds the whole file
+   in the panel's memory until it is saved). */
+const sameOrigin = () => PLATFORM.name !== "extension";
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+/** POST into a hidden iframe: the attachment response becomes a download, the page stays put. */
+function formDownload(action, fields) {
+  let frame = document.getElementById("dlframe");
+  if (!frame) { frame = document.createElement("iframe"); frame.id = "dlframe"; frame.hidden = true; document.body.append(frame); }
+  const form = document.createElement("form");
+  form.method = "post"; form.action = action; form.target = "dlframe";
+  for (const [k, vs] of Object.entries(fields)) for (const v of [].concat(vs)) {
+    const i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = v; form.append(i);
+  }
+  document.body.append(form); form.submit(); form.remove();
+}
+
 async function downloadZip(names) {
-  const r = await fetch((await base()) + "/files/zip", {
+  const url = (await base()) + "/files/zip";
+  if (sameOrigin()) { formDownload(url, { path: cwdPath, names }); return; }
+  const r = await fetch(url, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path: cwdPath, names }),
   });
   if (!r.ok) { alert((await r.json().catch(() => ({}))).error ?? `zip failed (${r.status})`); return; }
-  const url = URL.createObjectURL(await r.blob());
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = (names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection") + ".zip";
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  saveBlob(await r.blob(), (names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection") + ".zip");
 }
 
 function rowFor(e) {
@@ -613,13 +636,16 @@ function rowFor(e) {
 }
 
 async function download(path, name) {
-  const r = await fetch((await base()) + `/files/read?path=${encodeURIComponent(path)}`);
+  const url = (await base()) + `/files/read?path=${encodeURIComponent(path)}`;
+  if (sameOrigin()) {
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    return;
+  }
+  const r = await fetch(url);
   if (!r.ok) return;
-  const url = URL.createObjectURL(await r.blob());
-  const a = document.createElement("a");
-  a.href = url; a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  saveBlob(await r.blob(), name);
 }
 
 async function view(path, entry) {

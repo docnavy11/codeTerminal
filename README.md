@@ -46,9 +46,12 @@ Three things the unit has to get right:
 - **`HOME=/home/dev`.** The Agent SDK reads the Claude Code OAuth credentials
   from `~/.claude`, and `settingSources` loads your config from there. Without
   it the service starts and every turn fails to authenticate.
-- **Absolute paths and an explicit `PATH`.** systemd runs no shell, so nvm is
-  never set up. `ExecStart` names the node binary and `tsx/dist/cli.mjs`
-  directly. The PTY still gets a working `PATH` because it spawns `bash -l`,
+- **No shell, so node comes from `nvm-exec`.** systemd runs no shell, so nvm is
+  never set up. `ExecStart` runs `~/.nvm/nvm-exec node tsx/dist/cli.mjs` with
+  `NODE_VERSION=default`, so the service follows your `nvm alias default`
+  instead of naming one exact version that the next `nvm install` would
+  orphan. Without nvm, point `ExecStart` at any node ≥ 22 (`engines` in
+  package.json). The PTY still gets a working `PATH` because it spawns `bash -l`,
   which sources `~/.profile` → `~/.bashrc` → nvm; verified `node -v` inside the
   shell pane under the service's environment.
 - **The bind is retried, not assumed.** At boot the server can start before

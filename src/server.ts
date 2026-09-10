@@ -167,7 +167,7 @@ const CSP = [
   "font-src 'self' data:",
   "connect-src 'self'",
   "object-src 'none'",
-  "frame-src 'none'",
+  "frame-src 'self'",   // the pages download through a hidden same-origin iframe
   "base-uri 'none'",
   "form-action 'self'",
 ].join("; ");
@@ -329,10 +329,13 @@ app.get("/files/read", guard, async (req, res) => {
  * temp file: the whole point is to hand over a large selection, and nothing
  * needs it on disk.
  */
-app.post("/files/zip", guard, express.json({ limit: "256kb" }), async (req, res) => {
+// JSON from the extension's fetch; a urlencoded form from the same-origin
+// pages, whose browser streams the zip to disk instead of buffering it.
+app.post("/files/zip", guard, express.json({ limit: "256kb" }), express.urlencoded({ extended: false, limit: "256kb" }), async (req, res) => {
   try {
-    const b = req.body as { path?: string; names?: string[] };
-    const names = Array.isArray(b.names) ? b.names.filter((n) => typeof n === "string") : [];
+    const b = req.body as { path?: string; names?: string[] | string };
+    const raw = Array.isArray(b.names) ? b.names : typeof b.names === "string" ? [b.names] : [];
+    const names = raw.filter((n): n is string => typeof n === "string");
     if (!names.length) throw new Error("nothing selected");
 
     const { entries, bytes } = await files.collectForZip(FILES_ROOT, b.path, names, MAX_ZIP);

@@ -15,18 +15,27 @@ export type Identity = { userId: number; loginName: string; nodeName: string };
  * inside the window; a revoked node is a tailnet-level event well outside it.
  */
 export const WHOIS_TTL_MS = 15_000;
+/** One entry per source IP, negative answers included — bounded, or a scan fills it. */
+export const WHOIS_CACHE_MAX = 512;
 const cache = new Map<string, { at: number; who: Identity | null }>();
 
-export async function whois(ip: string, port: number, now = Date.now()): Promise<Identity | null> {
+export async function whois(ip: string, port: number, now = Date.now(),
+                            lookup: (ip: string, port: number) => Promise<Identity | null> = whoisUncached): Promise<Identity | null> {
   const hit = cache.get(ip);
   if (hit && now - hit.at < WHOIS_TTL_MS) return hit.who;
-  const who = await whoisUncached(ip, port);
+  const who = await lookup(ip, port);
+  cache.delete(ip);                       // re-insert so Map order is insertion age
   cache.set(ip, { at: now, who });
+  if (cache.size > WHOIS_CACHE_MAX) {
+    for (const [k, v] of cache) if (now - v.at >= WHOIS_TTL_MS) cache.delete(k);
+    while (cache.size > WHOIS_CACHE_MAX) cache.delete(cache.keys().next().value as string);
+  }
   return who;
 }
 
-/** Test hook: drop the memo. */
+/** Test hooks: drop the memo, count it. */
 export function clearWhoisCache(): void { cache.clear(); }
+export function whoisCacheSize(): number { return cache.size; }
 
 async function whoisUncached(ip: string, port: number): Promise<Identity | null> {
   const addr = ip.includes(":") ? `[${ip}]:${port}` : `${ip}:${port}`;

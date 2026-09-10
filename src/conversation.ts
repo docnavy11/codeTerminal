@@ -272,12 +272,18 @@ export class LiveChat {
     this.#saveTimer = setTimeout(() => { this.#saveTimer = null; this.#save(); }, 400);
   }
 
+  #saveFailed = false;
   #save(): void {
     this.#rec.sdkSessionId = this.#session?.sdkSessionId ?? this.#rec.sdkSessionId;
     this.#rec.granted = this.#session?.granted ?? this.#rec.granted;
     this.#rec.mode = this.#session?.mode ?? this.#rec.mode;
     this.#rec.updatedAt = Date.now();
-    this.#store.write(this.#rec);
+    const ok = this.#store.write(this.#rec);
+    // Say so once per outage — a full disk used to lose the transcript silently.
+    if (!ok && !this.#saveFailed) {
+      this.#emitAll({ kind: "error", message: "Could not save this chat to disk — recent messages will be lost on restart. Check free space." });
+    }
+    this.#saveFailed = !ok;
   }
 }
 
@@ -387,6 +393,24 @@ export class Manager {
 
   create(from?: LiveChat): LiveChat {
     const now = Date.now();
+    // "New" while already on an unused chat is the same chat.
+    if (from && from.record.events.every((e) => e.kind !== "user")) return from;
+    // Every "new" click wrote a "New chat" record before a word was said
+    // (measured: one 0-turn file per attach to an empty store), and the
+    // abandoned ones piled up in the picker. Reuse one instead of minting
+    // another, so there is at most one empty chat on disk at a time.
+    const spare = this.#store.list().find((c) => c.turns === 0 && c.title === "New chat" && !this.#chats.has(c.id));
+    const spareRec = spare ? this.#read(spare.id) : null;
+    if (spareRec) {
+      const rec: ChatRecord = {
+        ...spareRec, createdAt: now, updatedAt: now, sdkSessionId: null, events: [], granted: [],
+        mode: "default", cwd: from?.record.cwd ?? null, project: from?.record.project,
+      };
+      this.#store.write(rec);
+      const chat = this.#admit(rec, from?.mode ?? "default");
+      this.onListChanged?.();
+      return chat;
+    }
     // A new chat inherits where you were working and how gated you were, which
     // is almost always what you want when you start one mid-task.
     const rec: ChatRecord = {

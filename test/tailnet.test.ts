@@ -40,3 +40,16 @@ describe("loopback detection (localhost mode gate)", () => {
     for (const h of ["0.0.0.0", "100.64.0.1", "devserver.tailnet-1234.ts.net", "::"]) assert.ok(!isLoopbackHost(h), h);
   });
 });
+
+describe("whois memo bound", () => {
+  test("never holds more than WHOIS_CACHE_MAX entries", async () => {
+    const { whois, clearWhoisCache, whoisCacheSize, WHOIS_CACHE_MAX } = await import("../src/tailnet.js");
+    clearWhoisCache();
+    const stub = async () => null;   // negative answers are cached too
+    for (let i = 0; i < WHOIS_CACHE_MAX * 3; i++) await whois(`10.9.${i >> 8}.${i & 255}`, 1, 1_000_000 + i, stub);
+    assert.ok(whoisCacheSize() <= WHOIS_CACHE_MAX, `cache holds ${whoisCacheSize()}`);
+    // A fresh entry survives the sweep; the oldest ones are what went.
+    assert.equal(await whois("10.9.5.255", 1, 1_000_000 + WHOIS_CACHE_MAX * 3, async () => { throw new Error("should be memoised"); }), null);
+    clearWhoisCache();
+  });
+});

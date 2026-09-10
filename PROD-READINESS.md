@@ -62,7 +62,7 @@ Fix: a synchronous `pending` flag set before the await.
 
 ---
 
-## Medium — 6, 7, 8 fixed (see "Fixed" below)
+## Medium — all fixed (see "Fixed" below)
 
 ### 6. Streaming re-renders the whole reply on every token — **proven**
 `sidepanel.js` `delta` handler re-parses the entire accumulated markdown per
@@ -154,6 +154,13 @@ href>`; only the extension needs the blob path.
 | 6 | Streaming renders once per animation frame (`scheduleStreamRender`); the final `text` event still renders the full reply | 700 deltas / 23.8 KB through the real `handle()` on a scratch server: **6092 ms → 1 ms** of synchronous main-thread time; the frame after shows the full text rendered |
 | 7 | `desktop.js` pty socket retries every 3 s and starts a fresh shell; "[disconnected — reconnecting…]" once per outage, "[reconnected — new shell]" on return | Scratch server killed and restarted under an open desktop page: `ptyWs.readyState` back to 1, prompt redrawn |
 | 8 | `sendBox()` queues through `submit()` while the socket is down (box clears, status shows "reconnecting… (n queued)"); the queue drains one prompt per connect / turn end | Prompt typed while the server was down: box emptied, status "reconnecting… (1 queued)", after restart the user turn appeared and was answered ("OK") |
+
+| 9 | Extension watches are mirrored to `chrome.storage.session` on every change and restored when the worker starts | Extension loaded in Chromium: worker boots with no console errors, `storage.session` readable. **The eviction → restore round trip itself is not measured** (the worker's module scope is not reachable from outside); `persistWatches()` is called at all six mutation sites |
+| 10 | `Manager.create()` reuses an abandoned 0-turn "New chat" from disk, and "new" while on an unused chat returns that chat | Scratch server with one cold empty record: two "new" clicks → files on disk 2 → **2**, active chat is the reused one |
+| 11 | Unit runs `nvm-exec node` with `NODE_VERSION=default`; `engines: node >= 22` in package.json | `nvm-exec` under the unit's exact environment (`env -i` + the unit's PATH) resolved `v22.22.1`. **Not yet installed** — `/etc/systemd/system` needs a password; the sudoers rule only covers restart/start/stop |
+| 12 | `Store.write()` returns false and logs `[store] write failed`; `LiveChat` tells its clients once per outage | `test/store.test.ts`: read-only directory → `false`, one log line, `true` again after chmod. The client-facing message is code-read |
+| 13 | whois memo capped at `WHOIS_CACHE_MAX = 512` (expired swept first, then oldest) | `test/tailnet.test.ts`: 1536 distinct IPs with a stub lookup → size ≤ 512, freshest still memoised |
+| 14 | Desktop/mobile download via a plain link (file) or a form POST into a hidden same-origin iframe (zip); only the extension buffers a blob. `frame-src 'none'` → `'self'`; the zip route also accepts urlencoded | Playwright on the desktop page: 405 KB file and a 2-file zip saved with the right names, **0 blob: URLs**, no page-side fetch. Trade-off: a zip error (too large, nothing selected) lands in the hidden iframe and is not shown |
 
 Not measured: the *clean-end* branch of 4 (stream ends without throwing). The probe exercised the throwing branch (`terminated by signal SIGKILL`); the post-loop code runs on both.
 
