@@ -8,7 +8,6 @@
  * No terminal here — a side panel is too narrow for one, and the shell lives
  * in the web UI.
  */
-const DEFAULT_EXT_URL = "ws://devserver.tailnet-1234.ts.net:8123/ext";
 
 const $ = (id) => document.getElementById(id);
 const log = $("log"), box = $("box"), dot = $("dot"), meta = $("meta");
@@ -32,11 +31,11 @@ function el(cls, text) {
 const setBusy = (v) => { busy = v; stop.disabled = !v; };
 const renderMd = (t, raw) => { t.innerHTML = DOMPurify.sanitize(marked.parse(raw), { USE_PROFILES: { html: true } }); };
 
-/* The background worker holds the /ext URL; the session lives at /ws. */
-async function agentUrl() {
-  const { serverUrl } = await chrome.storage.local.get({ serverUrl: DEFAULT_EXT_URL });
-  return (serverUrl || DEFAULT_EXT_URL).replace(/\/ext\/?$/, "/ws");
-}
+/* Everything platform-specific lives behind PLATFORM, defined by whichever
+   host page loaded this file: the extension panel (chrome.* APIs) or the
+   mobile page (plain URLs, since it is served by the server itself). The logic
+   below is identical in both, which is why it is one file rather than two. */
+async function agentUrl() { return PLATFORM.wsUrl(); }
 
 async function connect() {
   clearTimeout(retry);
@@ -49,9 +48,9 @@ async function connect() {
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
     try {
-      const { instanceId } = await chrome.storage.local.get("instanceId");
+      const instanceId = await PLATFORM.instanceId();
       if (instanceId) ws.send(JSON.stringify({ type: "browser", instance: instanceId }));
-    } catch { /* no extension storage: the server falls back to the newest */ }
+    } catch { /* no instance: the server falls back to the newest browser */ }
     flushQueued();
   };
   ws.onclose = () => {
@@ -182,11 +181,14 @@ function renderApproval(m) {
   const pre = document.createElement("pre");
   pre.textContent = typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
   const row = document.createElement("div");
+  row.className = "row";
   const choices = [["Approve", "allow", "allow"], ["Deny", "deny", "deny"]];
   if (m.canAlways) choices.splice(1, 0, ["Always", "always", "allow"]);
   for (const [label, decision, cls] of choices) {
     const b = document.createElement("button");
     b.textContent = label; b.className = cls;
+    // "Always" carries the .allow class too, so styling keys off the decision.
+    b.dataset.decision = decision;
     b.onclick = () => {
       ws.send(JSON.stringify({ type: "decision", id: m.id, decision }));
       card.querySelectorAll("button").forEach((x) => (x.disabled = true));
@@ -334,9 +336,9 @@ box.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"
 stop.onclick = () => ws?.send(JSON.stringify({ type: "interrupt" }));
 $("newchat").onclick = () => ws?.send(JSON.stringify({ type: "new" }));
 // A 400px column is the wrong place to curate; open the manage page in a tab.
-$("manage").onclick = async () => chrome.tabs.create({ url: (await base()) + "/manage.html" });
+$("manage").onclick = async () => PLATFORM.openUrl((await base()) + "/manage.html");
 // The panel has no terminal and no split view; the full UI does.
-$("openui").onclick = async () => chrome.tabs.create({ url: (await base()) + "/" });
+$("openui").onclick = async () => PLATFORM.openUrl((await base()) + "/");
 modeSel.onchange = () => ws?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
 
 /* ---- appearance, remembered per browser --------------------------------- */
@@ -356,12 +358,45 @@ function applyTheme() {
   $("theme").textContent = theme;
 }
 $("fsup").onclick   = () => { fontSize = clampFs(fontSize + 1); applyFontSize(); };
+/* Settings menu. Theme, text size, the full UI and manage are all set-once
+   controls; they used to spend permanent bar space, two of them as an
+   unlabelled arrow and cog. One click to reach, real words when you get there. */
+/* Which bar controls actually get used — see the note in public/index.html.
+   Local only: it posts to your own server, nowhere else. */
+document.querySelector("header").addEventListener("click", async (e) => {
+  const el = e.target.closest("[id]");
+  if (!el || el.id === "moremenu") return;
+  try {
+    await fetch((await base()) + "/usage", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ control: el.id }),
+    });
+  } catch { /* counting must never break the panel */ }
+}, true);   // Capture: #chats, #more and the menu all stopPropagation(), so a
+           // listener on the bubble phase would never see the clicks it counts.
+
+const moreBtn = $("more"), moreMenu = $("moremenu");
+function closeMore() { moreMenu.hidden = true; moreBtn.setAttribute("aria-expanded", "false"); }
+moreBtn.onclick = (e) => {
+  e.stopPropagation();
+  const open = moreMenu.hidden;
+  moreMenu.hidden = !open;
+  moreBtn.setAttribute("aria-expanded", String(open));
+};
+// A menu item that navigates should close; a toggle inside it should not.
+moreMenu.onclick = (e) => { if (e.target.closest(".mitem")) closeMore(); else e.stopPropagation(); };
+document.addEventListener("click", closeMore);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMore(); });
+
 $("fsdown").onclick = () => { fontSize = clampFs(fontSize - 1); applyFontSize(); };
 $("theme").onclick  = () => { theme = { auto: "light", light: "dark", dark: "auto" }[theme]; applyTheme(); };
 
 let withTab = localStorage.getItem("ct.tab") !== "0";
 function paintTab() {
-  $("tabctx").textContent = withTab ? "tab" : "tab off";
+  // On a phone there is no local tab: the server resolves the active tab from
+  // whichever browser has the extension connected, so the label says whose.
+  $("tabctx").textContent = PLATFORM.tabLabel(withTab);
+  $("tabctx").title = PLATFORM.tabTitle;
   $("tabctx").classList.toggle("off", !withTab);
   localStorage.setItem("ct.tab", withTab ? "1" : "0");
 }
@@ -463,8 +498,7 @@ const fmtWhen = (ms) => {
 
 async function base() {
   if (httpBase) return httpBase;
-  const { serverUrl } = await chrome.storage.local.get({ serverUrl: DEFAULT_EXT_URL });
-  httpBase = (serverUrl || DEFAULT_EXT_URL).replace(/^ws/, "http").replace(/\/ext\/?$/, "");
+  httpBase = await PLATFORM.httpBase();
   return httpBase;
 }
 
@@ -749,19 +783,15 @@ function flushQueued() {
 }
 
 async function takePending() {
-  try {
-    const { pendingPrompt } = await chrome.storage.session.get("pendingPrompt");
-    if (!pendingPrompt) return;
-    await chrome.storage.session.remove("pendingPrompt");   // claim it once
-    // Ignore something stale from a previous session.
-    if (Date.now() - (pendingPrompt.at ?? 0) < 60_000) submit(pendingPrompt.text);
-  } catch { /* storage.session unavailable */ }
+  const pendingPrompt = await PLATFORM.takePendingPrompt();
+  if (!pendingPrompt) return;
+  // Ignore something stale from a previous session.
+  if (Date.now() - (pendingPrompt.at ?? 0) < 60_000) submit(pendingPrompt.text);
 }
 
-// Fires when the panel is already open and you right-click again.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "session" && changes.pendingPrompt?.newValue) takePending();
-});
+// Fires when the panel is already open and you right-click again. The mobile
+// page has no context menu, so its implementation never calls back.
+PLATFORM.onPendingPrompt(takePending);
 
 applyFontSize();
 applyTheme();

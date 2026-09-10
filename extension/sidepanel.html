@@ -1,235 +1,39 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>claude</title>
-<style>
-  html { font-size: 12px; }
-
-  :root {
-    --bg:#14171e; --panel:#1a1e27; --line:#2b3140; --fg:#dfe3ec; --dim:#8b93a7;
-    --accent:#7aa2f7; --ok:#7dcfa0; --warn:#e0af68; --bad:#f07178;
-    --code:#0f1219; --card:#211e18; --qcard:#181d2b; --btn:#252a36; --inline:#222739; --sel:#2a3550;
-    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-    color-scheme: dark;
-  }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
-      --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
-      --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b;
-      --code:#f4f5f8; --card:#fdf6e6; --qcard:#eef3fd; --btn:#e6e8ee; --inline:#eceef4; --sel:#cfdcf7;
-      color-scheme: light;
-    }
-  }
-  :root[data-theme="light"] {
-    --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
-    --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b;
-    --code:#f4f5f8; --card:#fdf6e6; --qcard:#eef3fd; --btn:#e6e8ee; --inline:#eceef4; --sel:#cfdcf7;
-    color-scheme: light;
-  }
-  * { box-sizing:border-box; }
-  /* The UA's [hidden] rule is display:none at the weakest specificity, so any
-     element with its own display (flex here) ignores it. Every toggle in this
-     file uses .hidden, so make it win. */
-  [hidden] { display:none !important; }
-  html,body { margin:0; height:100%; overflow:hidden; }
-  body { position:relative; }
-  body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg);
-         font:1rem/1.45 var(--mono); }
-
-  header { display:flex; align-items:center; gap:3px; padding:5px 6px; flex-shrink:0; flex-wrap:nowrap; overflow:hidden;
-           border-bottom:1px solid var(--line); background:var(--panel); }
-  header .dot { width:7px; height:7px; border-radius:50%; background:var(--bad); flex-shrink:0; }
-  header .dot.on { background:var(--ok); }
-  select, button { font:inherit; font-size:0.792rem; background:var(--btn); color:var(--fg);
-                   border:1px solid var(--line); border-radius:4px; padding:2px 5px; cursor:pointer;
-                   flex-shrink:0; }
-  header select { max-width:96px; }
-  /* The model name is the first thing worth losing when space runs out. */
-  #meta { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  select.hot { border-color:var(--bad); color:var(--bad); }
-  select.warm { border-color:var(--warn); color:var(--warn); }
-  button:hover:not(:disabled) { border-color:var(--accent); }
-  button:disabled { opacity:.4; cursor:default; }
-
-  /* min-height:0 or this cannot shrink below its content, overflows the
-     column, and shoves the status bar and input over the transcript. */
-  .tabs { display:flex; gap:2px; }
-  .tabs .tab { cursor:pointer; padding:2px 6px; border-radius:3px; color:var(--dim); font-size:0.833rem; }
-  .tabs .tab.on { color:var(--fg); background:var(--btn); }
-
-  /* files */
-  #files { flex:1; min-height:0; display:flex; flex-direction:column; }
-  .fbar { display:flex; align-items:center; gap:4px; padding:4px 6px; flex-shrink:0;
-          border-bottom:1px solid var(--line); background:var(--panel); }
-  .fbar button { font-size:0.792rem; padding:1px 6px; }
-  .fpath { flex:1; color:var(--dim); font-size:0.75rem; overflow:hidden;
-           text-overflow:ellipsis; white-space:nowrap; }
-  .flist { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; }
-  .flist .row { display:flex; align-items:center; gap:6px; padding:3px 7px; cursor:pointer; }
-  .flist .row:hover { background:var(--btn); }
-  .flist .row .n { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .flist .row.dir .n { color:var(--accent); }
-  .flist .row .s { color:var(--dim); font-size:0.708rem; flex-shrink:0; font-variant-numeric:tabular-nums; }
-  .flist .row .ck { flex-shrink:0; margin:0; accent-color:var(--accent); }
-  .flist .row.sel { background:var(--btn); }
-  .fsel { display:flex; align-items:center; gap:5px; padding:3px 7px; flex-shrink:0;
-          border-bottom:1px solid var(--line); background:var(--btn); font-size:0.75rem; }
-  .fsel .n { color:var(--accent); }
-  .fsel button { font-size:0.708rem; padding:1px 5px; }
-  .fsel .clear { margin-left:auto; }
-  .flist .row .dl { color:var(--dim); flex-shrink:0; padding:0 2px; }
-  .flist .row .dl:hover { color:var(--ok); }
-  .flist.drop { outline:2px dashed var(--accent); outline-offset:-3px; }
-  .fview { flex:1; min-height:0; overflow:auto; padding:7px; }
-  .fview pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:0.792rem; }
-  .fview img { max-width:100%; }
-  .fview .hd { display:flex; gap:6px; align-items:center; margin-bottom:6px; color:var(--dim); }
-
-  #log { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding:9px;
-         display:flex; flex-direction:column; gap:6px; }
-  .msg { white-space:pre-wrap; word-break:break-word; }
-  /* Rendered markdown is real HTML: pre-wrap would turn every newline
-     marked emits between block tags into a visible blank line. */
-  .msg.md { white-space:normal; }
-  .msg.md pre, .msg.md pre code { white-space:pre; }
-  .msg.md p, .msg.md ul, .msg.md ol, .msg.md pre, .msg.md blockquote { margin:0 0 6px; }
-  .msg.md > *:first-child { margin-top:0; } .msg.md > *:last-child { margin-bottom:0; }
-  .msg.md ul, .msg.md ol { padding-left:18px; }
-  .msg.md li { margin:1px 0; }
-  .msg.md h1, .msg.md h2, .msg.md h3 { margin:8px 0 4px; font-size:1.083rem; }
-  .msg.md pre { background:var(--code); padding:6px; border-radius:4px; overflow-x:auto; font-size:0.833rem; }
-  .msg.md code { font-size:0.833rem; background:var(--inline); border-radius:3px;
-                 padding:1px 4px; overflow-wrap:anywhere; }
-  .user { color:var(--accent); border-left:2px solid var(--accent); padding-left:8px; }
-  .ctx { color:var(--dim); font-size:0.75rem; border-left:2px solid var(--line);
-         padding-left:8px; margin-top:-3px; overflow:hidden; text-overflow:ellipsis;
-         white-space:nowrap; }
-  button.off { opacity:.5; }
-  /* A tool line is a one-line summary; a long JSON arg must not force the
-     whole transcript to scroll sideways. */
-  .tool { color:var(--dim); font-size:0.833rem;
-          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .tool b { color:var(--warn); font-weight:600; }
-  .err  { color:var(--bad); }
-  .end  { color:var(--dim); font-size:0.792rem; border-top:1px dashed var(--line); padding-top:4px; }
-  .local { color:var(--dim); background:var(--panel); border-left:2px solid var(--dim);
-           padding:5px 7px; white-space:pre-wrap; font-size:0.833rem; }
-
-  .card { border:1px solid var(--warn); border-radius:5px; padding:8px; background:var(--card); }
-  .card h4 { margin:0 0 5px; font-size:0.875rem; color:var(--warn); }
-  .card pre { margin:0 0 7px; padding:6px; background:var(--code); border-radius:3px;
-              max-height:160px; overflow:auto; font-size:0.792rem; }
-  .card.done, .q.done { opacity:.45; border-color:var(--line); }
-  .card button { margin-right:4px; }
-  .allow { border-color:var(--ok); color:var(--ok); }
-  .deny  { border-color:var(--bad); color:var(--bad); }
-
-  .q { border:1px solid var(--accent); border-radius:5px; padding:8px; background:var(--qcard); }
-  .q .chip { display:inline-block; font-size:0.75rem; letter-spacing:.05em; text-transform:uppercase;
-             color:var(--accent); border:1px solid var(--accent); border-radius:3px;
-             padding:1px 4px; margin-bottom:5px; }
-  .q .qt { margin:0 0 6px; font-size:0.875rem; }
-  .q .opt { display:block; width:100%; text-align:left; margin:0 0 4px; padding:5px 7px;
-            background:var(--btn); border-radius:4px; }
-  .q .opt.sel { border-color:var(--accent); background:var(--sel,#cfdcf7); }
-  .q .opt .d { display:block; color:var(--dim); font-size:0.792rem; margin-top:2px; }
-  .q .other { width:100%; background:var(--code); color:var(--fg); border:1px solid var(--line);
-              border-radius:4px; padding:4px 6px; font:inherit; font-size:0.833rem; }
-
-  #status { display:flex; align-items:center; gap:6px; padding:3px 9px; font-size:0.792rem;
-            border-top:1px solid var(--line); background:var(--panel); color:var(--dim);
-            flex-shrink:0; min-height:20px; }
-  #status .pip { width:6px; height:6px; border-radius:50%; background:var(--line); flex-shrink:0; }
-  #status.busy  .pip { background:var(--accent); animation:pulse 1.1s ease-in-out infinite; }
-  #status.await .pip { background:var(--warn);   animation:pulse .7s ease-in-out infinite; }
-  #status.busy { color:var(--accent); } #status.await { color:var(--warn); }
-  #status { position:relative; }
-  #status #promptsbtn { font-size:0.708rem; padding:0 5px; margin-right:3px; }
-  /* Deliberately NOT inside <header>: the header sets overflow:hidden to keep
-     its buttons from spilling at 400px, which silently clipped this dropdown
-     to the header's own height — it opened, invisibly. */
-  #clist { position:absolute; left:4px; right:4px;
-           background:var(--panel); border:1px solid var(--line); border-radius:5px;
-           max-height:320px; overflow-y:auto; display:none; z-index:45;
-           box-shadow:0 6px 20px rgba(0,0,0,.45); }
-  #clist.open { display:block; }
-  #clist .cfind { padding:5px 7px; border-bottom:1px solid var(--line); }
-  #clist .cfind input { width:100%; background:var(--bg); color:var(--fg);
-                        border:1px solid var(--line); border-radius:4px;
-                        padding:3px 6px; font:inherit; font-size:0.75rem; }
-  #clist .c { padding:5px 8px; cursor:pointer; display:flex; gap:6px; align-items:baseline; }
-  #clist .c:hover { background:var(--btn); }
-  #clist .c.on { border-left:2px solid var(--accent); }
-  #clist .c .ct { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #clist .c .cw { color:var(--dim); font-size:0.667rem; flex-shrink:0; }
-  #clist .c .ca { color:var(--dim); flex-shrink:0; padding:0 2px; }
-  #clist .c .ca:hover { color:var(--fg); }
-  #clist .empty { padding:8px; color:var(--dim); font-size:0.75rem; }
-
-  #plist { position:absolute; bottom:100%; left:4px; right:4px; margin-bottom:5px;
-           background:var(--panel); border:1px solid var(--line); border-radius:5px;
-           max-height:300px; overflow-y:auto; display:none; z-index:40;
-           box-shadow:0 -5px 18px rgba(0,0,0,.45); }
-  #plist.open { display:block; }
-  #plist .scope { padding:4px 8px; color:var(--dim); font-size:0.708rem;
-                  border-bottom:1px solid var(--line); display:flex; gap:5px; align-items:center; }
-  #plist .scope button { margin-left:auto; font-size:0.708rem; padding:1px 5px; }
-  #plist .p { padding:5px 8px; cursor:pointer; display:flex; gap:6px; align-items:baseline; }
-  #plist .p:hover { background:var(--btn); }
-  #plist .p .t2 { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #plist .p .tag { color:var(--accent); font-size:0.667rem; flex-shrink:0; }
-  #plist .p .act { color:var(--dim); flex-shrink:0; padding:0 2px; }
-  #plist .edit { padding:7px 8px; border-top:1px solid var(--line); display:flex;
-                 flex-direction:column; gap:4px; }
-  #plist .edit input, #plist .edit textarea {
-    background:var(--bg); color:var(--fg); border:1px solid var(--line);
-    border-radius:4px; padding:3px 6px; font:inherit; font-size:0.75rem; }
-  #plist .edit textarea { min-height:64px; resize:vertical; }
-  #plist .empty { padding:8px; color:var(--dim); font-size:0.75rem; }
-
-  #status .t { margin-left:auto; font-variant-numeric:tabular-nums; opacity:.75; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
-
-  #menu { position:absolute; bottom:100%; left:6px; right:6px; margin-bottom:5px;
-          background:var(--panel); border:1px solid var(--line); border-radius:5px;
-          max-height:220px; overflow-y:auto; display:none; z-index:20;
-          box-shadow:0 -5px 18px rgba(0,0,0,.4); }
-  #menu.open { display:block; }
-  #menu .item { padding:5px 9px; cursor:pointer; display:flex; gap:7px; align-items:baseline; }
-  #menu .item.sel { background:var(--btn); }
-  #menu .item .n { color:var(--accent); flex-shrink:0; }
-  #menu .item .h { color:var(--warn); font-size:0.708rem; flex-shrink:0; }
-  #menu .item .d { color:var(--dim); font-size:0.708rem; overflow:hidden;
-                   text-overflow:ellipsis; white-space:nowrap; }
-  footer { position:relative; }
-  footer { display:flex; gap:5px; padding:7px 8px; border-top:1px solid var(--line);
-           background:var(--panel); flex-shrink:0; }
-  textarea { flex:1; resize:none; background:var(--bg); color:var(--fg); border:1px solid var(--line);
-             border-radius:4px; padding:6px 7px; font:inherit; min-height:34px; max-height:130px; }
-  textarea:focus { outline:none; border-color:var(--accent); }
-  #setup { padding:12px; color:var(--dim); }
-  #setup input { width:100%; box-sizing:border-box; background:var(--code); color:var(--fg);
-                 border:1px solid var(--line); border-radius:4px; padding:5px 7px; font:inherit; margin:6px 0; }
-</style>
+<link rel="stylesheet" href="panel.css">
 
 <header>
-  <span class="dot" id="dot"></span>
-  <select id="mode" title="How much you want to be asked">
-    <option value="default">Ask</option>
-    <option value="acceptEdits">Auto-edits</option>
-    <option value="auto">Classifier</option>
-    <option value="plan">Plan only</option>
-    <option value="bypassPermissions">Never ask</option>
-  </select>
-  <span class="tabs"><span class="tab on" data-view="chat">chat</span><span class="tab" data-view="files">files</span></span>
-  <button id="chatsbtn" title="Switch conversation">chats</button>
-  <button id="newchat">New</button>
-  <button id="openui" title="Open the full UI in a tab — shell, files, split view">↗</button>
-  <button id="manage" title="Manage chats, prompts and projects">⚙</button>
-  <button id="tabctx" title="Attach the active tab to each prompt">tab</button>
-  <button id="theme" title="Theme">auto</button>
-  <button id="fsdown" title="Smaller">A−</button>
-  <button id="fsup" title="Larger">A+</button>
-  <span id="meta" style="margin-left:auto;color:var(--dim);font-size:0.75rem"></span>
+  <div class="row">
+    <span class="dot" id="dot"></span>
+    <span class="tabs"><span class="tab on" data-view="chat">chat</span><span class="tab" data-view="files">files</span></span>
+    <button id="newchat" title="Start a new conversation">New</button>
+    <button id="chatsbtn" title="Switch conversation">Chats ▾</button>
+    <button id="more" title="Settings" aria-haspopup="menu" aria-expanded="false">⋯</button>
+  </div>
+
+  <div class="row status">
+    <span class="lbl">mode</span>
+    <select id="mode" title="How much you want to be asked">
+      <option value="default">Ask</option>
+      <option value="acceptEdits">Auto-edits</option>
+      <option value="auto">Classifier</option>
+      <option value="plan">Plan only</option>
+      <option value="bypassPermissions">Never ask</option>
+    </select>
+    <button id="tabctx" title="Attach the active tab to each prompt">tab</button>
+    <span id="meta"></span>
+  </div>
+
+  <div id="moremenu" hidden>
+    <div class="mrow"><span class="k">Theme</span><button id="theme">auto</button></div>
+    <div class="mrow"><span class="k">Text size</span>
+      <span class="seg"><button id="fsdown" title="Smaller text">A−</button><button id="fsup" title="Larger text">A+</button></span>
+    </div>
+    <div class="mdiv"></div>
+    <div class="mitem" id="openui">Open the full UI in a tab</div>
+    <div class="mitem" id="manage">Manage chats, prompts &amp; projects</div>
+  </div>
 </header>
 
 <div id="clist"></div>
@@ -257,4 +61,5 @@
 
 <script src="vendor/marked.umd.js"></script>
 <script src="vendor/purify.min.js"></script>
+<script src="platform.js"></script>
 <script src="sidepanel.js"></script>
