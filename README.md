@@ -223,6 +223,28 @@ Verified: `..`, absolute paths, symlinks out and symlinked files are all
 refused; new and nested-new paths are allowed; a PNG round-trips
 byte-identical; a cross-origin request gets 403.
 
+## Tests
+
+    npm test          # node:test via tsx
+    npm run check     # typecheck + tests
+
+40 tests, covering the two things here where a mistake is a security hole
+rather than a bug:
+
+- `safePath` — what the browser may reach. Traversal, absolute paths,
+  symlinks pointing out, files reached through them, and the paths that must
+  still work (a not-yet-existing upload target, a nested one).
+- `saveUpload` — filenames go through `basename`, so `../../../../tmp/x`
+  lands as `x` in the current directory.
+
+Plus `stripAnsi`, since what the agent reads from the shell pane is raw pty
+output and the prompt emits an OSC title before every command.
+
+The suite was checked by breaking the code on purpose. Reverting `safePath` to
+the string-only version it shipped with first fails exactly the four symlink
+cases; removing the `basename` call fails exactly the two upload cases. A test
+that cannot fail is not protecting anything.
+
 ## Three CSS traps in this UI
 
 All cost real debugging time; if the transcript ever looks wrong, check these
