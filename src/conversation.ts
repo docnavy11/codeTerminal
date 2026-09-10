@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { Session, type ClientEvent } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
@@ -24,6 +26,8 @@ export class Manager {
   #live = new Set<(e: ClientEvent) => void>();
   #saveTimer: NodeJS.Timeout | null = null;
   #titling = false;
+  /** Set only when the user actually sends /clear. */
+  #clearRequested = false;
 
   /**
    * Permission mode is app-level, not per-chat: you set it once and it holds
@@ -96,6 +100,11 @@ export class Manager {
 
   list(): ChatSummary[] { return this.#store.list(); }
 
+  /** The full record, for reading a chat without making it the active one. */
+  read(id: string): ChatRecord | null {
+    return id === this.#rec?.id ? this.#rec : this.#store.read(id);
+  }
+
   /** Set by the server so watches belonging to a deleted chat go with it. */
   onChatRemoved?: (id: string) => void;
 
@@ -131,8 +140,20 @@ export class Manager {
     // otherwise the user reads a history the model cannot remember, which is
     // worse than showing nothing.
     if (e.kind === "conversation_reset") {
+      // The SDK emits this for /clear AND for "fresh-session flows", and the
+      // two are indistinguishable in the event. Honouring it unconditionally
+      // wiped a chat's transcript every time the server restarted and
+      // reactivated it. Only a /clear the user actually sent may clear.
+      if (!this.#clearRequested) {
+        this.#rec.sdkSessionId = e.newId;   // still follow the new session id
+        this.#save();
+        return;
+      }
+      this.#clearRequested = false;
+      this.#snapshot("before-clear");
       this.#rec.events = [];
       this.#rec.title = "New chat";
+      this.#rec.titleProvisional = false;
       this.#rec.sdkSessionId = e.newId;
       this.#save();
       this.#emitAll({ kind: "cleared" });
@@ -174,6 +195,7 @@ export class Manager {
   }
 
   recordUser(text: string, context?: string): void {
+    if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
     this.#record({ kind: "user", text, context });
     // Provisional: the opening line is rarely what a conversation turns out to
     // be about. Replaced by a real title once there is a reply to name it from.
@@ -320,6 +342,16 @@ export class Manager {
   #scheduleSave(): void {
     if (this.#saveTimer) return;
     this.#saveTimer = setTimeout(() => { this.#saveTimer = null; this.#save(); }, 400);
+  }
+
+  /** A copy on disk before anything destructive, so a mistake is recoverable. */
+  #snapshot(why: string): void {
+    try {
+      const dir = join(dirname(this.#store.dir), "chats-snapshots");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${this.#rec.id}-${why}-${Date.now()}.json`),
+        JSON.stringify(this.#rec));
+    } catch { /* a missing snapshot must not block the operation */ }
   }
 
   #save(): void {

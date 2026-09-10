@@ -60,6 +60,28 @@
   .editor .actions { display:flex; gap:6px; }
   .hint { color:var(--dim); font-size:0.8rem; }
   .err { color:var(--bad); padding:8px 0; }
+
+  /* chat detail */
+  .detail .hd { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+  .detail .hd .who { color:var(--dim); font-size:0.85rem; margin-left:auto; }
+  .transcript { display:flex; flex-direction:column; gap:8px; }
+  .transcript .u { color:var(--accent); border-left:2px solid var(--accent);
+                   padding-left:9px; white-space:pre-wrap; word-break:break-word; }
+  .transcript .a { }
+  .transcript .a p:first-child { margin-top:0; } .transcript .a p:last-child { margin-bottom:0; }
+  .transcript .a pre { background:var(--code); padding:8px; border-radius:5px; overflow-x:auto;
+                       font-size:0.85rem; }
+  .transcript .a code { background:var(--btn); border-radius:3px; padding:1px 4px; font-size:0.9rem;
+                        overflow-wrap:anywhere; }
+  .transcript .t { color:var(--dim); font-size:0.82rem;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .transcript .t b { color:var(--warn); font-weight:600; }
+  .transcript .l { color:var(--dim); font-size:0.85rem; background:var(--panel);
+                   border-left:2px solid var(--line); padding:5px 8px; white-space:pre-wrap; }
+  .transcript .e { color:var(--dim); font-size:0.8rem; border-top:1px dashed var(--line);
+                   padding-top:4px; }
+  .transcript .ctx { color:var(--dim); font-size:0.8rem; border-left:2px solid var(--line);
+                     padding-left:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>
 
 <header>
@@ -78,4 +100,6 @@
 <section id="prompts" hidden></section>
 <section id="projects" hidden></section>
 
+<script src="/vendor/marked/marked.umd.js"></script>
+<script src="/vendor/dompurify/purify.min.js"></script>
 <script src="/manage.js"></script>

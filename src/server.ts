@@ -177,13 +177,21 @@ app.get("/chats", guard, (_req, res) => {
   res.json({ active: convo.activeId, projects: convo.projects(), chats: convo.list() });
 });
 
+/** One chat's transcript, so the manage page is not renaming things blind. */
+app.get("/chats/:id", guard, (req, res) => {
+  const rec = convo.read(String(req.params.id));
+  if (!rec) { res.status(404).json({ error: "no such chat" }); return; }
+  res.json(rec);
+});
+
 app.post("/chats/:id", guard, express.json({ limit: "64kb" }), async (req, res) => {
   try {
     const id = String(req.params.id);
-    const b = req.body as { title?: string; project?: string };
+    const b = req.body as { title?: string; project?: string; open?: boolean };
     if (typeof b.title === "string" && !convo.rename(id, b.title)) {
       throw new Error("no such chat");
     }
+    if (b.open === true) await convo.open(id);
     if (typeof b.project === "string") {
       if (id !== convo.activeId) throw new Error("open the chat before moving it");
       await convo.setProject(b.project);

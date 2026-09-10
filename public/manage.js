@@ -73,6 +73,8 @@ function renderChats() {
     row.append(main);
     row.append(el("span", "tag", c.project ?? "general"));
 
+    const view = el("button", "", "view");
+    view.onclick = () => showChat(c.id);
     const rename = el("button", "", "rename");
     rename.onclick = async () => {
       const t = prompt("Rename this chat", c.title);
@@ -102,9 +104,73 @@ function renderChats() {
       catch (e) { show(e.message); }
     };
 
-    row.append(rename, move, del);
+    row.append(view, rename, move, del);
+    main.style.cursor = "pointer";
+    main.onclick = () => showChat(c.id);
     host.append(row);
   }
+}
+
+/* ---------------- one chat, read-only ---------------- */
+
+const md = (raw) => DOMPurify.sanitize(marked.parse(raw ?? ""), { USE_PROFILES: { html: true } });
+
+const summarise = (input) => {
+  if (!input || typeof input !== "object") return "";
+  if (typeof input.command === "string") return input.command;
+  if (typeof input.file_path === "string") return input.file_path;
+  return JSON.stringify(input).slice(0, 100);
+};
+
+async function showChat(id) {
+  const host = $("chats");
+  host.replaceChildren();
+  let rec;
+  try { rec = await api(`/chats/${id}`); }
+  catch (e) { show(e.message); return; }
+
+  const wrap = el("div", "detail");
+  const hd = el("div", "hd");
+  const back = el("button", "", "← all chats");
+  back.onclick = () => { renderChats(); };
+  const open = el("button", "", "open in the terminal");
+  open.onclick = async () => {
+    try {
+      await api(`/chats/${id}`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ open: true }) });
+      location.href = "/";
+    } catch (e) { show(e.message); }
+  };
+  hd.append(back, open, el("span", "who",
+    `${rec.events.filter((e) => e.kind === "user").length} turns · ${rec.project ?? "general"}${rec.cwd ? ` · ${rec.cwd}` : ""}`));
+  wrap.append(hd, el("h2", "", rec.title));
+
+  const t = el("div", "transcript");
+  // Only the kinds that carry meaning when read back later. status and delta
+  // are live-only and never persisted; ready/commands are session state.
+  for (const e of rec.events) {
+    if (e.kind === "user") {
+      t.append(el("div", "u", e.text));
+      if (e.context) t.append(el("div", "ctx", "⌁ " + e.context.split("\n")[0]));
+    } else if (e.kind === "text") {
+      const a = el("div", "a"); a.innerHTML = md(e.text); t.append(a);
+    } else if (e.kind === "tool") {
+      const d = el("div", "t");
+      d.innerHTML = "→ <b></b> ";
+      d.querySelector("b").textContent = e.name;
+      d.append(summarise(e.input));
+      t.append(d);
+    } else if (e.kind === "local") {
+      t.append(el("div", "l", e.text));
+    } else if (e.kind === "turn_end") {
+      t.append(el("div", "e", `done${e.denials ? ` · ${e.denials} denied` : ""}`));
+    } else if (e.kind === "error") {
+      t.append(el("div", "l", e.message));
+    }
+  }
+  if (!t.children.length) t.append(el("div", "empty", "This chat has no messages."));
+  wrap.append(t);
+  host.append(wrap);
 }
 
 /* ---------------- prompts ---------------- */
