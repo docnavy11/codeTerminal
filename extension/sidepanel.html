@@ -31,6 +31,7 @@
      file uses .hidden, so make it win. */
   [hidden] { display:none !important; }
   html,body { margin:0; height:100%; overflow:hidden; }
+  body { position:relative; }
   body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg);
          font:1rem/1.45 var(--mono); }
 
@@ -143,7 +144,10 @@
   #status.busy { color:var(--accent); } #status.await { color:var(--warn); }
   #status { position:relative; }
   #status #promptsbtn { font-size:0.708rem; padding:0 5px; margin-right:3px; }
-  #clist { position:absolute; top:100%; left:4px; right:4px; margin-top:4px;
+  /* Deliberately NOT inside <header>: the header sets overflow:hidden to keep
+     its buttons from spilling at 400px, which silently clipped this dropdown
+     to the header's own height — it opened, invisibly. */
+  #clist { position:absolute; left:4px; right:4px;
            background:var(--panel); border:1px solid var(--line); border-radius:5px;
            max-height:320px; overflow-y:auto; display:none; z-index:45;
            box-shadow:0 6px 20px rgba(0,0,0,.45); }
@@ -207,8 +211,7 @@
                  border:1px solid var(--line); border-radius:4px; padding:5px 7px; font:inherit; margin:6px 0; }
 </style>
 
-<header style="position:relative">
-  <div id="clist"></div>
+<header>
   <span class="dot" id="dot"></span>
   <select id="mode" title="How much you want to be asked">
     <option value="default">Ask</option>
@@ -229,6 +232,7 @@
   <span id="meta" style="margin-left:auto;color:var(--dim);font-size:0.75rem"></span>
 </header>
 
+<div id="clist"></div>
 <div id="log"></div>
 <div id="files" hidden>
   <div class="fbar">

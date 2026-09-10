@@ -322,7 +322,7 @@ cases; removing the `basename` call fails exactly the two upload cases. Revertin
 unit cases plus the end-to-end one. A test that cannot fail is not protecting
 anything.
 
-## Three CSS traps in this UI
+## Four CSS traps in this UI
 
 All cost real debugging time; if the transcript ever looks wrong, check these
 first.
@@ -338,6 +338,13 @@ fixes it; `pre` inside re-enables `pre`.
 shrink below its content, overflows the column, and pushes the status bar and
 input over the transcript. `.pane` in the web UI already had it; the side panel
 did not.
+
+**`overflow: hidden` on a container clips its own dropdowns.** The side panel
+header sets it so buttons cannot spill at 400px — which silently clipped the
+chat picker to the header's height. It opened, populated, and could not be
+seen. Popovers live outside the clipped container and are positioned from its
+measured height. `#status` and `footer` do not set overflow, which is why the
+prompts popup and slash menu were unaffected.
 
 **The `hidden` attribute loses to any explicit `display`.** The UA rule is
 `[hidden] { display: none }` at the weakest possible specificity, so

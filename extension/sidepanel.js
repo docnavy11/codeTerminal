@@ -381,6 +381,9 @@ const ago = (ms) => {
 };
 
 function renderChatList() {
+  // Positioned from the header's real height rather than a guess, since the
+  // header wraps differently at different widths and font sizes.
+  clist.style.top = `${document.querySelector("header").getBoundingClientRect().bottom + 4}px`;
   clist.replaceChildren();
   const find = document.createElement("div");
   find.className = "cfind";
