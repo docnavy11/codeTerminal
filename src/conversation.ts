@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { Session, type ClientEvent } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
+import { generateTitle } from "./titles.js";
 
 const MAX_EVENTS = 3000;
 
@@ -21,6 +22,7 @@ export class Manager {
    *  silently starve the first of events. */
   #live = new Set<(e: ClientEvent) => void>();
   #saveTimer: NodeJS.Timeout | null = null;
+  #titling = false;
 
   /**
    * Permission mode is app-level, not per-chat: you set it once and it holds
@@ -110,6 +112,7 @@ export class Manager {
     }
     this.#emitAll(e);
     this.#scheduleSave();
+
   };
 
   #emitAll(e: ClientEvent): void {
@@ -134,11 +137,76 @@ export class Manager {
 
   recordUser(text: string, context?: string): void {
     this.#record({ kind: "user", text, context });
+    // Provisional: the opening line is rarely what a conversation turns out to
+    // be about. Replaced by a real title once there is a reply to name it from.
     if (this.#rec.title === "New chat") {
       this.#rec.title = titleFrom(this.#rec.events);
+      this.#rec.titleProvisional = true;
       this.#save();
       this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+      // Name it from the question straight away — no reply needed, so a turn
+      // parked on an approval still ends up with a real title.
+      void this.#maybeTitle();
     }
+  }
+
+  /** Rename by hand. Sticks — auto-titling never overwrites it. */
+  rename(id: string, title: string): boolean {
+    const t = title.trim().slice(0, 64);
+    if (!t) return false;
+    if (id === this.#rec.id) {
+      this.#rec.title = t;
+      this.#rec.titleProvisional = false;
+      this.#save();
+    } else {
+      const rec = this.#store.read(id);
+      if (!rec) return false;
+      rec.title = t;
+      rec.titleProvisional = false;
+      this.#store.write(rec);
+    }
+    this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+    return true;
+  }
+
+  /**
+   * After the first exchange, name the chat properly. One Haiku call, once per
+   * chat, and never over a title the user set themselves.
+   */
+  async #maybeTitle(): Promise<void> {
+    if (!this.#rec.titleProvisional) return;
+    const events = this.#rec.events;
+    const firstUser = events.find((e) => e.kind === "user") as { text: string } | undefined;
+    if (!firstUser) return;
+
+    // An in-flight guard rather than clearing the flag: clearing it first meant
+    // a failed naming call left the chat stuck with its opening line forever.
+    if (this.#titling) return;
+    this.#titling = true;
+    const id = this.#rec.id;
+    let title: string | null = null;
+    try {
+      title = await generateTitle(firstUser.text);
+    } finally {
+      this.#titling = false;
+    }
+    // Give up after a few turns rather than paying for a naming call on every
+    // turn of a chat that will not name.
+    if (!title) {
+      if (events.filter((e) => e.kind === "user").length >= 3) this.#rec.titleProvisional = false;
+      return;
+    }
+
+    // The user may have switched chats while that call was in flight.
+    if (this.#rec.id === id) {
+      this.#rec.title = title;
+      this.#rec.titleProvisional = false;
+      this.#save();
+    } else {
+      const rec = this.#store.read(id);
+      if (rec && rec.titleProvisional !== false) { rec.title = title; rec.titleProvisional = false; this.#store.write(rec); }
+    }
+    this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
   }
 
   /**

@@ -11,6 +11,8 @@ export type ChatRecord = {
   sdkSessionId: string | null;
   /** Absolute path this chat works in. Null means the server default. */
   cwd: string | null;
+  /** True while the title is just the opening message, awaiting a real one. */
+  titleProvisional?: boolean;
   events: ClientEvent[];
   granted: PermissionUpdate[];
   mode: PermissionMode;

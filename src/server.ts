@@ -283,7 +283,7 @@ function attachAgent(ws: WebSocket, replay = true): void {
 
   ws.on("message", (raw) => {
     let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string;
-               answers?: unknown; withTab?: boolean; path?: string };
+               answers?: unknown; withTab?: boolean; path?: string; title?: string };
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     const session = convo.session;
 
@@ -351,6 +351,10 @@ function attachAgent(ws: WebSocket, replay = true): void {
         if (typeof msg.id === "string") {
           convo.open(msg.id).catch((e: unknown) => send({ kind: "error", message: String(e) }));
         }
+        return;
+
+      case "rename":
+        if (typeof msg.id === "string" && typeof msg.title === "string") convo.rename(msg.id, msg.title);
         return;
 
       case "delete":

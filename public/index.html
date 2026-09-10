@@ -766,6 +766,13 @@ function renderChats() {
     const t = document.createElement("span"); t.className = "t"; t.textContent = c.title;
     const w = document.createElement("span"); w.className = "w";
     w.textContent = `${c.turns} turn${c.turns === 1 ? "" : "s"} · ${ago(c.updatedAt)}`;
+    const ren = document.createElement("span");
+    ren.className = "x"; ren.textContent = "✎"; ren.title = "Rename";
+    ren.onclick = (e) => {
+      e.stopPropagation();
+      const t = prompt("Rename this chat", c.title);
+      if (t && t.trim()) agentWs?.send(JSON.stringify({ type: "rename", id: c.id, title: t.trim() }));
+    };
     const x = document.createElement("span"); x.className = "x"; x.textContent = "✕"; x.title = "Delete";
     x.onclick = (e) => {
       e.stopPropagation();
@@ -775,7 +782,7 @@ function renderChats() {
       chatList.classList.remove("open");
       if (c.id !== ACTIVE) agentWs?.send(JSON.stringify({ type: "open", id: c.id }));
     };
-    row.append(t, w, x);
+    row.append(t, w, ren, x);
     return row;
   }));
 }
