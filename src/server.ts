@@ -19,7 +19,7 @@ import { stat } from "node:fs/promises";
 import type { LiveChat } from "./conversation.js";
 import { Shell } from "./shell.js";
 import { heartbeat } from "./heartbeat.js";
-import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
+import { whois, self as tailnetSelf, normaliseIp, isLoopback, isLoopbackHost } from "./tailnet.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -128,21 +128,43 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
-const resolved = await tailnetSelf();
-if (!resolved) {
-  console.error("Could not read this node's tailnet identity (`tailscale status --json`).");
-  console.error("Authentication depends on it, so refusing to start.");
+/**
+ * Two ways to run:
+ *
+ *   tailnet mode    — a tailnet identity is found; non-loopback peers are
+ *                     authenticated by `tailscale whois`. This is the VPS.
+ *   localhost mode  — no identity (tailscale absent, or CODETERM_LOCALHOST=1);
+ *                     the server serves this machine only. A laptop with no
+ *                     tailnet runs here with zero setup.
+ *
+ * The one rule that keeps localhost mode safe: it must be bound to loopback. A
+ * network-reachable bind with no identity would be an ungated shell with no
+ * authentication at all, so that combination refuses to start.
+ */
+const FORCE_LOCAL = process.env.CODETERM_LOCALHOST === "1";
+const SELF: { userId: number; dnsName: string } | null =
+  FORCE_LOCAL ? null : await tailnetSelf();
+
+if (!SELF && !isLoopbackHost(HOST)) {
+  console.error(
+    FORCE_LOCAL
+      ? "CODETERM_LOCALHOST=1 serves this machine only, so it needs a loopback bind."
+      : "No tailnet identity (`tailscale status --json` failed), and not bound to loopback.",
+  );
+  console.error("Refusing to start: that would be an ungated shell reachable with no authentication.");
+  console.error("Run tailscale, or set CODETERM_HOST=127.0.0.1 to serve localhost only.");
   process.exit(1);
 }
-const SELF: { userId: number; dnsName: string } = resolved;
+const LOCALHOST_ONLY = !SELF;
 
 /**
  * Origins a browser may legitimately be on. A cross-origin page gets rejected
  * here — WebSockets have no same-origin policy of their own, so without this
- * any site you visit could open /pty.
+ * any site you visit could open /pty. In localhost mode there is no tailnet
+ * dnsName; localhost/127.0.0.1 (always present) cover it.
  */
 const ALLOWED_ORIGINS = new Set(
-  [HOST, SELF.dnsName, SELF.dnsName.split(".")[0], "localhost", "127.0.0.1", ...EXTRA_ORIGINS]
+  [HOST, SELF?.dnsName, SELF?.dnsName?.split(".")[0], "localhost", "127.0.0.1", ...EXTRA_ORIGINS]
     .filter(Boolean)
     .flatMap((h) => [`http://${h}:${PORT}`, `https://${h}:${PORT}`]),
 );
@@ -187,6 +209,11 @@ async function identityReason(req: IncomingMessage): Promise<string | null> {
   const ip = normaliseIp(req.socket.remoteAddress ?? "");
   if (!ip) return "no peer address";
   if (isLoopback(ip)) return null; // same box — already has a shell
+
+  // Localhost mode has no identity to check a remote peer against, so only the
+  // same machine is allowed. (With a loopback bind this branch is unreachable;
+  // it is the backstop if someone points a network bind at localhost mode.)
+  if (!SELF) return "localhost-only mode: only same-machine connections are allowed";
 
   const who = await whois(ip, req.socket.remotePort ?? 0);
   if (!who) return `${ip} is not on this tailnet`;
@@ -689,13 +716,16 @@ function listenWithRetry(attempt = 0): void {
 
 function announce(): void {
   console.log(`code-terminal  http://${HOST}:${PORT}`);
-  console.log(`identity       ${SELF.dnsName} · tailnet user ${SELF.userId}`);
+  console.log(`identity       ${SELF ? `${SELF.dnsName} · tailnet user ${SELF.userId}` : "localhost only — same-machine connections, no tailnet needed"}`);
   console.log(`workspace      ${WORKSPACE}`);
   console.log(`shell          /pty — real PTY, NO approval gate`);
   console.log(`browser        /ext — extension bridge, tools ungated`);
   console.log(`files          ${FILES_ROOT} (browse, upload, download)`);
   console.log(`projects       ${PROJECTS_ROOT}`);
   console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
+  if (LOCALHOST_ONLY) {
+    console.log(`mode           localhost only — reachable from this machine, not the network`);
+  }
 }
 
 // A restart is a good moment to drop what the previous run left behind.

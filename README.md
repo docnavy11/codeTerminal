@@ -77,8 +77,9 @@ The server refuses to bind `0.0.0.0` — this box has a public IP
 
 ## Authentication
 
-There is no shared secret. Each WebSocket upgrade must pass two independent
-checks (`denyReason` in `src/server.ts`):
+There is no shared secret. On a tailnet, each WebSocket upgrade must pass these
+independent checks (`denyReason` in `src/server.ts`); on a laptop it runs in
+[localhost mode](#localhost-mode) instead:
 
 1. **`Origin`** must be one this server serves itself. WebSockets have no
    same-origin policy, so without this any page you visited could open `/pty`
@@ -105,6 +106,30 @@ Verified:
     Sec-Fetch-Site: cross-site             → 403 (CSRF-shape refused)
     whois 8.8.8.8                          → null (off-tailnet refused)
     whois MacBook                          → you@example.com, owner match
+
+### Localhost mode
+
+To run it on your own laptop instead of a tailnet box, bind loopback:
+
+    CODETERM_HOST=127.0.0.1 npm start
+
+With a loopback bind and no tailnet identity, the server enters **localhost
+mode**: it serves this machine only, and needs no tailscale — a laptop with
+nothing installed just works. `CODETERM_LOCALHOST=1` forces it even where
+tailscale is present (a purely local run on a tailnet-joined laptop).
+
+The one safety rule: localhost mode must be loopback-bound. A network-reachable
+bind with no tailnet identity would be an ungated shell with no authentication,
+so that combination refuses to start. Loopback peers are always allowed (a
+process on this box already has a shell); cross-site requests are still refused.
+
+    localhost mode + 127.0.0.1        → serves this machine, no tailscale
+    localhost mode + a network bind   → refuses to start
+    tailnet identity present          → tailnet mode, unchanged
+
+Note this changes *which filesystem the agent works on* — your laptop's files,
+not the VPS's. Point the Chrome extension at `ws://localhost:8123/ext` in its
+popup, and it drives the browser on the same machine as before.
 
 ## How it works
 

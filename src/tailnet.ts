@@ -66,6 +66,12 @@ export function normaliseIp(ip: string): string {
   return ip.startsWith("::ffff:") ? ip.slice(7) : ip;
 }
 
+/** A peer address on this machine — the whole 127/8 block, plus IPv6 ::1. */
 export function isLoopback(ip: string): boolean {
-  return ip === "127.0.0.1" || ip === "::1";
+  return ip === "::1" || /^127\./.test(ip);
+}
+
+/** A bind HOST that serves only this machine — used to decide localhost mode. */
+export function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "::1" || /^127\./.test(host);
 }

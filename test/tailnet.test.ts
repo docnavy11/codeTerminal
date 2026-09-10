@@ -25,3 +25,18 @@ describe("whois memo", () => {
     assert.ok(again > 2, `should have re-spawned after TTL (took ${again.toFixed(2)}ms)`);
   });
 });
+
+import { isLoopback, isLoopbackHost } from "../src/tailnet.js";
+
+describe("loopback detection (localhost mode gate)", () => {
+  test("isLoopback covers the whole 127/8 block and ::1", () => {
+    for (const ip of ["127.0.0.1", "127.0.0.5", "127.1.2.3", "::1"]) assert.ok(isLoopback(ip), ip);
+    for (const ip of ["100.64.0.1", "10.0.0.1", "192.168.1.5", "8.8.8.8", "", "::2"]) assert.ok(!isLoopback(ip), ip);
+  });
+
+  test("isLoopbackHost recognises the loopback bind targets", () => {
+    for (const h of ["localhost", "127.0.0.1", "127.0.0.5", "::1"]) assert.ok(isLoopbackHost(h), h);
+    // A network bind is not loopback — localhost mode must refuse to start there.
+    for (const h of ["0.0.0.0", "100.64.0.1", "devserver.tailnet-1234.ts.net", "::"]) assert.ok(!isLoopbackHost(h), h);
+  });
+});
