@@ -4,3 +4,4 @@ workspace/
 sessions.json
 state.json
 chats/
+.e2e-chats/

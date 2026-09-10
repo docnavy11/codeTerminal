@@ -227,6 +227,7 @@ byte-identical; a cross-origin request gets 403.
 
     npm test          # node:test via tsx
     npm run check     # typecheck + tests
+    npm run test:e2e  # boots a real server and session; needs credentials
 
 40 tests, covering the two things here where a mistake is a security hole
 rather than a bug:
@@ -240,10 +241,24 @@ rather than a bug:
 Plus `stripAnsi`, since what the agent reads from the shell pane is raw pty
 output and the prompt emits an OSC title before every command.
 
+`test/e2e.test.ts` boots a real server on a free port and drives a real
+session, guarding the prompt pipeline — where the slash-command regression
+lived, and which the unit tests cannot see. It is opt-in (`CODETERM_E2E=1`)
+because it needs working Claude Code credentials; `/context` is a local
+command so it costs no inference, and the run takes about ten seconds.
+
+It connects a **fake extension** to `/ext` that answers `active_tab`. Without
+one, `activeTab()` returns null, no context is ever attached, and the
+slash-command assertion would pass even with the bug reintroduced — so the
+first test asserts the fixture is really supplying context before the second
+relies on it.
+
 The suite was checked by breaking the code on purpose. Reverting `safePath` to
 the string-only version it shipped with first fails exactly the four symlink
-cases; removing the `basename` call fails exactly the two upload cases. A test
-that cannot fail is not protecting anything.
+cases; removing the `basename` call fails exactly the two upload cases. Reverting
+`wantsContext` to `return true` — the slash-command regression — fails six
+unit cases plus the end-to-end one. A test that cannot fail is not protecting
+anything.
 
 ## Three CSS traps in this UI
 

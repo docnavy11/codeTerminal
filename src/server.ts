@@ -8,6 +8,7 @@ import type { ClientEvent } from "./session.js";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
+import { wantsContext } from "./prompt.js";
 import { stat } from "node:fs/promises";
 import { setBridge, setShellSource } from "./session.js";
 import { Shell } from "./shell.js";
@@ -43,7 +44,7 @@ let activeShell: Shell | null = null;
 setShellSource(() => activeShell);
 
 // Chats live on disk; only the active one has a running SDK session.
-const convo = new Manager(WORKSPACE, join(ROOT, "chats"));
+const convo = new Manager(WORKSPACE, process.env.CODETERM_CHATS ?? join(ROOT, "chats"));
 await convo.boot();
 
 const resolved = await tailnetSelf();
@@ -217,13 +218,10 @@ function attachAgent(ws: WebSocket, replay = true): void {
         if (typeof msg.text !== "string" || !msg.text.trim()) return;
         if (session.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
         const text = msg.text;
-        // A slash command must be the first thing in the message or the CLI
-        // will not expand it — so never prepend context to one. They are meta
-        // operations anyway; what tab you are on has no bearing on /context.
-        const isCommand = text.trimStart().startsWith("/");
         // Ask the browser what the user is looking at. Never blocks the turn:
         // activeTab resolves to null on timeout, restriction or no extension.
-        void (msg.withTab === false || isCommand ? Promise.resolve(null) : bridge.activeTab()).then((tab) => {
+        const attach = msg.withTab !== false && wantsContext(text);
+        void (attach ? bridge.activeTab() : Promise.resolve(null)).then((tab) => {
           const context = tab?.url
             ? [`active tab: ${tab.title ?? "(untitled)"} — ${tab.url}`,
                tab.selection ? `selected text:\n${tab.selection}` : null].filter(Boolean).join("\n")
