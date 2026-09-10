@@ -9,6 +9,12 @@ stated, but it was not executed (usually because doing so costs a real model
 turn). Severity is for a single-user deployment; "oss" notes where sharing
 raises it.
 
+**Status: every item below is closed** (commits `523e802`, `617eecd`,
+`baf82fd`, `45f5332`); the "Fixed" tables record how each was verified.
+Three things remain unmeasured and are marked as such: the clean-end branch
+of the dead-session fix, the extension's evict→restore round trip, and
+`close()` → `interrupt()` on a running turn.
+
 The earlier security audit (SECURITY-AUDIT.md) is fully closed and its fixes
 were re-verified live during this pass. This review is about what is *left*.
 

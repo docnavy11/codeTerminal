@@ -23,6 +23,13 @@ NOPASSWD rule is the only sudo reachable from inside the product.
 No escalation: the unit runs as `dev:dev` and its file is root-owned, so a
 restart starts dev's own code as dev.
 
+A restart is clean. systemd stops the unit with SIGTERM, and the server
+handles it: every live chat's pending save is flushed (transcript writes are
+debounced 400 ms, usage counts 1 s — both used to be lost on every restart),
+sessions are closed, sockets get a 1001 so clients reconnect rather than
+guess, and the process exits within 1.5 s. `[SIGTERM] shutting down` in the
+journal is the line to look for.
+
 `status` is deliberately absent. It needs no privilege, and under `sudo` it
 spawns a pager as root — and a pager runs shell commands (`!sh`), so including
 it would hand out a root shell. Same reasoning keeps `journalctl` out; both
@@ -216,6 +223,11 @@ constrain you. But it means reaching this box's port buys a shell as `dev`,
 which is why the server refuses to bind a public interface and leans on the
 tailnet for its boundary.
 
+The pane reconnects. If the server restarts or the shell exits, the socket
+retries every 3 s and starts a fresh shell — the pane used to stay dead until
+the page was reloaded. At most `MAX_SHELLS` (8) shells are open at once; a
+page opening sockets in a loop gets close code 1013, not a fork bomb.
+
 xterm is served from `node_modules` under `/vendor/*` rather than a CDN, so the
 UI works with no outbound network. The same goes for `marked` + `DOMPurify`,
 which render Claude's replies as markdown: model output is untrusted (the page
@@ -264,10 +276,16 @@ the one currently running, since starting a turn in a background conversation
 you are not watching is worse than leaving a note. If it is not active the
 watch stays on the list for `watch list` to report.
 
-Watches live in memory only. A watch is a live observer on a live tab;
-restoring one after a restart would resurrect something whose tab is long
-gone. They expire (60 min default, 24h max), are capped at 20 active, fire at
-most once, and are dropped with the chat that owns them.
+On the server, watches live in memory only. A watch is a live observer on a
+live tab; restoring one after a restart would resurrect something whose tab is
+long gone. They expire (60 min default, 24h max), are capped at 20 active,
+fire at most once, and are dropped with the chat that owns them.
+
+In the extension they are mirrored to `chrome.storage.session` and restored
+whenever the service worker starts. Chrome evicts that worker at will, and an
+in-memory map went with it while the server still listed the watch — which
+then never fired. Session storage clears when the browser closes, which is
+also when the tabs go, so nothing outlives what it observes.
 
 ## The terminal bridge
 
@@ -348,8 +366,18 @@ handing over a large selection. Capped by `CODETERM_MAX_ZIP` (500MB default).
 The selection clears when you navigate, because carrying it across directories
 would zip things you can no longer see.
 
-Downloads go through `fetch` into a blob rather than a plain `<a href>`: a
-top-level navigation sends no `Origin` header, and the guard wants one.
+Downloads stream to disk on the pages the server serves itself (`/`, `/m`):
+a plain `<a download>` for a file, and for a zip a form POST into a hidden
+same-origin iframe (the route accepts urlencoded as well as JSON for this).
+Nothing passes through page memory — a 500 MB zip used to be 500 MB in the
+tab. The extension panel is a different origin, where a link would open the
+file instead of saving it, so only there is the response fetched into a blob
+first. One trade-off: on the pages, a zip error (too large, nothing selected)
+lands in the hidden iframe and is not shown.
+
+A text preview is cut at its byte cap without splitting a multibyte
+character, and a symlink that points outside the root is listed as `other`
+rather than as a file that then refuses to open.
 
 **`safePath` resolves symlinks.** `path.resolve` collapses `..` but does not
 follow links, so a symlink inside the root pointing at `/etc` would pass a
@@ -386,8 +414,8 @@ It never throws. Cleaning up must not be able to fail a capture.
     npm run check     # typecheck + tests
     npm run test:e2e  # boots a real server and session; needs credentials
 
-40 tests, covering the two things here where a mistake is a security hole
-rather than a bug:
+276 tests. The core is still the two places where a mistake is a security
+hole rather than a bug:
 
 - `safePath` — what the browser may reach. Traversal, absolute paths,
   symlinks pointing out, files reached through them, and the paths that must
@@ -396,7 +424,16 @@ rather than a bug:
   lands as `x` in the current directory.
 
 Plus `stripAnsi`, since what the agent reads from the shell pane is raw pty
-output and the prompt emits an OSC title before every command.
+output and the prompt emits an OSC title before every command. Around those:
+the auth policy with injected tailscale calls, CIDR parsing, the protocol
+union (and a coverage check that the JavaScript client handles every kind),
+the heartbeat on fake timers, the whois memo with an injected lookup, the
+store's archive-on-delete and write-failure paths, upload streaming (RSS
+measured), the manager's cold-record edits, and the nav/mobile layouts.
+
+Two reviews live next to the code and record what was found, what was fixed,
+and how each fix was verified: `SECURITY-AUDIT.md` (the trust boundary) and
+`PROD-READINESS.md` (memory, performance, edge cases — every item closed).
 
 `test/e2e.test.ts` boots a real server on a free port and drives a real
 session, guarding the prompt pipeline — where the slash-command regression
@@ -629,8 +666,20 @@ rather than cutting someone off.
 "current chat" would have attributed every session's watches to whichever was
 last.
 
-Permission mode stays app-level and applies to every conversation, since it is
-a statement about how much you want to be asked, not about one chat.
+Permission mode is per chat (see *Permission modes*). A chat admitted from
+disk starts in `default`; one created from another inherits its creator's
+mode.
+
+A session whose `claude` subprocess dies is not left looking alive. The stream
+ending is the only signal, and it used to be ignored — the next prompt went
+into an input nobody read. Now the session marks itself dead, reports it once,
+and the next prompt (or a firing watch) respawns it, resuming the same
+conversation. Verified by killing the child mid-life: the next prompt was
+answered.
+
+A prompt counts as busy from the moment it is accepted, including the up to
+2.5 s spent fetching the active tab, so a second prompt in that window is
+refused rather than queued behind the first.
 
 Browser tools follow the browser you are working in. Each extension generates
 a stable instance id per profile (`chrome.runtime.id` is not enough — the same
@@ -649,11 +698,21 @@ Conversations are kept as one JSON file each under `chats/`, listed newest
 first in the **Chats** picker. The title is the first thing you said. **New
 chat** starts a fresh one and keeps the current one; the ✕ deletes.
 
-Only the active chat has a running SDK session — each is a `claude` process,
-so keeping every past chat warm would be expensive. Opening an old one resumes
-it by its `sdkSessionId`, which rebuilds the model's context from the
-transcript on disk. Verified: two chats, switch away, switch back, and the
-model still recalled a word from the first one.
+Only live chats (the pool of four, above) have a running SDK session — each
+is a `claude` process, so keeping every past chat warm would be expensive.
+Opening an old one resumes it by its `sdkSessionId`, which rebuilds the
+model's context from the transcript on disk. Verified: two chats, switch away,
+switch back, and the model still recalled a word from the first one.
+
+Renaming, re-projecting or "open in the terminal" on a chat that is not live
+edits its record on disk without waking it. Going through the pool for that
+spawned a subprocess per rename — measured — and evicted an idle chat to make
+room.
+
+**New chat** reuses an abandoned empty one rather than minting another: every
+click used to write a "New chat" record before a word was said, and the
+empties piled up in the picker. Clicking it while already on an unused chat
+stays there.
 
 Replay is bracketed by `cleared` … `replayed` so a client can tell history
 from live events.
@@ -722,6 +781,18 @@ subtly wrong.
 Measured on a six-sentence answer: 138 deltas, first at 4.1s, and the streamed
 text matched the final copy exactly.
 
+Rendering is once per animation frame, not once per delta. Each delta used to
+re-parse the whole accumulated markdown — O(n²) in reply length; a 24 KB reply
+(700 deltas) cost 6.1 s of main-thread time, and long replies visibly janked.
+Throttled to a frame it is 1 ms, and the final `text` event renders the
+complete reply regardless.
+
+On reconnect the client resets its transcript before the server's replay
+arrives; it used to append the replay to what was already on screen, so every
+restart, sleep or wifi blip doubled the transcript. A prompt typed while the
+socket is down is queued and sent on reconnect (the status shows how many),
+where it used to be dropped silently.
+
 ## Knowing what it is doing
 
 A status bar sits directly above the input. The state is derived on the server
@@ -777,13 +848,15 @@ left at default:
 
     gate_fired=true  file_created=false
 
-**Permission mode is app-level, not per-chat.** Set it once and it holds
-across new chats and chat switches; the mode is re-stated to every attached
-tab on each activation, so the dropdown can never show a mode the session is
-not actually in.
+**Permission mode is per chat.** A chat created from another inherits its
+creator's mode; one admitted from disk starts in `default`. The mode is
+re-stated to every attached client on each switch, so the dropdown can never
+show a mode the session is not actually in. It used to be app-global, which
+meant flipping the mode in one window flipped it under a session running in
+another.
 
-It resets to `default` on every server boot, so a process manager restarting
-the server cannot re-arm "Never ask". That is the only case worth guarding —
+Because a chat admitted from disk always starts in `default`, a server
+restart cannot re-arm "Never ask". That is the only case worth guarding —
 an earlier version also downgraded on chat switch, silently, which just meant
 the UI claimed "Never ask" while the session went on prompting.
 

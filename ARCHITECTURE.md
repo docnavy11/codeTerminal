@@ -139,10 +139,15 @@ Files are the database. What lives where:
 | prompt library | `prompts.json` | durable |
 | control usage counts | `usage.json`, flushed 1 s after a change | durable |
 | screenshots | `/tmp/code-terminal-screenshots`, 0700 | pruned by age/count |
-| page watches | `WatchRegistry`, memory only | lost on restart, on purpose (a watch is a live observer on a live tab) |
+| page watches | `WatchRegistry`, memory only; the extension mirrors its half to `chrome.storage.session` | lost on server restart, on purpose (a watch is a live observer on a live tab); survives a worker eviction |
 | browser connections | `BrowserBridge` map keyed by per-profile instance id | until the socket drops |
 | live sessions | `Manager` pool, ≤4 | evicted LRU when idle |
 | permission mode | per `LiveChat` | a chat admitted from disk starts `default`; never survives a restart |
+
+Shutdown is orderly: SIGTERM flushes every pending chat save and the usage
+counts, closes sessions and sockets (1001), then exits. A write failure in
+`Store` is logged and reported to the chat's clients once per outage rather
+than swallowed.
 
 `Store` is written by exactly one process, which is what lets its list cache
 be authoritative without invalidation. That assumption is load-bearing: a
@@ -223,7 +228,11 @@ artifact to pin.
 
 ## Where it strains
 
-Ranked by how much they would matter if this were shared or scaled.
+Ranked by how much they would matter if this were shared or scaled. The
+operational items — reconnect duplication, rename waking a subprocess, no
+graceful shutdown, dead sessions, the O(n²) streaming render, fd leaks on
+aborted downloads, unbounded caches and logs — were found and closed in
+`PROD-READINESS.md`; what is left is structural.
 
 1. ~~Two chat clients.~~ Done: one client, three hosts (above).
 
