@@ -46,6 +46,9 @@ globalThis.PLATFORM = {
     } catch { return null; }
   },
 
+  /* A single-column host: the shared client swaps transcript for files itself.
+     The desktop supplies a function here to put files in its right pane. */
+  showFiles: null,
   onPendingPrompt(cb) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === "session" && changes.pendingPrompt?.newValue) cb();

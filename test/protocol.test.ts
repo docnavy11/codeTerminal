@@ -33,13 +33,23 @@ describe("protocol: one source of truth", () => {
 // emits that a client does not handle. Server-internal kinds are exempt.
 const SERVER_INTERNAL = new Set(["conversation_reset"]);   // absorbed by LiveChat, re-emitted as "cleared"
 
-describe("protocol: every client handles every emitted kind", () => {
-  for (const [label, file] of [["desktop UI", "public/index.html"], ["side panel / mobile", "extension/sidepanel.js"]] as const) {
-    test(label, () => {
-      const js = read(file);
-      const missing = CLIENT_EVENT_KINDS.filter((k) => !SERVER_INTERNAL.has(k) &&
-        !new RegExp(`(case\\s*"${k}"|kind\\s*===?\\s*"${k}")`).test(js));
-      assert.deepEqual(missing, [], `${file} has no handler for: ${missing.join(", ")}`);
+describe("protocol: one client implements it, every host loads that one", () => {
+  test("sidepanel.js handles every emitted kind", () => {
+    const js = read("extension/sidepanel.js");
+    const missing = CLIENT_EVENT_KINDS.filter((k) => !SERVER_INTERNAL.has(k) &&
+      !new RegExp(`(case\\s*"${k}"|kind\\s*===?\\s*"${k}")`).test(js));
+    assert.deepEqual(missing, [], `sidepanel.js has no handler for: ${missing.join(", ")}`);
+  });
+
+  // The desktop used to carry its own 970-line copy of the protocol; 19 of 20
+  // kinds were implemented twice and had already drifted. It is a host now.
+  for (const [label, file] of [["desktop", "public/index.html"], ["mobile", "public/m.html"]] as const) {
+    test(`${label} loads the shared client and implements nothing itself`, () => {
+      const html = read(file);
+      assert.match(html, /<script src="\/m\/app\.js">/, `${file} must load sidepanel.js`);
+      const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join("\n");
+      const handlers = CLIENT_EVENT_KINDS.filter((k) => new RegExp(`case\\s*"${k}"`).test(inline));
+      assert.deepEqual(handlers, [], `${file} reimplements protocol handlers inline: ${handlers.join(", ")}`);
     });
   }
 });

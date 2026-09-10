@@ -94,29 +94,31 @@ That union is the single source of truth for what a client can receive — on
 the server. The clients are plain JavaScript and do not import it. Which
 leads to the largest structural finding:
 
-**The chat UI is implemented twice.** `public/index.html` (973 lines of inline
-script) and `extension/sidepanel.js` (800 lines) each hand-roll the same
-protocol. Measured: **19 of the 20 event kinds have an independent handler in
-both files.** The markdown→HTML pipeline (`DOMPurify.sanitize(marked.parse(…))`)
-exists in three places. A change to how a `tool` or `approval` event renders is
-two edits, and they have already drifted once — the approval-card fix earlier
-in this project's history had to be applied to both, and the AskUserQuestion
-crash existed in one but not the other.
+**One client, three hosts.** `extension/sidepanel.js` (the transcript, chats,
+files, prompts, settings — every one of the 20 event kinds) is the only
+implementation of the protocol. The Chrome side panel loads it from disk (MV3
+forbids remote code); the mobile page and the desktop page load the same file
+from the server as `/m/app.js`. A `PLATFORM` shim per host supplies what
+differs: URLs, the extension's storage and tabs, and — for the desktop, which
+has room for both — where the file browser appears (`showFiles`). The desktop
+adds only what it alone has, in `public/desktop.js`: the xterm pane on `/pty`
+and the draggable split, 89 lines.
 
-The mobile page is the honourable exception: `m.html` loads `sidepanel.js` and
-`panel.css` *verbatim* from the server (`/m/app.js`, `/m/panel.css`), with a
-`PLATFORM` shim (`extension/platform.js` for chrome APIs, an inline block for
-the web) supplying the host-specific parts. That is the pattern the desktop UI
-should follow — see recommendations.
+That replaced a second, 973-line inline implementation in `index.html` that
+duplicated 19 of the 20 handlers and had already drifted (the AskUserQuestion
+crash existed in one copy and not the other). `test/protocol.test.ts` now
+asserts both that the shared client handles every emitted kind and that no
+host page reimplements a handler inline.
 
 ## Clients
 
-Three surfaces, 3,934 lines, sharing a design system but not code:
+Three surfaces sharing one client:
 
 | surface | what it is | lines |
 |---|---|---|
-| `public/index.html` | desktop: split pane, transcript + terminal + file browser | 1,466 (973 JS, 398 CSS, inline) |
-| `extension/sidepanel.*` + `platform.js` | Chrome side panel; **also served as the mobile app** | 800 JS + 334 CSS + 55 |
+| `extension/sidepanel.js` + `panel.css` | **the** chat client: side panel, mobile, and desktop all run it | 800 JS + 334 CSS |
+| `public/index.html` + `desktop.js` | desktop host: layout + xterm/pty pane over the shared client | 493 (CSS + markup) + 89 |
+| `public/m.html` | mobile host over the shared client | 272 |
 | `public/manage.*` | curation page: chats, prompts, projects | 303 JS + 137 |
 | `extension/background.js` | the agent's hands: executes browser commands in MAIN world | 475 |
 
@@ -223,20 +225,15 @@ artifact to pin.
 
 Ranked by how much they would matter if this were shared or scaled.
 
-1. **Two chat clients.** The 19/20 duplication is the maintenance debt. The
-   fix already exists in the tree: `m.html` proves `sidepanel.js` can be
-   served to a non-extension host through the `PLATFORM` shim. The desktop UI
-   is the same event loop plus a terminal pane and a split view; those could
-   be host-specific additions over the shared core rather than a second
-   implementation.
+1. ~~Two chat clients.~~ Done: one client, three hosts (above).
 
-2. **Untyped clients.** `ClientEvent` is a TypeScript union the JavaScript
-   clients cannot see. A generated or shared type (even a JSON schema checked
-   in tests) would have caught the AskUserQuestion crash statically.
+2. ~~Untyped clients.~~ Done: `src/protocol.ts` is the single source for both
+   directions, inbound messages are validated by `parseAgentMessage`, and the
+   coverage test holds the JavaScript client to the union.
 
-3. **`server.ts` as four things.** Extracting `attachAgent` (the client
-   protocol loop) and the auth policy into their own modules would make both
-   unit-testable and leave the composition root at a few hundred lines.
+3. ~~`server.ts` as four things.~~ Done: `auth.ts` (policy, unit-tested with
+   injected tailscale calls) and `attach.ts` (the client loops); `server.ts`
+   is the composition root and router at 457 lines.
 
 4. **Single-user globals.** `activeShell` ("the newest pane") and `lastChat`
    ("the most recently attached") are correct for one person and wrong for two. They are the first things to change for any

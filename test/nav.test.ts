@@ -108,7 +108,7 @@ describe("nav bar — side panel layout", () => {
 
 describe("nav bar — hierarchy", () => {
   const pages: Array<[string, string, string]> = [
-    ["main UI", "public/index.html", "reset"],
+    ["main UI", "public/index.html", "newchat"],
     ["side panel", "extension/sidepanel.html", "newchat"],
   ];
 
@@ -249,7 +249,7 @@ describe("controls are chrome wherever they sit", () => {
 
 describe("approval cards", () => {
   for (const [label, htmlFile, jsFile] of [
-    ["main UI", "public/index.html", "public/index.html"],
+    ["main UI", "public/index.html", "extension/sidepanel.js"],
     ["side panel", "extension/sidepanel.html", "extension/sidepanel.js"],
   ] as const) {
     const js = readFileSync(join(root, jsFile), "utf8");

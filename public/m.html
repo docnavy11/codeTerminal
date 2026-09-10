@@ -121,6 +121,9 @@ globalThis.PLATFORM = {
   openUrl(url) { location.href = url; },
   tabLabel(on) { return on ? "desktop tab" : "tab off"; },
   tabTitle: "Attach your desktop browser's active tab to each prompt",
+  /* A single-column host: the shared client swaps transcript for files itself.
+     The desktop supplies a function here to put files in its right pane. */
+  showFiles: null,
   async takePendingPrompt() { return null; },
   onPendingPrompt() { /* no context menu on a phone */ },
 };

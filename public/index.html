@@ -1,10 +1,8 @@
 <!doctype html>
-<html lang="en">
-<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>code terminal</title>
 <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+<link rel="stylesheet" href="/m/panel.css">
 <style>
   /* Base type size — the A−/A+ buttons rewrite this, so every rem follows. */
   html { font-size: 12px; }   /* default; A−/A+ override per browser */
@@ -92,7 +90,7 @@
      font-size, and while the bar inherited that, turning the reading text down
      took the navigation to 10px with it. */
   header { --nav-h:46px;
-           display:flex; align-items:center; gap:10px; height:var(--nav-h);
+           display:flex; flex-direction:row; align-items:center; gap:10px; height:var(--nav-h);
            padding:0 14px; border-bottom:1px solid var(--line);
            background:var(--panel); flex-shrink:0; position:relative; }
 
@@ -304,19 +302,6 @@
              border-radius:4px; padding:8px 10px; font:inherit; min-height:40px; max-height:160px; }
   textarea:focus { outline:none; border-color:var(--accent); }
 
-  #chatlist { position:fixed; top:var(--nav-h); width:400px; max-height:340px;
-              overflow-y:auto; background:var(--panel); border:1px solid var(--line);
-              border-radius:6px; display:none; z-index:30; box-shadow:0 8px 28px rgba(0,0,0,.5); }
-  #chatlist.open { display:block; }
-  #chatlist .row { padding:6px 10px; cursor:pointer; display:flex; gap:8px; align-items:baseline; }
-  #chatlist .row:hover { background:var(--btn); }
-  #chatlist .row.active { border-left:2px solid var(--accent); }
-  #chatlist .row .t { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #chatlist .row .w { color:var(--dim); font-size:0.75rem; flex-shrink:0; }
-  #chatlist .row .x { color:var(--dim); flex-shrink:0; padding:0 3px; }
-  #chatlist .row .x:hover { color:var(--bad); }
-  #chatlist .empty { padding:9px; color:var(--dim); font-size:0.833rem; }
-
   #menu { position:absolute; bottom:100%; left:12px; right:12px; margin-bottom:6px;
           background:var(--panel); border:1px solid var(--line); border-radius:6px;
           max-height:260px; overflow-y:auto; display:none; z-index:20;
@@ -345,7 +330,7 @@
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.25 } }
   #status .jump { color:var(--warn); text-decoration:underline; cursor:pointer; }
 
-  #status #prompts { font-size:0.75rem; padding:0 6px; margin-right:2px; }
+  #status #promptsbtn { font-size:0.75rem; padding:0 6px; margin-right:2px; }
   #plist { position:absolute; bottom:100%; left:10px; right:10px; margin-bottom:6px;
            background:var(--panel); border:1px solid var(--line); border-radius:6px;
            max-height:320px; overflow-y:auto; display:none; z-index:40;
@@ -404,19 +389,42 @@
   #term { flex:1; min-height:0; padding:6px 0 0 8px; }
   .xterm-viewport::-webkit-scrollbar { width:9px; }
   .xterm-viewport::-webkit-scrollbar-thumb { background:var(--line); border-radius:5px; }
+  /* Shared-client pieces the desktop hosts: the chat picker anchors under the
+     bar instead of spanning the column, and the full-UI link is this page. */
+  #clist { position:fixed; top:var(--nav-h); left:14px; right:auto; width:420px; }
+  #openui { display:none; }
+  #moremenu { position:fixed; top:calc(var(--nav-h) + 6px); right:14px; left:auto; }
+
 </style>
-</head>
-<body>
+<script>
+/* Web implementation of the PLATFORM shim — see extension/platform.js. This
+   page is served by the server it talks to, so every URL is this origin. The
+   transcript, chats, files, prompts and settings below are sidepanel.js — the
+   same file the Chrome side panel and the mobile page run — served as
+   /m/app.js. desktop.js adds only the terminal pane and the split. */
+globalThis.PLATFORM = {
+  name: "desktop",
+  async wsUrl() { return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`; },
+  async httpBase() { return location.origin; },
+  /* No extension here; the server routes browser tools to whichever browser
+     has the extension connected — usually the one this tab is in. */
+  async instanceId() { return null; },
+  openUrl(url) { location.href = url; },
+  tabLabel(on) { return on ? "tab: on" : "tab: off"; },
+  tabTitle: "Attach the active browser tab to each prompt",
+  async takePendingPrompt() { return null; },
+  onPendingPrompt() {},
+  // showFiles is installed by desktop.js: files live in the right pane here.
+};
+</script>
+
 <header>
   <span class="brand"><span class="dot" id="dot"></span><strong>code terminal</strong></span>
-
   <span class="grp">
-    <button id="reset" class="nav primary">New chat</button>
-    <button id="chats" class="nav">Chats ▾</button>
+    <button id="newchat" class="nav primary" title="Start a new conversation">New chat</button>
+    <button id="chatsbtn" class="nav" title="Switch conversation">Chats ▾</button>
   </span>
-
   <span class="sep"></span>
-
   <span class="status">
     <span class="lbl">mode</span>
     <select id="mode" title="How much you want to be asked">
@@ -428,28 +436,25 @@
     </select>
     <button id="tabctx" class="chip" title="Attach the active browser tab to each prompt">tab</button>
   </span>
-
   <span class="meta" id="meta">connecting…</span>
-
   <button id="more" class="nav icon" title="Settings" aria-haspopup="menu" aria-expanded="false">⋯</button>
-
   <div id="moremenu" hidden>
     <div class="mrow"><span class="k">Theme</span><button id="theme">auto</button></div>
     <div class="mrow"><span class="k">Text size</span>
       <span class="seg"><button id="fsdown" title="Smaller text">A−</button><button id="fsup" title="Larger text">A+</button></span>
     </div>
     <div class="mdiv"></div>
-    <a class="mitem" href="/manage.html">Manage chats, prompts &amp; projects</a>
+    <div class="mitem" id="openui" hidden>Open the full UI in a tab</div>
+    <div class="mitem" id="manage">Manage chats, prompts &amp; projects</div>
   </div>
-
-  <div id="chatlist"></div>
 </header>
+<div id="clist"></div>
 
 <div id="split">
   <div class="pane" id="left">
     <div class="pane-hd">claude</div>
     <div id="log"></div>
-    <div id="status"><div id="plist"></div><button id="prompts" title="Prepared prompts">prompts</button><span class="pip"></span><span id="statustext">ready</span><span class="t" id="statustime"></span></div>
+    <div id="status"><div id="plist"></div><button id="promptsbtn" title="Prepared prompts">prompts</button><span class="pip"></span><span id="statustext">connecting…</span><span class="t" id="statustime"></span></div>
     <footer>
       <div id="menu"></div>
       <textarea id="box" placeholder="Ask Claude…  (Enter to send, Shift+Enter newline)" autofocus></textarea>
@@ -461,8 +466,7 @@
 
   <div class="pane" id="right">
     <div class="pane-hd">
-      <span class="tab on" data-tab="shell">shell</span>
-      <span class="tab" data-tab="files">files</span>
+      <span class="tabs"><span class="tab on" data-view="shell">shell</span><span class="tab" data-view="files">files</span></span>
       <span class="warn" id="rightnote">no approval gate</span>
     </div>
     <div id="term"></div>
@@ -487,985 +491,5 @@
 <script src="/vendor/addon-web-links/lib/addon-web-links.js"></script>
 <script src="/vendor/marked/marked.umd.js"></script>
 <script src="/vendor/dompurify/purify.min.js"></script>
-<script>
-// No token: the server authenticates the connection itself, by Origin plus
-// `tailscale whois` on the peer address.
-const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
-const url = (path) => `${wsBase}${path}`;
-
-/* ---------------- claude pane ---------------- */
-const log = document.getElementById("log");
-const modeSel = document.getElementById("mode");
-
-/* ---- appearance: type size and theme, both remembered per browser ------- */
-const MIN_FS = 9, MAX_FS = 20;
-let fontSize = clampFs(parseFloat(localStorage.getItem("ct.fs")) || 12);
-let theme = localStorage.getItem("ct.theme") || "auto";   // auto | light | dark
-
-function clampFs(n) { return Math.min(MAX_FS, Math.max(MIN_FS, n)); }
-
-function applyFontSize() {
-  document.documentElement.style.fontSize = fontSize + "px";
-  localStorage.setItem("ct.fs", String(fontSize));
-  // The terminal is a canvas, so it needs telling separately.
-  if (typeof term !== "undefined" && term) {
-    term.options.fontSize = Math.max(8, Math.round(fontSize - 1));
-    try { fit.fit(); sendResize(); } catch {}
-  }
-}
-
-function applyTheme() {
-  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", theme);
-  localStorage.setItem("ct.theme", theme);
-  document.getElementById("theme").textContent = theme;
-  document.getElementById("theme").title = `Theme: ${theme} (click to change)`;
-  applyTermTheme();
-}
-
-/** xterm paints on a canvas and cannot read CSS variables, so hand them over. */
-function applyTermTheme() {
-  if (typeof term === "undefined" || !term) return;
-  const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  term.options.theme = {
-    background: v("--code"), foreground: v("--fg"), cursor: v("--accent"),
-    selectionBackground: v("--sel"),
-    black: v("--line"), red: v("--bad"), green: v("--ok"), yellow: v("--warn"),
-    blue: v("--accent"), magenta: "#bb9af7", cyan: "#7dcfe0", white: v("--fg"),
-  };
-}
-
-/* Every prompt otherwise ships the current URL, so make it visible and optional. */
-let withTab = localStorage.getItem("ct.tab") !== "0";
-const tabBtn = document.getElementById("tabctx");
-function paintTab() {
-  tabBtn.textContent = withTab ? "tab: on" : "tab: off";
-  tabBtn.classList.toggle("off", !withTab);
-  localStorage.setItem("ct.tab", withTab ? "1" : "0");
-}
-tabBtn.onclick = () => { withTab = !withTab; paintTab(); };
-paintTab();
-
-/* Settings menu. These are set-once controls, so they cost one click to reach
-   and carry real words when you get there — the bar used to spend permanent
-   space on an unlabelled ↗ and ⚙. */
-/* Which bar controls actually get used. The tiers above were set from priors
-   for everything except the mode select and tab context; this makes the next
-   revision measurable. Local only — it goes to a file on your own box. */
-document.querySelector("header").addEventListener("click", (e) => {
-  const el = e.target.closest("[id]");
-  if (!el || el.id === "chatlist" || el.id === "moremenu") return;
-  fetch("/usage", { method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ control: el.id }) }).catch(() => {});
-}, true);   // Capture: #chats, #more and the menu all stopPropagation(), so a
-           // listener on the bubble phase would never see the clicks it counts.
-
-const moreBtn = document.getElementById("more");
-const moreMenu = document.getElementById("moremenu");
-function closeMore() { moreMenu.hidden = true; moreBtn.setAttribute("aria-expanded", "false"); }
-moreBtn.onclick = (e) => {
-  e.stopPropagation();
-  const open = moreMenu.hidden;
-  if (open) {
-    const b = moreBtn.getBoundingClientRect();
-    moreMenu.style.top = `${document.querySelector("header").getBoundingClientRect().bottom + 6}px`;
-    // Right-align to the button, then keep it on screen.
-    moreMenu.style.left = `${Math.max(8, Math.min(b.right - 264, innerWidth - 272))}px`;
-  }
-  moreMenu.hidden = !open;
-  moreBtn.setAttribute("aria-expanded", String(open));
-};
-moreMenu.onclick = (e) => { if (e.target.closest("a")) closeMore(); else e.stopPropagation(); };
-document.addEventListener("click", closeMore);
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMore(); });
-
-document.getElementById("fsup").onclick   = () => { fontSize = clampFs(fontSize + 1); applyFontSize(); };
-document.getElementById("fsdown").onclick = () => { fontSize = clampFs(fontSize - 1); applyFontSize(); };
-document.getElementById("theme").onclick  = () => {
-  theme = { auto: "light", light: "dark", dark: "auto" }[theme];
-  applyTheme();
-};
-// Follow the OS while on auto.
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (theme === "auto") applyTermTheme(); });
-const box = document.getElementById("box");
-const dot = document.getElementById("dot");
-const meta = document.getElementById("meta");
-const stop = document.getElementById("stop");
-let agentWs, busy = false, lastText = null, lastRaw = "", cost = 0;
-
-/* Markdown → sanitized DOM. Model output lands in a page that holds an open
-   shell socket, so it is never trusted: DOMPurify strips scripts/handlers and
-   links are forced to open in a new tab without a referrer. */
-marked.use({ gfm: true, breaks: true });
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") { node.setAttribute("target", "_blank"); node.setAttribute("rel", "noopener noreferrer"); }
-});
-function renderMd(target, raw) {
-  target.innerHTML = DOMPurify.sanitize(marked.parse(raw), { USE_PROFILES: { html: true } });
-}
-
-function el(cls, text) {
-  const d = document.createElement("div");
-  d.className = cls;
-  if (text !== undefined) d.textContent = text;
-  log.appendChild(d);
-  log.scrollTop = log.scrollHeight;
-  return d;
-}
-const setBusy = (v) => { busy = v; stop.disabled = !v; };
-
-/* ---- status bar ---------------------------------------------------------
-   The server sends the state; the clock is client-side, started when the
-   message lands, so a skewed clock between machines cannot show "-3s". */
-const statusEl = document.getElementById("status");
-const statusText = document.getElementById("statustext");
-const statusTime = document.getElementById("statustime");
-let statusSince = 0, statusTick = null, statusState = "idle";
-
-function applyStatus(m) {
-  const changed = m.state !== statusState || m.detail !== (statusEl.dataset.detail ?? "");
-  statusState = m.state;
-  statusEl.dataset.detail = m.detail ?? "";
-  if (changed) statusSince = Date.now();
-
-  statusEl.classList.toggle("busy",  m.state === "thinking" || m.state === "tool" || m.state === "compacting");
-  statusEl.classList.toggle("await", m.state === "awaiting");
-
-  statusText.replaceChildren();
-  const label = {
-    idle:       "ready",
-    thinking:   m.tokens > 0 ? `thinking · ${fmtTokens(m.tokens)} tokens` : "thinking",
-    tool:       `running ${m.detail}`,
-    compacting: "compacting the conversation",
-    awaiting:   `waiting for you — ${m.detail}`,
-  }[m.state] ?? m.state;
-  statusText.append(document.createTextNode(label));
-
-  if (m.state === "awaiting") {
-    const a = document.createElement("span");
-    a.className = "jump"; a.textContent = "jump to it";
-    a.style.marginLeft = "8px";
-    a.onclick = () => document.querySelector(".card:not(.done)")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    statusText.append(a);
-  }
-
-  // The turn is still live while an approval is open, so the server will
-  // reject a new prompt then too — block sending, but keep Stop available
-  // so you can abandon the turn instead of answering the card.
-  setBusy(m.state !== "idle");
-  stop.disabled = m.state === "idle";
-  box.placeholder =
-    m.state === "idle"     ? "Ask Claude…  (Enter to send, Shift+Enter newline)"
-  : m.state === "awaiting" ? (m.detail === "a question"
-      ? "Answer the question above to continue — or press Stop"
-      : "Approve or deny above to continue — or press Stop")
-  : "Claude is working — press Stop to interrupt";
-
-  clearInterval(statusTick);
-  statusTick = null;
-  statusTime.textContent = "";
-  if (m.state !== "idle") {
-    const tick = () => {
-      const s = Math.floor((Date.now() - statusSince) / 1000);
-      statusTime.textContent = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
-    };
-    tick();
-    statusTick = setInterval(tick, 1000);
-  }
-}
-
-function fmtTokens(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n); }
-
-function connectAgent() {
-  agentWs = new WebSocket(url("/ws"));
-  agentWs.onopen  = () => { dot.classList.add("on"); meta.textContent = "connected"; };
-  agentWs.onclose = (e) => {
-    dot.classList.remove("on");
-    meta.textContent = e.code === 1006 ? "rejected — not a recognised tailnet peer" : "disconnected";
-    setBusy(false);
-  };
-  agentWs.onmessage = ({ data }) => {
-    const m = JSON.parse(data);
-    switch (m.kind) {
-      case "cwd": {
-        cwdShown = m.path;
-        meta.textContent = modelShown ? `${modelShown} · ${cwdShown}` : cwdShown;
-        break;
-      }
-      // Which project this chat belongs to. Shown on hover: the bar already
-      // carries model and cwd, and the project is implied by the cwd.
-      case "project":
-        meta.title = m.name === "General" ? cwdShown : `Project: ${m.name} — ${cwdShown}`;
-        break;
-      case "ready": {
-        modelShown = m.model;
-        meta.textContent = `${m.model} · ${cwdShown || m.workspace}`;
-        const opt = modeSel.querySelector('option[value="bypassPermissions"]');
-        opt.disabled = !m.canBypass;
-        opt.textContent = m.canBypass ? "Never ask" : "Never ask (set CODETERM_ALLOW_BYPASS=1)";
-        break;
-      }
-      case "user": {
-        el("msg user", m.text);
-        if (m.context) {
-          const c = el("ctx", "⌁ " + m.context.split("\n")[0]);
-          c.title = m.context;
-        }
-        lastText = null;
-        break;
-      }
-      case "local": el("local", m.text); lastText = null; break;
-      case "watch": el("local", `⌁ watch fired — ${m.description}: ${m.detail}`); lastText = null; break;
-      case "commands": COMMANDS = m.commands; break;
-      case "cleared": log.replaceChildren(); cost = 0; lastText = null; streaming = null; break;
-      case "replayed": lastText = null; break;
-      case "status": applyStatus(m); break;
-      case "chats": CHATS = m.chats; ACTIVE = m.activeId; renderChats(); break;
-      case "mode":
-        document.getElementById("mode").value = m.mode;
-        modeSel.classList.toggle("hot", m.mode === "bypassPermissions");
-        modeSel.classList.toggle("warm", m.mode === "auto" || m.mode === "acceptEdits");
-        break;
-      // Streaming text as it is generated. The completed "text" event below
-      // replaces this with the authoritative copy, so a dropped delta cannot
-      // leave the reply subtly wrong.
-      case "delta":
-        if (!streaming) { streaming = el("msg md"); streamRaw = ""; }
-        streamRaw += m.text;
-        renderMd(streaming, streamRaw);
-        log.scrollTop = log.scrollHeight;
-        break;
-
-      case "text":
-        // Text arrives in blocks; keep the raw markdown and re-render the whole
-        // message so constructs spanning blocks (lists, fences) stay intact.
-        if (streaming) { lastText = streaming; lastRaw = m.text; streaming = null; streamRaw = ""; }
-        else if (lastText) lastRaw += "\n" + m.text;
-        else { lastText = el("msg md"); lastRaw = m.text; }
-        renderMd(lastText, lastRaw);
-        log.scrollTop = log.scrollHeight;
-        break;
-      case "tool": {
-        if (m.name === "AskUserQuestion") { lastText = null; streaming = null; break; }  // the card says it better
-        const d = el("tool");
-        d.innerHTML = "→ <b></b> ";
-        d.querySelector("b").textContent = m.name;
-        d.append(summarize(m.input));
-        lastText = null;
-        break;
-      }
-      case "approval": renderApproval(m); break;
-      case "question": renderQuestion(m); break;
-      case "approval_closed": {
-        const c = document.querySelector(`[data-approval="${m.id}"]`);
-        if (c) {
-          c.classList.add("done");
-          c.querySelectorAll("button").forEach(b => b.disabled = true);
-          const label = { allow:"Approved", always:"Always allowed", deny:"Denied", gone:"Expired" }[m.decision] ?? "Closed";
-          // Both renderApproval and renderQuestion stamp data-approval, but a
-          // question card carries .chip headings and no h4 — this threw on
-          // every closed AskUserQuestion and aborted the rest of the message.
-          const head = c.querySelector("h4") ?? c.querySelector(".chip");
-          if (head) head.textContent = c.dataset.tool === "question" ? label : `${label} ${c.dataset.tool}`;
-        }
-        break;
-      }
-      case "turn_end":
-        if (typeof m.costUsd === "number") cost += m.costUsd;
-        el("end", `done${m.denials ? ` · ${m.denials} denied` : ""} · est. $${cost.toFixed(4)} (list price; not billed on a subscription)`);
-        lastText = null; streaming = null; streamRaw = "";
-        break;
-      case "error": el("msg err", m.message); streaming = null; break;
-    }
-  };
-}
-
-function summarize(input) {
-  if (!input || typeof input !== "object") return "";
-  if (typeof input.command === "string") return input.command;
-  if (typeof input.file_path === "string") return input.file_path;
-  return JSON.stringify(input).slice(0, 160);
-}
-
-/**
- * Claude asking the user something. The answer goes back keyed by the exact
- * question text — that is the contract AskUserQuestion's `answers` expects.
- */
-function renderQuestion(m) {
-  const card = el("q");
-  card.dataset.approval = m.id;
-  card.dataset.tool = "question";
-  const picked = new Map();   // question text -> Set of labels
-
-  for (const q of m.questions) {
-    picked.set(q.question, new Set());
-
-    const chip = document.createElement("span");
-    chip.className = "chip"; chip.textContent = q.header || "question";
-    const title = document.createElement("p");
-    title.className = "qt"; title.textContent = q.question;
-    card.append(chip, title);
-
-    const opts = [...q.options, { label: "Other", description: "Type your own answer", other: true }];
-    for (const o of opts) {
-      const b = document.createElement("button");
-      b.className = "opt"; b.type = "button";
-      b.append(document.createTextNode(o.label));
-      if (o.description) {
-        const d = document.createElement("span"); d.className = "d"; d.textContent = o.description;
-        b.append(d);
-      }
-      if (o.preview) {
-        const pre = document.createElement("pre"); pre.textContent = o.preview;
-        b.append(pre);
-      }
-
-      let otherBox = null;
-      b.onclick = () => {
-        const set = picked.get(q.question);
-        if (!q.multiSelect) {
-          set.clear();
-          card.querySelectorAll(`[data-q="${CSS.escape(q.question)}"]`).forEach(x => x.classList.remove("sel"));
-        }
-        if (o.other) {
-          if (!otherBox) {
-            otherBox = document.createElement("input");
-            otherBox.className = "other"; otherBox.placeholder = "your answer…";
-            otherBox.oninput = () => {
-              set.forEach(v => { if (v.startsWith("\u0000other:")) set.delete(v); });
-              if (otherBox.value.trim()) set.add("\u0000other:" + otherBox.value.trim());
-            };
-            b.after(otherBox);
-          }
-          otherBox.focus();
-        }
-        b.classList.toggle("sel");
-        if (b.classList.contains("sel")) { if (!o.other) set.add(o.label); }
-        else { set.delete(o.label); if (otherBox) { otherBox.remove(); otherBox = null; } }
-      };
-      b.dataset.q = q.question;
-      card.append(b);
-    }
-  }
-
-  const send = document.createElement("button");
-  send.className = "send"; send.textContent = "Answer";
-  send.onclick = () => {
-    const answers = {};
-    for (const [question, set] of picked) {
-      const vals = [...set].map(v => v.startsWith("\u0000other:") ? v.slice(7) : v);
-      if (vals.length) answers[question] = vals.join(", ");
-    }
-    if (!Object.keys(answers).length) return;   // nothing chosen yet
-    agentWs.send(JSON.stringify({ type: "answer", id: m.id, answers }));
-    card.querySelectorAll("button,input").forEach(x => x.disabled = true);
-    card.classList.add("done");
-  };
-  card.append(send);
-  log.scrollTop = log.scrollHeight;
-}
-
-function renderApproval(m) {
-  const card = el("card");
-  card.dataset.approval = m.id;
-  card.dataset.tool = m.tool;
-  const h = document.createElement("h4");
-  h.textContent = `Approve ${m.tool}?`;
-  const pre = document.createElement("pre");
-  pre.textContent = typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
-
-  const row = document.createElement("div");
-  row.className = "row";
-  const choices = [["Approve", "allow", "allow"], ["Deny", "deny", "deny"]];
-  // "Always" only when the SDK actually offered a rule for this call.
-  if (m.canAlways) choices.splice(1, 0, [`Always allow ${m.tool}`, "always", "allow"]);
-
-  for (const [label, decision, cls] of choices) {
-    const b = document.createElement("button");
-    b.textContent = label; b.className = cls;
-    // "Always" carries the .allow class too, so styling keys off the decision.
-    b.dataset.decision = decision;
-    b.onclick = () => {
-      agentWs.send(JSON.stringify({ type: "decision", id: m.id, decision }));
-      card.querySelectorAll("button").forEach(x => x.disabled = true);
-    };
-    row.append(b, document.createTextNode(" "));
-  }
-  card.append(h, pre, row);
-  log.scrollTop = log.scrollHeight;
-}
-
-let COMMANDS = [];
-const menu = document.getElementById("menu");
-let matches = [], sel = 0;
-
-/** The menu opens only while the whole box is a single "/word" being typed. */
-function currentQuery() {
-  const v = box.value;
-  if (!v.startsWith("/") || /\s/.test(v)) return null;
-  return v.slice(1).toLowerCase();
-}
-
-function refreshMenu() {
-  const q = currentQuery();
-  if (q === null) { menu.classList.remove("open"); matches = []; return; }
-  matches = COMMANDS
-    .filter(c => c.name.toLowerCase().startsWith(q) ||
-                 (c.aliases ?? []).some(a => a.toLowerCase().startsWith(q)))
-    .slice(0, 60);
-  if (!matches.length) { menu.classList.remove("open"); return; }
-  sel = Math.min(sel, matches.length - 1);
-  menu.replaceChildren(...matches.map((c, i) => {
-    const d = document.createElement("div");
-    d.className = "item" + (i === sel ? " sel" : "");
-    const n = document.createElement("span"); n.className = "n"; n.textContent = "/" + c.name;
-    d.appendChild(n);
-    if (c.argumentHint) { const h = document.createElement("span"); h.className = "h"; h.textContent = c.argumentHint; d.appendChild(h); }
-    const de = document.createElement("span"); de.className = "d"; de.textContent = c.description || "";
-    d.appendChild(de);
-    d.onmousedown = (e) => { e.preventDefault(); pick(i); };
-    return d;
-  }));
-  menu.classList.add("open");
-  menu.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
-}
-
-function pick(i) {
-  const c = matches[i];
-  if (!c) return;
-  box.value = "/" + c.name + (c.argumentHint ? " " : "");
-  menu.classList.remove("open");
-  matches = [];
-  box.focus();
-  if (!c.argumentHint) send();
-}
-
-function send() {
-  const text = box.value.trim();
-  if (!text || busy || agentWs?.readyState !== WebSocket.OPEN) return;
-  agentWs.send(JSON.stringify({ type: "prompt", text, withTab }));
-  box.value = ""; box.style.height = "auto";
-  menu.classList.remove("open"); matches = [];
-  lastText = null;
-  setBusy(true);
-}
-
-box.addEventListener("keydown", (e) => {
-  if (menu.classList.contains("open") && matches.length) {
-    if (e.key === "ArrowDown") { e.preventDefault(); sel = (sel + 1) % matches.length; refreshMenu(); return; }
-    if (e.key === "ArrowUp")   { e.preventDefault(); sel = (sel - 1 + matches.length) % matches.length; refreshMenu(); return; }
-    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); pick(sel); return; }
-    if (e.key === "Escape")    { menu.classList.remove("open"); matches = []; return; }
-  }
-  if (e.key !== "Enter" || e.shiftKey) return;
-  e.preventDefault();
-  send();
-});
-
-box.addEventListener("input", () => {
-  box.style.height = "auto";
-  box.style.height = Math.min(box.scrollHeight, 160) + "px";
-  sel = 0;
-  refreshMenu();
-});
-box.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"), 120));
-stop.onclick = () => agentWs?.send(JSON.stringify({ type: "interrupt" }));
-
-
-modeSel.onchange = () => {
-  if (modeSel.value === "bypassPermissions" &&
-      !confirm("Never ask: Claude runs commands and edits files with nobody approving. Continue?")) {
-    modeSel.value = "default";
-  }
-  agentWs?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
-};
-
-let CHATS = [], ACTIVE = null, cwdShown = "", modelShown = "";
-let streaming = null, streamRaw = "";
-const chatList = document.getElementById("chatlist");
-
-function ago(ts) {
-  const s = Math.max(0, (Date.now() - ts) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
-
-function renderChats() {
-  if (!CHATS.length) {
-    chatList.replaceChildren(Object.assign(document.createElement("div"),
-      { className: "empty", textContent: "No saved chats yet." }));
-    return;
-  }
-  chatList.replaceChildren(...CHATS.map(c => {
-    const row = document.createElement("div");
-    row.className = "row" + (c.id === ACTIVE ? " active" : "");
-    const t = document.createElement("span"); t.className = "t"; t.textContent = c.title;
-    const w = document.createElement("span"); w.className = "w";
-    w.textContent = `${c.turns} turn${c.turns === 1 ? "" : "s"} · ${ago(c.updatedAt)}`;
-    const ren = document.createElement("span");
-    ren.className = "x"; ren.textContent = "✎"; ren.title = "Rename";
-    ren.onclick = (e) => {
-      e.stopPropagation();
-      const t = prompt("Rename this chat", c.title);
-      if (t && t.trim()) agentWs?.send(JSON.stringify({ type: "rename", id: c.id, title: t.trim() }));
-    };
-    const x = document.createElement("span"); x.className = "x"; x.textContent = "✕"; x.title = "Delete";
-    x.onclick = (e) => {
-      e.stopPropagation();
-      if (confirm(`Delete "${c.title}"?`)) agentWs?.send(JSON.stringify({ type: "delete", id: c.id }));
-    };
-    row.onclick = () => {
-      chatList.classList.remove("open");
-      if (c.id !== ACTIVE) agentWs?.send(JSON.stringify({ type: "open", id: c.id }));
-    };
-    row.append(t, w, ren, x);
-    return row;
-  }));
-}
-
-document.getElementById("chats").onclick = (e) => {
-  e.stopPropagation();
-  // Anchor under the button rather than a guessed offset.
-  const b = e.currentTarget.getBoundingClientRect();
-  chatList.style.left = `${b.left}px`;
-  // Anchor to the bar's bottom edge, not the button's: the button is centred
-  // in a taller bar, so the button's bottom sits inside it.
-  chatList.style.top = `${document.querySelector("header").getBoundingClientRect().bottom + 6}px`;
-  chatList.classList.toggle("open");
-};
-document.addEventListener("click", (e) => {
-  if (!chatList.contains(e.target)) chatList.classList.remove("open");
-});
-
-document.getElementById("reset").onclick = () => {
-  agentWs?.send(JSON.stringify({ type: "new" }));
-  chatList.classList.remove("open");
-};
-
-/* ---------------- shell pane ---------------- */
-const term = new Terminal({
-  fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
-  fontSize: 10,
-  cursorBlink: true,
-  scrollback: 10000,
-
-});
-const fit = new FitAddon.FitAddon();
-term.loadAddon(fit);
-term.loadAddon(new WebLinksAddon.WebLinksAddon());
-term.open(document.getElementById("term"));
-fit.fit();
-
-let ptyWs;
-function connectShell() {
-  ptyWs = new WebSocket(url("/pty"));
-  ptyWs.binaryType = "arraybuffer";
-
-  ptyWs.onopen = () => {
-    ptyWs.send(JSON.stringify({ type: "start", cols: term.cols, rows: term.rows }));
-  };
-  ptyWs.onmessage = (ev) => {
-    if (ev.data instanceof ArrayBuffer) {
-      term.write(new Uint8Array(ev.data));
-      return;
-    }
-    const m = JSON.parse(ev.data);
-    if (m.type === "exit") term.write(`\r\n\x1b[90m[shell exited (${m.code}) — reload to restart]\x1b[0m\r\n`);
-  };
-  ptyWs.onclose = () => term.write("\r\n\x1b[90m[disconnected]\x1b[0m\r\n");
-}
-
-term.onData((d) => {
-  if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "input", data: d }));
-});
-
-const sendResize = () => {
-  fit.fit();
-  if (ptyWs?.readyState === WebSocket.OPEN) {
-    ptyWs.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-  }
-};
-new ResizeObserver(sendResize).observe(document.getElementById("term"));
-addEventListener("resize", sendResize);
-
-// After sendResize exists, so a size change can propagate to the pty.
-applyFontSize();
-applyTheme();
-
-/* ---------------- draggable divider ---------------- */
-const grip = document.getElementById("grip");
-const split = document.getElementById("split");
-const left = document.getElementById("left");
-const right = document.getElementById("right");
-grip.addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  grip.setPointerCapture(e.pointerId);
-  const move = (ev) => {
-    const pct = Math.min(85, Math.max(15, ((ev.clientX - split.getBoundingClientRect().left) / split.clientWidth) * 100));
-    left.style.flex  = `0 0 ${pct}%`;
-    right.style.flex = `1 1 auto`;
-  };
-  const up = () => {
-    grip.removeEventListener("pointermove", move);
-    grip.removeEventListener("pointerup", up);
-    sendResize();
-  };
-  grip.addEventListener("pointermove", move);
-  grip.addEventListener("pointerup", up);
-});
-
-/* ---------------- files pane ---------------- */
-const flist = document.getElementById("flist");
-const fview = document.getElementById("fview");
-const fpath = document.getElementById("fpath");
-const fpick = document.getElementById("fpick");
-let cwdPath = "";          // relative to the server's browsable root
-let parentPath = null;
-let filesRootNote = "";
-
-/** First open: ask the server where the root is and where to start. */
-async function openFiles() {
-  try {
-    const info = await fjson("/files/info");
-    filesRootNote = info.root;
-    document.getElementById("rightnote").textContent = info.root;
-    await browse(info.start ?? "");
-  } catch (e) {
-    flist.replaceChildren(Object.assign(document.createElement("div"),
-      { className: "row", textContent: `Cannot open file browser: ${e.message}` }));
-  }
-}
-
-const fmtSize = (n) =>
-  n < 1024 ? `${n} B`
-  : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB`
-  : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB`
-  : `${(n / 1024 ** 3).toFixed(2)} GB`;
-
-const fmtWhen = (ms) => {
-  if (!ms) return "";
-  const d = new Date(ms), now = Date.now();
-  return now - ms < 86400000
-    ? d.toTimeString().slice(0, 5)
-    : d.toISOString().slice(0, 10);
-};
-
-async function fjson(url, opts) {
-  const r = await fetch(url, opts);
-  const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-  if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
-  return body;
-}
-
-async function browse(path = "") {
-  fview.hidden = true; flist.hidden = false;
-  if (path !== cwdPath) selected.clear();
-  renderSelection();
-  try {
-    const d = await fjson(`/files/list?path=${encodeURIComponent(path)}`);
-    cwdPath = d.path; parentPath = d.parent;
-    const shown = "/" + (d.path || "");
-    // Keep the tail, which is the part that identifies where you are.
-    fpath.textContent = shown.length > 48 ? "…/" + shown.slice(-46) : shown;
-    fpath.title = shown;
-    flist.replaceChildren(...d.entries.map(rowFor));
-    if (!d.entries.length) {
-      flist.append(Object.assign(document.createElement("div"),
-        { className: "row", textContent: "(empty)" }));
-    }
-  } catch (e) {
-    flist.replaceChildren(Object.assign(document.createElement("div"),
-      { className: "row", textContent: String(e.message) }));
-  }
-}
-
-/* Selection is by name within the current directory, and cleared on navigate —
-   carrying a selection across directories would zip things you cannot see. */
-const selected = new Set();
-const fsel = document.getElementById("fsel");
-
-function renderSelection() {
-  fsel.hidden = selected.size === 0;
-  if (!selected.size) return;
-  fsel.replaceChildren();
-  fsel.append(Object.assign(document.createElement("span"),
-    { className: "n", textContent: `${selected.size} selected` }));
-  const zip = document.createElement("button");
-  zip.textContent = "Download as zip";
-  zip.onclick = () => downloadZip([...selected]);
-  const clr = document.createElement("button");
-  clr.className = "clear"; clr.textContent = "clear";
-  clr.onclick = () => { selected.clear(); browse(cwdPath); };
-  fsel.append(zip, clr);
-}
-
-async function downloadZip(names) {
-  const r = await fetch("/files/zip", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: cwdPath, names }),
-  });
-  if (!r.ok) { alert((await r.json().catch(() => ({}))).error ?? `zip failed (${r.status})`); return; }
-  const url = URL.createObjectURL(await r.blob());
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = (names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection") + ".zip";
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
-
-function rowFor(e) {
-  const row = document.createElement("div");
-  row.className = "row" + (e.kind === "dir" ? " dir" : "");
-  const full = cwdPath ? `${cwdPath}/${e.name}` : e.name;
-
-  const ck = document.createElement("input");
-  ck.type = "checkbox"; ck.className = "ck"; ck.checked = selected.has(e.name);
-  ck.onclick = (ev) => {
-    ev.stopPropagation();
-    if (ck.checked) selected.add(e.name); else selected.delete(e.name);
-    row.classList.toggle("sel", ck.checked);
-    renderSelection();
-  };
-  row.append(ck);
-
-  const n = document.createElement("span");
-  n.className = "n";
-  n.textContent = e.kind === "dir" ? e.name + "/" : e.name;
-  const s = document.createElement("span");
-  s.className = "s";
-  s.textContent = e.kind === "dir" ? "" : `${fmtSize(e.size)}  ${fmtWhen(e.mtime)}`;
-  row.append(n, s);
-
-  if (e.kind === "file") {
-    const dl = document.createElement("span");
-    dl.className = "dl"; dl.textContent = "↓"; dl.title = "Download";
-    dl.onclick = (ev) => { ev.stopPropagation(); download(full, e.name); };
-    row.append(dl);
-  }
-  row.onclick = () => (e.kind === "dir" ? browse(full) : view(full, e));
-  return row;
-}
-
-/**
- * Fetched as a blob rather than linked directly: a plain <a href> navigation
- * sends no Origin header, and the server's guard wants one.
- */
-async function download(path, name) {
-  const r = await fetch(`/files/read?path=${encodeURIComponent(path)}`);
-  if (!r.ok) { alert(`Download failed: ${r.status}`); return; }
-  const url = URL.createObjectURL(await r.blob());
-  const a = document.createElement("a");
-  a.href = url; a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
-
-async function view(path, entry) {
-  flist.hidden = true; fview.hidden = false;
-  fview.replaceChildren();
-
-  const hd = document.createElement("div");
-  hd.className = "hd";
-  const back = document.createElement("button");
-  back.textContent = "← back";
-  back.onclick = () => browse(cwdPath);
-  const dl = document.createElement("button");
-  dl.textContent = "Download";
-  dl.onclick = () => download(path, entry.name);
-  const label = document.createElement("span");
-  label.textContent = `${entry.name} · ${fmtSize(entry.size)}`;
-  hd.append(back, dl, label);
-  fview.append(hd);
-
-  if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(entry.name)) {
-    const r = await fetch(`/files/read?path=${encodeURIComponent(path)}`);
-    const img = document.createElement("img");
-    img.src = URL.createObjectURL(await r.blob());
-    fview.append(img);
-    return;
-  }
-  try {
-    const d = await fjson(`/files/read?path=${encodeURIComponent(path)}&preview=1`);
-    const pre = document.createElement("pre");
-    pre.textContent = d.kind === "text"
-      ? d.text + (d.truncated ? "\n…[truncated]" : "")
-      : `Binary file, ${fmtSize(d.bytes)}. Use Download.`;
-    fview.append(pre);
-  } catch (e) {
-    fview.append(Object.assign(document.createElement("pre"), { textContent: String(e.message) }));
-  }
-}
-
-async function upload(fileList) {
-  for (const f of fileList) {
-    try {
-      await fjson(`/files/upload?path=${encodeURIComponent(cwdPath)}&name=${encodeURIComponent(f.name)}`,
-        { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } });
-    } catch (e) {
-      alert(`Upload of ${f.name} failed: ${e.message}`);
-    }
-  }
-  browse(cwdPath);
-}
-
-document.getElementById("fup").onclick = () => browse(parentPath ?? "");
-document.getElementById("frefresh").onclick = () => browse(cwdPath);
-document.getElementById("fcwd").onclick = () => {
-  agentWs?.send(JSON.stringify({ type: "cwd", path: cwdPath }));
-};
-document.getElementById("fupload").onclick = () => fpick.click();
-fpick.onchange = () => { if (fpick.files.length) upload([...fpick.files]); fpick.value = ""; };
-
-for (const ev of ["dragenter", "dragover"]) {
-  flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.add("drop"); });
-}
-for (const ev of ["dragleave", "drop"]) {
-  flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.remove("drop"); });
-}
-flist.addEventListener("drop", (e) => {
-  if (e.dataTransfer?.files?.length) upload([...e.dataTransfer.files]);
-});
-
-/* right-pane tabs */
-const termEl = document.getElementById("term");
-const filesEl = document.getElementById("files");
-let filesLoaded = false;
-document.querySelectorAll(".pane-hd .tab").forEach((tab) => {
-  tab.onclick = () => {
-    const wantFiles = tab.dataset.tab === "files";
-    document.querySelectorAll(".pane-hd .tab").forEach((t) => t.classList.toggle("on", t === tab));
-    termEl.hidden = wantFiles;
-    filesEl.hidden = !wantFiles;
-    document.getElementById("rightnote").textContent =
-      wantFiles ? (filesRootNote || "") : "no approval gate";
-    if (wantFiles) {
-      if (!filesLoaded) { filesLoaded = true; openFiles(); }
-    } else {
-      // xterm mis-measures while display:none, so re-fit on the way back.
-      requestAnimationFrame(() => { try { fit.fit(); sendResize(); } catch {} });
-    }
-  };
-});
-
-/* ---------------- prepared prompts ---------------- */
-const plist = document.getElementById("plist");
-let promptData = null;     // {host, prompts:[{...,filled}], all:[...]}
-let editing = null;        // the prompt being edited, or {} for a new one
-
-async function loadPrompts() {
-  const r = await fetch("/prompts");
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  promptData = await r.json();
-}
-
-function renderPrompts() {
-  plist.replaceChildren();
-  if (!promptData) return;
-
-  const scope = document.createElement("div");
-  scope.className = "scope";
-  scope.append(document.createTextNode(
-    promptData.host ? `for ${promptData.host}` : "no page detected — generic prompts only"));
-  const add = document.createElement("button");
-  add.textContent = "+ new";
-  add.onclick = (e) => { e.stopPropagation(); editing = { title: "", text: "", domains: [] }; renderPrompts(); };
-  scope.append(add);
-  plist.append(scope);
-
-  const list = editing ? [] : promptData.prompts;
-  if (!editing && !list.length) {
-    plist.append(Object.assign(document.createElement("div"),
-      { className: "empty", textContent: "No prompts apply here. Use + new." }));
-  }
-
-  for (const p of list) {
-    const row = document.createElement("div");
-    row.className = "p";
-    const t = document.createElement("span");
-    t.className = "t"; t.textContent = p.title; t.title = p.filled;
-    row.append(t);
-    if (p.domains.length) {
-      const tag = document.createElement("span");
-      tag.className = "tag"; tag.textContent = p.domains.join(" ");
-      row.append(tag);
-    }
-    for (const [label, fn] of [
-      ["✎", () => { editing = { ...p }; renderPrompts(); }],
-      ["✕", async () => {
-        if (!confirm(`Delete "${p.title}"?`)) return;
-        await fetch(`/prompts/${p.id}`, { method: "DELETE" });
-        await loadPrompts(); renderPrompts();
-      }],
-    ]) {
-      const b = document.createElement("span");
-      b.className = "act"; b.textContent = label;
-      b.onclick = (e) => { e.stopPropagation(); fn(); };
-      row.append(b);
-    }
-    // Click runs it. The filled copy is what goes in, so {url} and {selection}
-    // are already resolved for the page you are on.
-    row.onclick = () => {
-      closePrompts();
-      box.value = p.filled;
-      box.focus();
-      send();
-    };
-    plist.append(row);
-  }
-
-  if (editing) plist.append(editForm());
-  plist.classList.add("open");
-}
-
-function editForm() {
-  const wrap = document.createElement("div");
-  wrap.className = "edit";
-  const title = Object.assign(document.createElement("input"),
-    { placeholder: "Title", value: editing.title ?? "" });
-  const domains = Object.assign(document.createElement("input"),
-    { placeholder: "Domains, space separated — blank means everywhere",
-      value: (editing.domains ?? []).join(" ") });
-  const text = Object.assign(document.createElement("textarea"),
-    { placeholder: "The prompt. {url} {title} {host} {selection} get filled in.",
-      value: editing.text ?? "" });
-  const row = document.createElement("div");
-  row.className = "row";
-  const save = Object.assign(document.createElement("button"), { textContent: "Save", className: "allow" });
-  save.onclick = async () => {
-    const body = { id: editing.id, title: title.value, text: text.value,
-                   domains: domains.value.split(/[\s,]+/).filter(Boolean) };
-    const r = await fetch("/prompts", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!r.ok) { alert((await r.json()).error ?? "could not save"); return; }
-    editing = null; await loadPrompts(); renderPrompts();
-  };
-  const cancel = Object.assign(document.createElement("button"), { textContent: "Cancel" });
-  cancel.onclick = () => { editing = null; renderPrompts(); };
-  row.append(save, cancel);
-  wrap.append(title, domains, text, row);
-  return wrap;
-}
-
-const closePrompts = () => { plist.classList.remove("open"); editing = null; };
-
-document.getElementById("prompts").onclick = async (e) => {
-  e.stopPropagation();
-  if (plist.classList.contains("open")) { closePrompts(); return; }
-  plist.replaceChildren(Object.assign(document.createElement("div"),
-    { className: "empty", textContent: "loading…" }));
-  plist.classList.add("open");
-  try { await loadPrompts(); renderPrompts(); }
-  catch (err) {
-    plist.replaceChildren(Object.assign(document.createElement("div"),
-      { className: "empty", textContent: `Could not load prompts: ${err.message}` }));
-  }
-};
-document.addEventListener("click", (e) => { if (!plist.contains(e.target)) closePrompts(); });
-
-connectAgent();
-connectShell();
-</script>
-</body>
-</html>
+<script src="/m/app.js"></script>
+<script src="/desktop.js"></script>

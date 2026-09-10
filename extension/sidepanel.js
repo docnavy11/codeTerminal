@@ -656,9 +656,15 @@ document.querySelectorAll(".tabs .tab").forEach((tab) => {
   tab.onclick = async () => {
     const wantFiles = tab.dataset.view === "files";
     document.querySelectorAll(".tabs .tab").forEach((t) => t.classList.toggle("on", t === tab));
-    log.hidden = wantFiles;
-    document.querySelector("footer").hidden = wantFiles;
-    $("files").hidden = !wantFiles;
+    // A single-column host swaps the transcript for the file browser. A host
+    // with room for both (the desktop's right pane) supplies showFiles and
+    // decides for itself what the toggle reveals.
+    if (PLATFORM.showFiles) PLATFORM.showFiles(wantFiles);
+    else {
+      log.hidden = wantFiles;
+      document.querySelector("footer").hidden = wantFiles;
+      $("files").hidden = !wantFiles;
+    }
     if (wantFiles && !filesLoaded) {
       filesLoaded = true;
       try {
