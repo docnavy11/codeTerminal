@@ -182,15 +182,10 @@ function promptEditor() {
 
 /* ---------------- projects ---------------- */
 async function loadProjects() {
-  const [{ projects, active }, { chats }] = await Promise.all([api("/projects"), api("/chats")]);
+  // The server already orders these by recency and attaches chat counts.
+  const { projects, active } = await api("/projects");
   const host = $("projects");
   host.replaceChildren();
-
-  const counts = new Map();
-  for (const c of chats) {
-    const k = c.project ?? "general";
-    counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
 
   const bar = el("div", "bar");
   const q = Object.assign(el("input"), { type: "search", placeholder: "Filter projects…" });
@@ -212,7 +207,8 @@ async function loadProjects() {
       main.append(el("div", "title", p.name + (p.general ? "  (chats not tied to a directory)" : "")));
       main.append(el("div", "meta", p.path));
       row.append(main);
-      row.append(el("span", "tag", `${counts.get(p.id) ?? 0} chats`));
+      row.append(el("span", "tag",
+        p.chats ? `${p.chats} chat${p.chats === 1 ? "" : "s"} · ${ago(p.lastUsed)}` : "unused"));
       const see = el("button", "", "see chats");
       see.onclick = () => {
         chatState.project = p.id; chatState.q = "";

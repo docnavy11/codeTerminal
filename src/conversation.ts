@@ -3,7 +3,7 @@ import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { Session, type ClientEvent } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
 import { generateTitle } from "./titles.js";
-import { listProjects, resolveProject, GENERAL_ID, type Project } from "./projects.js";
+import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project } from "./projects.js";
 
 const MAX_EVENTS = 3000;
 
@@ -41,8 +41,22 @@ export class Manager {
     this.#projectsRoot = projectsRoot;
   }
 
-  /** Discovered fresh each time: a new checkout should just appear. */
-  projects(): Project[] { return listProjects(this.#projectsRoot, this.#workspace); }
+  /**
+   * Discovered fresh each time, so a new checkout just appears, then ordered
+   * by which ones you have actually been working in.
+   */
+  projects(): Project[] {
+    const usage = new Map<string, { lastUsed: number; chats: number }>();
+    for (const c of this.#store.list()) {
+      const id = c.project ?? GENERAL_ID;
+      const prev = usage.get(id);
+      usage.set(id, {
+        lastUsed: Math.max(prev?.lastUsed ?? 0, c.updatedAt ?? 0),
+        chats: (prev?.chats ?? 0) + 1,
+      });
+    }
+    return orderByRecency(listProjects(this.#projectsRoot, this.#workspace), usage);
+  }
 
   get project(): Project { return resolveProject(this.projects(), this.#rec?.project); }
 

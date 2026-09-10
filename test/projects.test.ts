@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listProjects, resolveProject, filterProjects, GENERAL_ID } from "../src/projects.js";
+import { listProjects, resolveProject, filterProjects, orderByRecency, GENERAL_ID, type Project } from "../src/projects.js";
 
 let root: string;
 const GENERAL_PATH = "/tmp/some-workspace";
@@ -72,5 +72,46 @@ describe("filterProjects", () => {
   test("an empty query returns everything", () => {
     const all = listProjects(root, GENERAL_PATH);
     assert.equal(filterProjects(all, "  ").length, all.length);
+  });
+});
+
+describe("orderByRecency", () => {
+  const mk = (id: string): Project => ({ id, name: id, path: "/x/" + id });
+  const base = [mk("general"), mk("alpha"), mk("beta"), mk("gamma")];
+
+  test("recently used projects come first, newest first", () => {
+    const usage = new Map([
+      ["beta", { lastUsed: 300, chats: 2 }],
+      ["general", { lastUsed: 100, chats: 9 }],
+    ]);
+    assert.deepEqual(orderByRecency(base, usage).map((p) => p.id),
+      ["beta", "general", "alpha", "gamma"]);
+  });
+
+  test("untouched projects keep the alphabetical order they arrived in", () => {
+    // Nothing better to say between two projects you have never opened.
+    const ordered = orderByRecency(base, new Map()).map((p) => p.id);
+    assert.deepEqual(ordered, ["general", "alpha", "beta", "gamma"]);
+  });
+
+  test("counts are attached for display", () => {
+    const usage = new Map([["alpha", { lastUsed: 5, chats: 3 }]]);
+    const got = orderByRecency(base, usage);
+    assert.equal(got.find((p) => p.id === "alpha")?.chats, 3);
+    assert.equal(got.find((p) => p.id === "beta")?.chats, 0);
+  });
+
+  test("General is not pinned — it sorts on its own recency", () => {
+    const usage = new Map([
+      ["gamma", { lastUsed: 999, chats: 1 }],
+      ["general", { lastUsed: 1, chats: 1 }],
+    ]);
+    assert.equal(orderByRecency(base, usage)[0].id, "gamma");
+  });
+
+  test("does not mutate what it was given", () => {
+    const input = [...base];
+    orderByRecency(input, new Map([["gamma", { lastUsed: 9, chats: 1 }]]));
+    assert.deepEqual(input.map((p) => p.id), base.map((p) => p.id));
   });
 });

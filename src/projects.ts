@@ -8,6 +8,10 @@ export type Project = {
   path: string;
   /** True for the overarching project that owns chats not tied to a directory. */
   general?: boolean;
+  /** When a chat in this project was last touched, if ever. */
+  lastUsed?: number;
+  /** How many chats belong to it. */
+  chats?: number;
 };
 
 /** Reserved so a directory called "general" cannot shadow the catch-all. */
@@ -53,6 +57,34 @@ export function listProjects(root: string, generalPath: string): Project[] {
 /** The project a chat belongs to, falling back to General. */
 export function resolveProject(projects: Project[], id: string | null | undefined): Project {
   return projects.find((p) => p.id === id) ?? projects.find((p) => p.general)!;
+}
+
+/**
+ * Puts the projects you have actually been working in at the top.
+ *
+ * With 79 directories, alphabetical means scrolling past sixty things you have
+ * never opened to reach the three you use. Ones with chats sort by how
+ * recently they were touched; the rest keep their alphabetical order below,
+ * because between two projects you have never opened there is nothing better
+ * to say than "alphabetical".
+ *
+ * General takes part rather than being pinned — it is usually the most recent
+ * anyway, and `filterProjects` keeps it reachable regardless.
+ */
+export function orderByRecency(
+  projects: Project[],
+  usage: Map<string, { lastUsed: number; chats: number }>,
+): Project[] {
+  const marked = projects.map((p) => {
+    const u = usage.get(p.id);
+    return { ...p, lastUsed: u?.lastUsed, chats: u?.chats ?? 0 };
+  });
+  return marked.sort((a, b) => {
+    if (a.lastUsed && b.lastUsed) return b.lastUsed - a.lastUsed;
+    if (a.lastUsed) return -1;
+    if (b.lastUsed) return 1;
+    return 0;   // both untouched: leave the alphabetical order listProjects gave
+  });
 }
 
 /** Substring filter for a picker with dozens of entries. */
