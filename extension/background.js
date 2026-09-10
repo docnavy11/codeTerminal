@@ -9,6 +9,43 @@ const DEFAULT_URL = "ws://devserver.tailnet-1234.ts.net:8123/ext";
 // Clicking the toolbar icon opens the Claude side panel. Settings moved to the
 // options page (right-click the icon -> Options), since the icon is taken.
 chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+/* ---------------- right-click → ask Claude ---------------- */
+
+const MENU = {
+  selection: "ct-ask-selection",
+  page: "ct-ask-page",
+  link: "ct-ask-link",
+};
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: MENU.selection, title: 'Ask Claude about "%s"', contexts: ["selection"] });
+    chrome.contextMenus.create({ id: MENU.page, title: "Ask Claude about this page", contexts: ["page"] });
+    chrome.contextMenus.create({ id: MENU.link, title: "Ask Claude about this link", contexts: ["link"] });
+  });
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const prompt =
+    info.menuItemId === MENU.selection
+      ? `About this selection from ${tab?.url ?? "the current page"}:\n\n"""\n${(info.selectionText ?? "").slice(0, 4000)}\n"""\n\nWhat should I know about it?`
+      : info.menuItemId === MENU.link
+        ? `What is at this link: ${info.linkUrl}? Read it if useful.`
+        : `Tell me about the page I am on. Read it if useful.`;
+
+  // The panel may not be running yet, so hand off through storage and let it
+  // pick the prompt up on load; a panel that IS open sees the storage change.
+  await chrome.storage.session.set({ pendingPrompt: { text: prompt, at: Date.now() } });
+
+  // Must happen in the click handler: opening a side panel needs a gesture.
+  try {
+    if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
+    else if (tab?.id != null) await chrome.sidePanel.open({ tabId: tab.id });
+  } catch (e) {
+    console.warn("could not open side panel:", e?.message ?? e);
+  }
+});
 const PING_MS = 20_000;
 const RECONNECT_MS = 3_000;
 // Another browser's extension took the bridge. Retry rarely, so the two do not
@@ -24,15 +61,19 @@ let serverUrl = DEFAULT_URL;
 chrome.storage.local.get({ enabled: true, serverUrl: DEFAULT_URL }).then((s) => {
   enabled = s.enabled;
   serverUrl = s.serverUrl || DEFAULT_URL;
-  if (enabled) connect();
+  if (enabled) { connect(); observeAgent(); }
 });
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.serverUrl) serverUrl = changes.serverUrl.newValue || DEFAULT_URL;
   if (changes.enabled) {
     enabled = changes.enabled.newValue;
-    if (enabled) connect();
-    else { ws?.close(1000, "disabled"); ws = null; setBadge(false); }
+    if (enabled) { connect(); observeAgent(); }
+    else {
+      ws?.close(1000, "disabled"); ws = null;
+      obs?.close(1000, "disabled"); obs = null; clearTimeout(obsTimer);
+      setBadge(false);
+    }
   } else if (changes.serverUrl && enabled) {
     ws?.close(1000, "server changed");
   }
@@ -82,7 +123,70 @@ function reply(obj) { if (ws?.readyState === 1) ws.send(JSON.stringify(obj)); }
 function retry(delay = RECONNECT_MS) { if (enabled) setTimeout(connect, delay); }
 // A backstop in case the socket dies while the worker is asleep.
 chrome.alarms?.create("reconnect", { periodInMinutes: 1 });
-chrome.alarms?.onAlarm.addListener(() => { if (enabled && !ws) connect(); });
+chrome.alarms?.onAlarm.addListener(() => {
+  if (!enabled) return;
+  if (!ws) connect();
+  if (!obs) observeAgent();
+});
+
+/* ---------------- notifications ---------------- */
+
+/**
+ * A second, read-only connection to the agent socket. The side panel already
+ * has one, but it dies when the panel closes — which is exactly when a
+ * notification is worth having. ?observe=1 skips the transcript replay.
+ */
+let obs = null, obsTimer = null, turnStartedAt = 0, lastState = "idle";
+const LONG_TURN_MS = 20_000;
+
+function observeAgent() {
+  if (!enabled || (obs && obs.readyState <= 1)) return;
+  const url = (serverUrl || DEFAULT_URL).replace(/\/ext\/?$/, "/ws") + "?observe=1";
+  try { obs = new WebSocket(url); } catch { return; }
+
+  obs.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+
+    if (m.kind === "status") {
+      // "waiting for you" is the one that must not go unnoticed.
+      if (m.state === "awaiting" && lastState !== "awaiting") {
+        notify("Claude needs you", m.detail === "a question" ? "A question is waiting" : `Approve ${m.detail}?`);
+      }
+      if (lastState === "idle" && m.state !== "idle") turnStartedAt = Date.now();
+      lastState = m.state;
+    }
+
+    if (m.kind === "turn_end") {
+      const took = Date.now() - turnStartedAt;
+      // Short turns are ones you watched happen; don't nag about those.
+      if (turnStartedAt && took > LONG_TURN_MS) {
+        notify("Claude finished", `Took ${Math.round(took / 1000)}s${m.denials ? ` · ${m.denials} denied` : ""}`);
+      }
+      turnStartedAt = 0;
+    }
+  };
+  obs.onclose = () => { obs = null; if (enabled) obsTimer = setTimeout(observeAgent, 5000); };
+  obs.onerror = () => { try { obs?.close(); } catch {} };
+}
+
+function notify(title, message) {
+  chrome.notifications.create("", {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icon128.png"),
+    title,
+    message,
+    priority: 1,
+  });
+}
+
+// Clicking a notification should take you to the conversation.
+chrome.notifications.onClicked.addListener(async (id) => {
+  chrome.notifications.clear(id);
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
+  } catch { /* needs a gesture in some contexts; nothing to do */ }
+});
 
 async function activeTab() {
   const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });

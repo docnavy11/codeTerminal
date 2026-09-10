@@ -184,19 +184,21 @@ server.on("upgrade", async (req, socket, head) => {
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
-    if (route === "/ws") attachAgent(ws);
+    if (route === "/ws") attachAgent(ws, new URL(req.url ?? "/", "http://x").searchParams.get("observe") !== "1");
     else if (route === "/ext") bridge.attach(ws);
     else attachShell(ws);
   });
 });
 
 /** The Claude session: gated, streaming, and it survives a reload. */
-function attachAgent(ws: WebSocket): void {
+function attachAgent(ws: WebSocket, replay = true): void {
   const send = (e: ClientEvent) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(e));
   };
-  // Replays the whole conversation, including any approval still awaiting you.
-  convo.attach(send);
+  console.log(`[ws] client attached${replay ? "" : " (observer)"}`);
+  // Replays the whole conversation, including any approval still awaiting you —
+  // unless this is a pure observer (?observe=1).
+  convo.attach(send, replay);
 
   ws.on("message", (raw) => {
     let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string;
@@ -264,7 +266,7 @@ function attachAgent(ws: WebSocket): void {
   });
 
   // A closed tab must NOT end the session — that is the whole point.
-  const detach = () => convo.detach(send);
+  const detach = () => { console.log(`[ws] client detached${replay ? "" : " (observer)"}`); convo.detach(send); };
   ws.on("close", detach);
   ws.on("error", detach);
 }

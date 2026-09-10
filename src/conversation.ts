@@ -86,10 +86,18 @@ export class Manager {
     }
   }
 
-  attach(emit: (e: ClientEvent) => void): void {
+  /**
+   * `replay: false` is for observers that only want live events — the
+   * extension's service worker watching for something worth a notification.
+   * Replaying the whole transcript at it would be pure waste.
+   */
+  attach(emit: (e: ClientEvent) => void, replay = true): void {
     this.#live.add(emit);
-    for (const e of this.#rec.events) emit(e);
-    emit({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+    if (replay) {
+      for (const e of this.#rec.events) emit(e);
+      emit({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+    }
+    emit({ kind: "replayed" });
     emit(this.#session.status());   // so a reload mid-turn knows it is busy
   }
 

@@ -41,7 +41,7 @@ async function connect() {
   const url = await agentUrl();
   ws = new WebSocket(url);
 
-  ws.onopen = () => { dot.classList.add("on"); meta.textContent = ""; };
+  ws.onopen = () => { dot.classList.add("on"); meta.textContent = ""; flushQueued(); };
   ws.onclose = () => {
     dot.classList.remove("on");
     meta.textContent = "reconnecting…";
@@ -270,7 +270,40 @@ function paintTab() {
 }
 $("tabctx").onclick = () => { withTab = !withTab; paintTab(); };
 
+/* ---------------- prompts handed over by the context menu ---------------- */
+
+/** Queue until the socket is up, so a cold panel does not drop the prompt. */
+let queued = null;
+function submit(text) {
+  if (!text) return;
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "prompt", text, withTab }));
+    lastText = null;
+  } else {
+    queued = text;
+  }
+}
+function flushQueued() {
+  if (queued) { const t = queued; queued = null; submit(t); }
+}
+
+async function takePending() {
+  try {
+    const { pendingPrompt } = await chrome.storage.session.get("pendingPrompt");
+    if (!pendingPrompt) return;
+    await chrome.storage.session.remove("pendingPrompt");   // claim it once
+    // Ignore something stale from a previous session.
+    if (Date.now() - (pendingPrompt.at ?? 0) < 60_000) submit(pendingPrompt.text);
+  } catch { /* storage.session unavailable */ }
+}
+
+// Fires when the panel is already open and you right-click again.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "session" && changes.pendingPrompt?.newValue) takePending();
+});
+
 applyFontSize();
 applyTheme();
 paintTab();
 connect();
+takePending();

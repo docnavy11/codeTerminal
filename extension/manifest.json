@@ -4,11 +4,13 @@
   "version": "1.0.0",
   "description": "Lets a code-terminal Claude session read and drive this browser.",
   "permissions": [
-    "tabs",
-    "scripting",
-    "storage",
     "activeTab",
-    "sidePanel"
+    "contextMenus",
+    "notifications",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -18,10 +20,14 @@
     "type": "module"
   },
   "action": {
-    "default_title": "code terminal \u2014 open Claude side panel"
+    "default_title": "code terminal \u2014 open Claude side panel",
+    "default_icon": "icon128.png"
   },
   "side_panel": {
     "default_path": "sidepanel.html"
   },
-  "options_page": "popup.html"
+  "options_page": "popup.html",
+  "icons": {
+    "128": "icon128.png"
+  }
 }

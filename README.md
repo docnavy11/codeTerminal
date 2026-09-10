@@ -106,6 +106,25 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## Right-click and notifications
+
+**Right-click → Ask Claude** on a selection, a page or a link. The side panel
+opens with the prompt already sent. `chrome.sidePanel.open()` needs a user
+gesture, so it happens inside the `contextMenus.onClicked` handler; the prompt
+itself is handed over through `chrome.storage.session`, which works whether
+the panel is cold or already open (a `storage.onChanged` listener catches the
+second case). The panel claims it once and ignores anything older than a
+minute.
+
+**Notifications** when Claude needs you (an approval or a question is waiting)
+and when a turn longer than 20s finishes. Short turns are ones you watched
+happen, so they stay quiet.
+
+These live in the service worker, not the panel — the panel's socket dies when
+you close it, which is exactly when a notification is worth having. It holds a
+second, read-only connection: `/ws?observe=1` skips the transcript replay, so
+attaching costs 2 events instead of 14.
+
 ## Ambient tab context
 
 Each prompt carries what you are looking at: the active tab's title and URL,
