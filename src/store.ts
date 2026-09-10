@@ -27,13 +27,46 @@ export type ChatSummary =
 
 export class Store {
   #dir: string;
+  /**
+   * Summaries kept in memory so the chat picker does not re-read and re-parse
+   * every ~60 KB record on each refresh — that was 62 ms synchronous for 500
+   * chats, on the event loop, fired on every title change and every attach.
+   * This Store is the only writer, so the cache stays authoritative; the boot
+   * scan picks up whatever was written while the server was down.
+   */
+  #summaries = new Map<string, ChatSummary>();
 
   constructor(dir: string) {
     this.#dir = dir;
     mkdirSync(dir, { recursive: true });
+    this.#scan();
   }
 
   get dir(): string { return this.#dir; }
+
+  #summaryOf(d: ChatRecord): ChatSummary {
+    return {
+      id: d.id,
+      title: d.title || "(untitled)",
+      createdAt: d.createdAt ?? 0,
+      updatedAt: d.updatedAt ?? 0,
+      cwd: d.cwd ?? null,
+      project: d.project ?? null,
+      turns: d.events.filter((e) => e.kind === "user").length,
+    };
+  }
+
+  /** One-time full read at construction; the cache carries it from there. */
+  #scan(): void {
+    let names: string[];
+    try { names = readdirSync(this.#dir).filter((n) => n.endsWith(".json")); } catch { return; }
+    for (const n of names) {
+      try {
+        const d = JSON.parse(readFileSync(join(this.#dir, n), "utf8")) as ChatRecord;
+        if (d?.id && Array.isArray(d.events)) this.#summaries.set(d.id, this.#summaryOf(d));
+      } catch { /* skip a corrupt file rather than lose the list */ }
+    }
+  }
 
   /** Sibling of the chats dir, so a delete is recoverable with one `mv`. */
   get #archiveDir(): string { return `${this.#dir}-archive`; }
@@ -60,6 +93,7 @@ export class Store {
       const p = this.#path(rec.id);
       writeFileSync(`${p}.tmp`, JSON.stringify(rec));
       renameSync(`${p}.tmp`, p);
+      this.#summaries.set(rec.id, this.#summaryOf(rec));   // keep the cache in step
     } catch { /* losing history is not worth crashing over */ }
   }
 
@@ -76,6 +110,7 @@ export class Store {
     try {
       mkdirSync(this.#archiveDir, { recursive: true });
       renameSync(from, dest);
+      this.#summaries.delete(id);   // only once the file is actually gone
       console.log(`[chats] deleted ${id} -> ${dest}`);
     } catch (e) {
       // Never crash on a failed delete, but never fail silently either.
@@ -83,28 +118,9 @@ export class Store {
     }
   }
 
-  /** Newest first. Reads every file, which is fine at personal scale. */
+  /** Newest first, served from the in-memory cache — no disk read per call. */
   list(): ChatSummary[] {
-    let names: string[];
-    try { names = readdirSync(this.#dir).filter((n) => n.endsWith(".json")); } catch { return []; }
-
-    const out: ChatSummary[] = [];
-    for (const n of names) {
-      try {
-        const d = JSON.parse(readFileSync(join(this.#dir, n), "utf8")) as ChatRecord;
-        if (!d?.id) continue;
-        out.push({
-          id: d.id,
-          title: d.title || "(untitled)",
-          createdAt: d.createdAt ?? 0,
-          updatedAt: d.updatedAt ?? 0,
-          cwd: d.cwd ?? null,
-          project: d.project ?? null,
-          turns: d.events.filter((e) => e.kind === "user").length,
-        });
-      } catch { /* skip a corrupt file rather than lose the list */ }
-    }
-    return out.sort((a, b) => b.updatedAt - a.updatedAt);
+    return [...this.#summaries.values()].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 }
 

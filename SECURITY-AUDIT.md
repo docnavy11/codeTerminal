@@ -106,7 +106,7 @@ with no exclusion list.
 Fix: a denylist for `.claude`, `.ssh`, `.aws`, `.config/gh`, or default
 `FILES_ROOT` to the workspace and make widening it explicit.
 
-### M4 — Permission mode applied a tick after the session launches  ·  now: med · oss: med
+### M4 — Permission mode applied a tick after the session launches  ·  FIXED · was now: med · oss: med
 `LiveChat.#spawn` calls `s.setMode(mode)` (async, fire-and-forget `void`) then
 `s.start(...)` synchronously. Verified: `query()` launches with
 `permissionMode:"default"` and the real mode lands one microtask later.
@@ -124,7 +124,7 @@ accepts `permissionMode`), rather than setting it after start.
 
 ## LOW / robustness
 
-### L1 — `Store.list()` is synchronous and re-reads every chat file  ·  perf
+### L1 — `Store.list()` is synchronous and re-reads every chat file  ·  FIXED · perf
 `src/store.ts:87`. `readdirSync` + `readFileSync` + `JSON.parse` of every
 record, on the event loop. Verified: **62 ms for 500 chats** (~60 KB each) —
 and it runs on every list refresh, which fires on every title/project change and
@@ -132,7 +132,7 @@ every client attach. At a few hundred chats this is a visible stall that blocks
 all sockets. Fix: cache summaries, or store a lightweight index; at minimum make
 it async.
 
-### L2 — No WebSocket heartbeat server-side  ·  robustness
+### L2 — No WebSocket heartbeat server-side  ·  FIXED · robustness
 No `ping`/`pong` liveness on `/ws` or `/pty` (the extension pings, the server
 doesn't). A half-open TCP connection (laptop sleeps, wifi drops) keeps its
 `claude` subprocess and PTY alive until the kernel eventually resets — against

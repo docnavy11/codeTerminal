@@ -55,3 +55,30 @@ describe("Store.remove", () => {
     assert.throws(() => store.remove("../../etc/passwd"), /bad chat id/);
   });
 });
+
+describe("Store.list caching (L1)", () => {
+  test("reflects writes and removes without a disk re-read", async () => {
+    const s = new Store(join(root, "cache"));
+    for (let i = 0; i < 3; i++) {
+      s.write({ id: `00000000-0000-4000-8000-00000000000${i}`, title: "c" + i,
+        createdAt: i, updatedAt: i, sdkSessionId: null, cwd: null,
+        events: [{ kind: "user", text: "hi" } as never], granted: [], mode: "default" });
+    }
+    assert.equal(s.list().length, 3);
+    assert.equal(s.list()[0].title, "c2", "newest (highest updatedAt) first");
+    s.remove("00000000-0000-4000-8000-000000000001");
+    assert.equal(s.list().length, 2);
+    assert.ok(!s.list().some((c) => c.id.endsWith("000001")), "removed chat is gone from the list");
+  });
+
+  test("a fresh Store boot-scans what is already on disk", async () => {
+    const d = join(root, "boot");
+    const a = new Store(d);
+    a.write({ id: "00000000-0000-4000-8000-0000000000aa", title: "ondisk",
+      createdAt: 1, updatedAt: 1, sdkSessionId: null, cwd: null,
+      events: [{ kind: "user", text: "x" } as never], granted: [], mode: "default" });
+    const b = new Store(d);   // separate instance, must scan the file a wrote
+    assert.equal(b.list().length, 1);
+    assert.equal(b.list()[0].title, "ondisk");
+  });
+});

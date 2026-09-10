@@ -51,8 +51,10 @@ export class LiveChat {
     this.#mode = mode;
     const s = new Session(this.#rec.cwd ?? this.#workspace, this.#record,
       { ...deps, chatId: this.#rec.id, prefer: () => this.#extInstance });
-    if (mode !== "default") void s.setMode(mode);
-    s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted)
+    // Pass the mode into start() so the SDK launches with it. Setting it after
+    // start (the old `void s.setMode(mode)`) raced the query into existence and
+    // left the session running in "default".
+    s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted, mode)
       .catch((err) => this.#record({ kind: "error", message: String(err) }));
     return s;
   }

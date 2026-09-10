@@ -18,6 +18,7 @@ import { ZipFile } from "yazl";
 import { stat } from "node:fs/promises";
 import type { LiveChat } from "./conversation.js";
 import { Shell } from "./shell.js";
+import { heartbeat } from "./heartbeat.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -438,6 +439,7 @@ server.on("upgrade", async (req, socket, head) => {
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
+    heartbeat(ws);
     if (route === "/ws") attachAgent(ws, new URL(req.url ?? "/", "http://x").searchParams.get("observe") !== "1");
     else if (route === "/ext") bridge.attach(ws);
     else attachShell(ws);

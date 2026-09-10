@@ -153,9 +153,16 @@ export class Session {
   /** Swap the sink when a browser attaches or detaches. */
   setEmit(emit: (e: ClientEvent) => void): void { this.#emit = emit; }
 
-  async start(resumeId?: string, granted: PermissionUpdate[] = []): Promise<void> {
+  async start(resumeId?: string, granted: PermissionUpdate[] = [], mode: PermissionMode = "default"): Promise<void> {
     const d = this.#deps;
     this.#granted = granted;
+    // The mode has to be in place BEFORE query() reads it below. The old path
+    // spawned the session, then fire-and-forget called setMode() — but the
+    // query did not exist yet, so setPermissionMode() was a no-op and the SDK
+    // launched in "default" regardless of what the chat was saved as. Set it
+    // here, clamping a bypass the deployment has not enabled back to default so
+    // the launch can never be more permissive than the runtime guard allows.
+    this.#mode = mode === "bypassPermissions" && !ALLOW_BYPASS ? "default" : mode;
     this.#query = query({
       prompt: this.#input,
       options: {
