@@ -4,8 +4,9 @@
 # as "systemctl restart *" would be equivalent to root, since it could restart
 # any unit on the box.
 #
-# journalctl is not listed because the unit's logs are already readable without
-# privilege.
+# "status" is deliberately ABSENT. It needs no privilege to run, and under sudo
+# it would spawn a pager as root — and a pager runs shell commands (!sh), so
+# the line would hand out a root shell. Same reasoning keeps journalctl out.
 #
 # Install:
 #   sudo install -m 0440 -o root -g root \
@@ -20,13 +21,9 @@ dev ALL=(root) NOPASSWD: /usr/bin/systemctl restart code-terminal, \
                          /usr/bin/systemctl start code-terminal.service, \
                          /usr/bin/systemctl stop code-terminal, \
                          /usr/bin/systemctl stop code-terminal.service, \
-                         /usr/bin/systemctl status code-terminal, \
-                         /usr/bin/systemctl status code-terminal.service, \
                          /bin/systemctl restart code-terminal, \
                          /bin/systemctl restart code-terminal.service, \
                          /bin/systemctl start code-terminal, \
                          /bin/systemctl start code-terminal.service, \
                          /bin/systemctl stop code-terminal, \
-                         /bin/systemctl stop code-terminal.service, \
-                         /bin/systemctl status code-terminal, \
-                         /bin/systemctl status code-terminal.service
+                         /bin/systemctl stop code-terminal.service
