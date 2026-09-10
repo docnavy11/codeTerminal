@@ -497,6 +497,11 @@ side panel, can hold two different conversations running simultaneously —
 before this there was a single active chat and every screen showed it, so
 switching in one switched everywhere.
 
+Switch conversation from the **chats** button — in the side panel header, in
+the web UI header, or from the manage page's *open in the terminal*. It
+switches that window only; another browser keeps whatever it was on. The list
+filters, since the point of keeping conversations is finding them again.
+
 Sharing still works: point two clients at the same chat and they both see it
 live — the same words streaming into both, either one able to type. A chat
 holds a set of clients, not one. So the choice is yours per window: same

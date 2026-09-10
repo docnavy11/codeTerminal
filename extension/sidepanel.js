@@ -66,6 +66,10 @@ async function connect() {
 function handle(m) {
   switch (m.kind) {
     case "commands": COMMANDS = m.commands ?? []; break;
+    case "chats":
+      CHATS = m.chats ?? []; ACTIVE = m.activeId;
+      if (clist.classList.contains("open")) renderChatList();
+      break;
     case "cwd":
       cwdShown = m.path;
       meta.textContent = cwdShown.split("/").pop() || cwdShown;
@@ -362,6 +366,79 @@ function paintTab() {
   localStorage.setItem("ct.tab", withTab ? "1" : "0");
 }
 $("tabctx").onclick = () => { withTab = !withTab; paintTab(); };
+
+/* ---------------- switching conversation ---------------- */
+const clist = $("clist");
+let CHATS = [], ACTIVE = null, chatFilter = "";
+
+const ago = (ms) => {
+  if (!ms) return "";
+  const s = (Date.now() - ms) / 1000;
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+};
+
+function renderChatList() {
+  clist.replaceChildren();
+  const find = document.createElement("div");
+  find.className = "cfind";
+  const q = Object.assign(document.createElement("input"),
+    { placeholder: "Filter conversations…", value: chatFilter });
+  q.oninput = () => { chatFilter = q.value; renderChatList(); q.focus(); };
+  find.append(q);
+  clist.append(find);
+
+  const shown = CHATS.filter((c) => !chatFilter ||
+    c.title.toLowerCase().includes(chatFilter.toLowerCase()));
+  if (!shown.length) {
+    clist.append(Object.assign(document.createElement("div"),
+      { className: "empty", textContent: "Nothing matches." }));
+  }
+
+  for (const c of shown) {
+    const row = document.createElement("div");
+    row.className = "c" + (c.id === ACTIVE ? " on" : "");
+    const t = document.createElement("span");
+    t.className = "ct"; t.textContent = c.title; t.title = c.title;
+    const w = document.createElement("span");
+    w.className = "cw"; w.textContent = `${c.turns}· ${ago(c.updatedAt)}`;
+    row.append(t, w);
+
+    for (const [label, fn] of [
+      ["✎", () => {
+        const nt = prompt("Rename this conversation", c.title);
+        if (nt?.trim()) ws?.send(JSON.stringify({ type: "rename", id: c.id, title: nt.trim() }));
+      }],
+      ["✕", () => {
+        if (confirm(`Delete "${c.title}"?`)) ws?.send(JSON.stringify({ type: "delete", id: c.id }));
+      }],
+    ]) {
+      const b = document.createElement("span");
+      b.className = "ca"; b.textContent = label;
+      b.onclick = (e) => { e.stopPropagation(); fn(); };
+      row.append(b);
+    }
+
+    // Switches this panel only — another browser keeps whatever it is on.
+    row.onclick = () => {
+      closeChats();
+      if (c.id !== ACTIVE) ws?.send(JSON.stringify({ type: "open", id: c.id }));
+    };
+    clist.append(row);
+  }
+  clist.classList.add("open");
+}
+
+const closeChats = () => { clist.classList.remove("open"); chatFilter = ""; };
+
+$("chatsbtn").onclick = (e) => {
+  e.stopPropagation();
+  if (clist.classList.contains("open")) { closeChats(); return; }
+  renderChatList();
+};
+document.addEventListener("click", (e) => { if (!clist.contains(e.target)) closeChats(); });
 
 /* ---------------- files ----------------
    Same HTTP endpoints as the web UI. The panel talks to them over http://,

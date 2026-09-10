@@ -143,6 +143,24 @@
   #status.busy { color:var(--accent); } #status.await { color:var(--warn); }
   #status { position:relative; }
   #status #promptsbtn { font-size:0.708rem; padding:0 5px; margin-right:3px; }
+  #clist { position:absolute; top:100%; left:4px; right:4px; margin-top:4px;
+           background:var(--panel); border:1px solid var(--line); border-radius:5px;
+           max-height:320px; overflow-y:auto; display:none; z-index:45;
+           box-shadow:0 6px 20px rgba(0,0,0,.45); }
+  #clist.open { display:block; }
+  #clist .cfind { padding:5px 7px; border-bottom:1px solid var(--line); }
+  #clist .cfind input { width:100%; background:var(--bg); color:var(--fg);
+                        border:1px solid var(--line); border-radius:4px;
+                        padding:3px 6px; font:inherit; font-size:0.75rem; }
+  #clist .c { padding:5px 8px; cursor:pointer; display:flex; gap:6px; align-items:baseline; }
+  #clist .c:hover { background:var(--btn); }
+  #clist .c.on { border-left:2px solid var(--accent); }
+  #clist .c .ct { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #clist .c .cw { color:var(--dim); font-size:0.667rem; flex-shrink:0; }
+  #clist .c .ca { color:var(--dim); flex-shrink:0; padding:0 2px; }
+  #clist .c .ca:hover { color:var(--fg); }
+  #clist .empty { padding:8px; color:var(--dim); font-size:0.75rem; }
+
   #plist { position:absolute; bottom:100%; left:4px; right:4px; margin-bottom:5px;
            background:var(--panel); border:1px solid var(--line); border-radius:5px;
            max-height:300px; overflow-y:auto; display:none; z-index:40;
@@ -189,7 +207,8 @@
                  border:1px solid var(--line); border-radius:4px; padding:5px 7px; font:inherit; margin:6px 0; }
 </style>
 
-<header>
+<header style="position:relative">
+  <div id="clist"></div>
   <span class="dot" id="dot"></span>
   <select id="mode" title="How much you want to be asked">
     <option value="default">Ask</option>
@@ -199,6 +218,7 @@
     <option value="bypassPermissions">Never ask</option>
   </select>
   <span class="tabs"><span class="tab on" data-view="chat">chat</span><span class="tab" data-view="files">files</span></span>
+  <button id="chatsbtn" title="Switch conversation">chats</button>
   <button id="newchat">New</button>
   <button id="openui" title="Open the full UI in a tab — shell, files, split view">↗</button>
   <button id="manage" title="Manage chats, prompts and projects">⚙</button>
