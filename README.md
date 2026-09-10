@@ -7,6 +7,41 @@ stops for your approval.
 Runs on this box (`ubuntu-16gb-nbg1-1-dev-server`) against the Claude Code
 OAuth credentials in `~/.claude` — **no `ANTHROPIC_API_KEY`, no API credits.**
 
+## Running as a service
+
+    sudo deploy/install.sh
+
+Installs `deploy/code-terminal.service` as a system unit running as `dev`, and
+enables it, so it comes back after a reboot. Then:
+
+    journalctl -u code-terminal -f
+    sudo systemctl restart code-terminal
+
+A system unit rather than a `systemctl --user` one, so it starts at boot with
+no need for `loginctl enable-linger`.
+
+Three things the unit has to get right:
+
+- **`HOME=/home/dev`.** The Agent SDK reads the Claude Code OAuth credentials
+  from `~/.claude`, and `settingSources` loads your config from there. Without
+  it the service starts and every turn fails to authenticate.
+- **Absolute paths and an explicit `PATH`.** systemd runs no shell, so nvm is
+  never set up. `ExecStart` names the node binary and `tsx/dist/cli.mjs`
+  directly. The PTY still gets a working `PATH` because it spawns `bash -l`,
+  which sources `~/.profile` → `~/.bashrc` → nvm; verified `node -v` inside the
+  shell pane under the service's environment.
+- **The bind is retried, not assumed.** At boot the server can start before
+  tailscaled has assigned `100.64.0.1`, and binding a missing address fails
+  with `EADDRNOTAVAIL`. `listenWithRetry` backs off up to 30s instead of dying,
+  which also covers tailscale restarting or the address changing.
+
+The unit is deliberately not sandboxed: the agent runs Bash and edits files by
+design, and `/pty` is a real shell, so `ProtectSystem` and friends would break
+the product rather than secure it.
+
+Permission mode resets to `default` on every boot, so a restart can never
+leave "Never ask" armed.
+
 ## Run
 
     cp .env.example .env

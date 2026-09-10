@@ -219,11 +219,35 @@ function attachShell(ws: WebSocket): void {
   ws.on("error", close);
 }
 
-server.listen(PORT, HOST, () => {
+/**
+ * At boot this can start before tailscaled has assigned the address, and
+ * binding a not-yet-existent IP fails with EADDRNOTAVAIL. Retry rather than
+ * die, so the unit does not need to guess at ordering — this also covers
+ * tailscale restarting or the address changing under us.
+ */
+function listenWithRetry(attempt = 0): void {
+  const onError = (err: NodeJS.ErrnoException) => {
+    const retryable = err.code === "EADDRNOTAVAIL" || err.code === "EADDRINUSE";
+    if (!retryable) throw err;
+    const wait = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+    console.warn(`bind ${HOST}:${PORT} failed (${err.code}); retrying in ${wait / 1000}s`);
+    server.removeListener("error", onError);
+    setTimeout(() => listenWithRetry(attempt + 1), wait);
+  };
+  server.once("error", onError);
+  server.listen(PORT, HOST, () => {
+    server.removeListener("error", onError);
+    announce();
+  });
+}
+
+function announce(): void {
   console.log(`code-terminal  http://${HOST}:${PORT}`);
   console.log(`identity       ${SELF.dnsName} · tailnet user ${SELF.userId}`);
   console.log(`workspace      ${WORKSPACE}`);
   console.log(`shell          /pty — real PTY, NO approval gate`);
   console.log(`browser        /ext — extension bridge, tools ungated`);
   console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
-});
+}
+
+listenWithRetry();

@@ -1,0 +1,47 @@
+[Unit]
+Description=code terminal — Claude session, shell and browser bridge
+Documentation=file:///home/dev/projects/codeTerminal/README.md
+# Best-effort ordering. The server retries the bind itself, so a late
+# tailscale address is survivable rather than fatal.
+After=network-online.target tailscaled.service
+Wants=network-online.target
+# Never give up restarting, even if it flaps while tailscale settles.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=dev
+Group=dev
+WorkingDirectory=/home/dev/projects/codeTerminal
+
+# HOME matters more than usual here: the Agent SDK reads the Claude Code OAuth
+# credentials from ~/.claude, and settingSources loads ~/.claude config.
+Environment=HOME=/home/dev
+Environment=NODE_ENV=production
+# systemd gives no PATH at all. `tailscale` (whois) happens to sit in /usr/bin,
+# which the libc fallback covers, but state it rather than rely on that.
+Environment=PATH=/home/dev/.nvm/versions/node/v22.22.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/home/dev/projects/codeTerminal/.env
+
+# Absolute paths: systemd gets no shell, so nvm is never on PATH.
+ExecStart=/home/dev/.nvm/versions/node/v22.22.1/bin/node \
+          /home/dev/projects/codeTerminal/node_modules/tsx/dist/cli.mjs \
+          /home/dev/projects/codeTerminal/src/server.ts
+
+Restart=always
+RestartSec=3
+
+# The agent runs Bash and edits files by design, and /pty is a real shell, so
+# sandboxing the unit would break the product. These two are free.
+NoNewPrivileges=yes
+PrivateTmp=no
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=code-terminal
+
+# A permission mode of "Never ask" is reset to default on every boot, so a
+# restart here can never leave an unattended agent armed.
+
+[Install]
+WantedBy=multi-user.target
