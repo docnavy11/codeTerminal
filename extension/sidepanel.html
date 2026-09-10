@@ -134,6 +134,29 @@
   #status.busy  .pip { background:var(--accent); animation:pulse 1.1s ease-in-out infinite; }
   #status.await .pip { background:var(--warn);   animation:pulse .7s ease-in-out infinite; }
   #status.busy { color:var(--accent); } #status.await { color:var(--warn); }
+  #status { position:relative; }
+  #status #promptsbtn { font-size:0.708rem; padding:0 5px; margin-right:3px; }
+  #plist { position:absolute; bottom:100%; left:4px; right:4px; margin-bottom:5px;
+           background:var(--panel); border:1px solid var(--line); border-radius:5px;
+           max-height:300px; overflow-y:auto; display:none; z-index:40;
+           box-shadow:0 -5px 18px rgba(0,0,0,.45); }
+  #plist.open { display:block; }
+  #plist .scope { padding:4px 8px; color:var(--dim); font-size:0.708rem;
+                  border-bottom:1px solid var(--line); display:flex; gap:5px; align-items:center; }
+  #plist .scope button { margin-left:auto; font-size:0.708rem; padding:1px 5px; }
+  #plist .p { padding:5px 8px; cursor:pointer; display:flex; gap:6px; align-items:baseline; }
+  #plist .p:hover { background:var(--btn); }
+  #plist .p .t2 { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #plist .p .tag { color:var(--accent); font-size:0.667rem; flex-shrink:0; }
+  #plist .p .act { color:var(--dim); flex-shrink:0; padding:0 2px; }
+  #plist .edit { padding:7px 8px; border-top:1px solid var(--line); display:flex;
+                 flex-direction:column; gap:4px; }
+  #plist .edit input, #plist .edit textarea {
+    background:var(--bg); color:var(--fg); border:1px solid var(--line);
+    border-radius:4px; padding:3px 6px; font:inherit; font-size:0.75rem; }
+  #plist .edit textarea { min-height:64px; resize:vertical; }
+  #plist .empty { padding:8px; color:var(--dim); font-size:0.75rem; }
+
   #status .t { margin-left:auto; font-variant-numeric:tabular-nums; opacity:.75; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
@@ -191,7 +214,7 @@
   <div id="fview" class="fview" hidden></div>
 </div>
 
-<div id="status"><span class="pip"></span><span id="statustext">connecting…</span><span class="t" id="statustime"></span></div>
+<div id="status"><div id="plist"></div><button id="promptsbtn" title="Prepared prompts">prompts</button><span class="pip"></span><span id="statustext">connecting…</span><span class="t" id="statustime"></span></div>
 <footer>
   <div id="menu"></div>
   <textarea id="box" placeholder="Ask Claude…" autofocus></textarea>

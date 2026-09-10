@@ -167,7 +167,7 @@
            padding:5px 8px; white-space:pre-wrap; font-size:0.833rem; border-radius:0 4px 4px 0; }
 
   /* Status bar: sits directly above the input, where you are already looking. */
-  #status { display:flex; align-items:center; gap:6px; padding:3px 11px; font-size:0.792rem;
+  #status { position:relative; display:flex; align-items:center; gap:6px; padding:3px 11px; font-size:0.792rem;
             border-top:1px solid var(--line); background:var(--panel); color:var(--dim);
             flex-shrink:0; min-height:23px; }
   #status .pip { width:7px; height:7px; border-radius:50%; background:var(--line); flex-shrink:0; }
@@ -178,6 +178,30 @@
   #status .t { margin-left:auto; font-variant-numeric:tabular-nums; opacity:.75; }
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.25 } }
   #status .jump { color:var(--warn); text-decoration:underline; cursor:pointer; }
+
+  #status #prompts { font-size:0.75rem; padding:0 6px; margin-right:2px; }
+  #plist { position:absolute; bottom:100%; left:10px; right:10px; margin-bottom:6px;
+           background:var(--panel); border:1px solid var(--line); border-radius:6px;
+           max-height:320px; overflow-y:auto; display:none; z-index:40;
+           box-shadow:0 -6px 22px rgba(0,0,0,.45); }
+  #plist.open { display:block; }
+  #plist .scope { padding:5px 10px; color:var(--dim); font-size:0.75rem;
+                  border-bottom:1px solid var(--line); display:flex; gap:6px; align-items:center; }
+  #plist .scope button { margin-left:auto; font-size:0.75rem; padding:1px 6px; }
+  #plist .p { padding:6px 10px; cursor:pointer; display:flex; gap:8px; align-items:baseline; }
+  #plist .p:hover { background:var(--btn); }
+  #plist .p .t { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #plist .p .tag { color:var(--accent); font-size:0.708rem; flex-shrink:0; }
+  #plist .p .act { color:var(--dim); flex-shrink:0; padding:0 3px; }
+  #plist .p .act:hover { color:var(--fg); }
+  #plist .edit { padding:8px 10px; border-top:1px solid var(--line); display:flex;
+                 flex-direction:column; gap:5px; }
+  #plist .edit input, #plist .edit textarea {
+    background:var(--bg); color:var(--fg); border:1px solid var(--line);
+    border-radius:4px; padding:4px 7px; font:inherit; font-size:0.833rem; }
+  #plist .edit textarea { min-height:72px; resize:vertical; }
+  #plist .edit .row { display:flex; gap:5px; }
+  #plist .empty { padding:10px; color:var(--dim); font-size:0.833rem; }
 
   .pane-hd .tab { cursor:pointer; padding:1px 6px; border-radius:3px; }
   .pane-hd .tab.on { color:var(--fg); background:var(--btn); }
@@ -233,7 +257,7 @@
   <div class="pane" id="left">
     <div class="pane-hd">claude</div>
     <div id="log"></div>
-    <div id="status"><span class="pip"></span><span id="statustext">ready</span><span class="t" id="statustime"></span></div>
+    <div id="status"><div id="plist"></div><button id="prompts" title="Prepared prompts">prompts</button><span class="pip"></span><span id="statustext">ready</span><span class="t" id="statustime"></span></div>
     <footer>
       <div id="menu"></div>
       <textarea id="box" placeholder="Ask Claude…  (Enter to send, Shift+Enter newline)" autofocus></textarea>
@@ -1030,6 +1054,121 @@ document.querySelectorAll(".pane-hd .tab").forEach((tab) => {
     }
   };
 });
+
+/* ---------------- prepared prompts ---------------- */
+const plist = document.getElementById("plist");
+let promptData = null;     // {host, prompts:[{...,filled}], all:[...]}
+let editing = null;        // the prompt being edited, or {} for a new one
+
+async function loadPrompts() {
+  const r = await fetch("/prompts");
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  promptData = await r.json();
+}
+
+function renderPrompts() {
+  plist.replaceChildren();
+  if (!promptData) return;
+
+  const scope = document.createElement("div");
+  scope.className = "scope";
+  scope.append(document.createTextNode(
+    promptData.host ? `for ${promptData.host}` : "no page detected — generic prompts only"));
+  const add = document.createElement("button");
+  add.textContent = "+ new";
+  add.onclick = (e) => { e.stopPropagation(); editing = { title: "", text: "", domains: [] }; renderPrompts(); };
+  scope.append(add);
+  plist.append(scope);
+
+  const list = editing ? [] : promptData.prompts;
+  if (!editing && !list.length) {
+    plist.append(Object.assign(document.createElement("div"),
+      { className: "empty", textContent: "No prompts apply here. Use + new." }));
+  }
+
+  for (const p of list) {
+    const row = document.createElement("div");
+    row.className = "p";
+    const t = document.createElement("span");
+    t.className = "t"; t.textContent = p.title; t.title = p.filled;
+    row.append(t);
+    if (p.domains.length) {
+      const tag = document.createElement("span");
+      tag.className = "tag"; tag.textContent = p.domains.join(" ");
+      row.append(tag);
+    }
+    for (const [label, fn] of [
+      ["✎", () => { editing = { ...p }; renderPrompts(); }],
+      ["✕", async () => {
+        if (!confirm(`Delete "${p.title}"?`)) return;
+        await fetch(`/prompts/${p.id}`, { method: "DELETE" });
+        await loadPrompts(); renderPrompts();
+      }],
+    ]) {
+      const b = document.createElement("span");
+      b.className = "act"; b.textContent = label;
+      b.onclick = (e) => { e.stopPropagation(); fn(); };
+      row.append(b);
+    }
+    // Click runs it. The filled copy is what goes in, so {url} and {selection}
+    // are already resolved for the page you are on.
+    row.onclick = () => {
+      closePrompts();
+      box.value = p.filled;
+      box.focus();
+      send();
+    };
+    plist.append(row);
+  }
+
+  if (editing) plist.append(editForm());
+  plist.classList.add("open");
+}
+
+function editForm() {
+  const wrap = document.createElement("div");
+  wrap.className = "edit";
+  const title = Object.assign(document.createElement("input"),
+    { placeholder: "Title", value: editing.title ?? "" });
+  const domains = Object.assign(document.createElement("input"),
+    { placeholder: "Domains, space separated — blank means everywhere",
+      value: (editing.domains ?? []).join(" ") });
+  const text = Object.assign(document.createElement("textarea"),
+    { placeholder: "The prompt. {url} {title} {host} {selection} get filled in.",
+      value: editing.text ?? "" });
+  const row = document.createElement("div");
+  row.className = "row";
+  const save = Object.assign(document.createElement("button"), { textContent: "Save", className: "allow" });
+  save.onclick = async () => {
+    const body = { id: editing.id, title: title.value, text: text.value,
+                   domains: domains.value.split(/[\s,]+/).filter(Boolean) };
+    const r = await fetch("/prompts", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) { alert((await r.json()).error ?? "could not save"); return; }
+    editing = null; await loadPrompts(); renderPrompts();
+  };
+  const cancel = Object.assign(document.createElement("button"), { textContent: "Cancel" });
+  cancel.onclick = () => { editing = null; renderPrompts(); };
+  row.append(save, cancel);
+  wrap.append(title, domains, text, row);
+  return wrap;
+}
+
+const closePrompts = () => { plist.classList.remove("open"); editing = null; };
+
+document.getElementById("prompts").onclick = async (e) => {
+  e.stopPropagation();
+  if (plist.classList.contains("open")) { closePrompts(); return; }
+  plist.replaceChildren(Object.assign(document.createElement("div"),
+    { className: "empty", textContent: "loading…" }));
+  plist.classList.add("open");
+  try { await loadPrompts(); renderPrompts(); }
+  catch (err) {
+    plist.replaceChildren(Object.assign(document.createElement("div"),
+      { className: "empty", textContent: `Could not load prompts: ${err.message}` }));
+  }
+};
+document.addEventListener("click", (e) => { if (!plist.contains(e.target)) closePrompts(); });
 
 connectAgent();
 connectShell();

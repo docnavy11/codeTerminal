@@ -11,6 +11,7 @@ import * as files from "./files.js";
 import { wantsContext } from "./prompt.js";
 import { pruneScreenshots } from "./screenshots.js";
 import { WatchRegistry } from "./watches.js";
+import { PromptStore, hostOf, fill } from "./prompts.js";
 import { stat } from "node:fs/promises";
 import { setBridge, setShellSource, setWatchSource } from "./session.js";
 import { Shell } from "./shell.js";
@@ -50,6 +51,8 @@ setShellSource(() => activeShell);
 // Chats live on disk; only the active one has a running SDK session.
 const convo = new Manager(WORKSPACE, process.env.CODETERM_CHATS ?? join(ROOT, "chats"));
 await convo.boot();
+
+const prompts = new PromptStore(process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"));
 
 const watches = new WatchRegistry();
 setWatchSource(watches, () => convo.activeId);
@@ -157,6 +160,37 @@ const guard: express.RequestHandler = (req, res, next) => {
     res.status(403).json({ error: deny });
   }).catch((e) => res.status(500).json({ error: String(e) }));
 };
+
+/**
+ * Which prompts apply right now. The active tab is resolved here rather than
+ * in the client, so the plain web UI — which has no idea what your browser is
+ * showing — gets the same domain-scoped list as the side panel.
+ */
+app.get("/prompts", guard, async (_req, res) => {
+  const tab = (await bridge.activeTab()) ?? {};
+  const host = hostOf(tab.url);
+  res.json({
+    host,
+    url: tab.url ?? "",
+    title: tab.title ?? "",
+    hasSelection: Boolean(tab.selection),
+    prompts: prompts.for(host).map((p) => ({ ...p, filled: fill(p.text, tab) })),
+    all: prompts.all(),
+  });
+});
+
+app.post("/prompts", guard, express.json({ limit: "256kb" }), (req, res) => {
+  try {
+    const b = req.body as { id?: string; title?: string; text?: string; domains?: string[] };
+    res.json(prompts.upsert({ id: b.id, title: String(b.title ?? ""), text: String(b.text ?? ""), domains: b.domains ?? [] }));
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.delete("/prompts/:id", guard, (req, res) => {
+  res.json({ removed: prompts.remove(String(req.params.id)) });
+});
 
 app.get("/files/info", guard, async (_req, res) => {
   // Where the browser should open: the agent's workspace when it sits under

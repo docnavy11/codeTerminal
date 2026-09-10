@@ -491,6 +491,28 @@ per option with its description (and preview, when the option has one), an
 automatic **Other** field for a free-text answer, and multi-select where the
 question asks for it. The status bar reads `waiting for you — a question`.
 
+## Prepared prompts
+
+A **prompts** button in the status bar of both surfaces opens a list of saved
+prompts. Click one to run it. `+ new`, and the ✎ / ✕ on each row, manage them.
+
+Prompts are either generic or scoped to domains. Which apply is decided from
+the **active browser tab**, resolved server-side through the bridge — so the
+plain web UI, which has no idea what your browser is showing, gets the same
+domain-scoped list as the side panel. Site-specific prompts sort above generic
+ones so they are never buried.
+
+A domain covers its own subdomains: `github.com` matches `gist.github.com`.
+Matching is on label boundaries, so `evilgithub.com` does not match
+`github.com` — there is a test for exactly that.
+
+`{url}`, `{title}`, `{host}` and `{selection}` are filled from the active tab
+before the prompt is sent, so "Explain the selection" works without you
+retyping anything.
+
+Stored in `prompts.json`, seeded on first run with five examples, because an
+empty list teaches nobody what it is for.
+
 ## Streaming replies
 
 `includePartialMessages: true` makes the SDK emit `stream_event` frames, and

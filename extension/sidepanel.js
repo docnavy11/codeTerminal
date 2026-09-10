@@ -496,6 +496,103 @@ document.querySelectorAll(".tabs .tab").forEach((tab) => {
   };
 });
 
+/* ---------------- prepared prompts ---------------- */
+const plist = $("plist");
+let promptData = null, editing = null;
+
+async function loadPrompts() {
+  promptData = await fjson("/prompts");
+}
+
+function renderPrompts() {
+  plist.replaceChildren();
+  if (!promptData) return;
+
+  const scope = document.createElement("div");
+  scope.className = "scope";
+  scope.append(document.createTextNode(promptData.host ? `for ${promptData.host}` : "generic only"));
+  const add = document.createElement("button");
+  add.textContent = "+ new";
+  add.onclick = (e) => { e.stopPropagation(); editing = { title: "", text: "", domains: [] }; renderPrompts(); };
+  scope.append(add);
+  plist.append(scope);
+
+  if (!editing) {
+    if (!promptData.prompts.length) {
+      plist.append(Object.assign(document.createElement("div"),
+        { className: "empty", textContent: "None apply here. Use + new." }));
+    }
+    for (const p of promptData.prompts) {
+      const row = document.createElement("div");
+      row.className = "p";
+      const t = document.createElement("span");
+      t.className = "t2"; t.textContent = p.title; t.title = p.filled;
+      row.append(t);
+      if (p.domains.length) {
+        const tag = document.createElement("span");
+        tag.className = "tag"; tag.textContent = p.domains[0];
+        row.append(tag);
+      }
+      for (const [label, fn] of [
+        ["✎", () => { editing = { ...p }; renderPrompts(); }],
+        ["✕", async () => {
+          if (!confirm(`Delete "${p.title}"?`)) return;
+          await fetch((await base()) + `/prompts/${p.id}`, { method: "DELETE" });
+          await loadPrompts(); renderPrompts();
+        }],
+      ]) {
+        const b = document.createElement("span");
+        b.className = "act"; b.textContent = label;
+        b.onclick = (e) => { e.stopPropagation(); fn(); };
+        row.append(b);
+      }
+      row.onclick = () => { closePrompts(); box.value = p.filled; sendBox(); };
+      plist.append(row);
+    }
+  } else {
+    const wrap = document.createElement("div");
+    wrap.className = "edit";
+    const title = Object.assign(document.createElement("input"), { placeholder: "Title", value: editing.title ?? "" });
+    const doms = Object.assign(document.createElement("input"),
+      { placeholder: "Domains — blank = everywhere", value: (editing.domains ?? []).join(" ") });
+    const text = Object.assign(document.createElement("textarea"),
+      { placeholder: "Prompt. {url} {title} {host} {selection}", value: editing.text ?? "" });
+    const row = document.createElement("div");
+    row.style.display = "flex"; row.style.gap = "4px";
+    const save = Object.assign(document.createElement("button"), { textContent: "Save", className: "allow" });
+    save.onclick = async () => {
+      const body = { id: editing.id, title: title.value, text: text.value,
+                     domains: doms.value.split(/[\s,]+/).filter(Boolean) };
+      const r = await fetch((await base()) + "/prompts", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) { alert("could not save"); return; }
+      editing = null; await loadPrompts(); renderPrompts();
+    };
+    const cancel = Object.assign(document.createElement("button"), { textContent: "Cancel" });
+    cancel.onclick = () => { editing = null; renderPrompts(); };
+    row.append(save, cancel);
+    wrap.append(title, doms, text, row);
+    plist.append(wrap);
+  }
+  plist.classList.add("open");
+}
+
+const closePrompts = () => { plist.classList.remove("open"); editing = null; };
+
+$("promptsbtn").onclick = async (e) => {
+  e.stopPropagation();
+  if (plist.classList.contains("open")) { closePrompts(); return; }
+  plist.replaceChildren(Object.assign(document.createElement("div"),
+    { className: "empty", textContent: "loading…" }));
+  plist.classList.add("open");
+  try { await loadPrompts(); renderPrompts(); }
+  catch (err) {
+    plist.replaceChildren(Object.assign(document.createElement("div"),
+      { className: "empty", textContent: `Could not load: ${err.message}` }));
+  }
+};
+document.addEventListener("click", (e) => { if (!plist.contains(e.target)) closePrompts(); });
+
 /* ---------------- prompts handed over by the context menu ---------------- */
 
 /** Queue until the socket is up, so a cold panel does not drop the prompt. */
