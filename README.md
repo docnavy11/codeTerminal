@@ -436,6 +436,21 @@ Verified: two chats given different directories each kept their own across
 switching away and back; outside-root and not-a-directory are both refused;
 a shell opened after the switch reported the new path from `pwd`.
 
+## /clear and the transcript
+
+`/clear` drops the model's context. The transcript is our own event buffer, so
+without handling it the UI would keep showing a history the model can no
+longer remember — worse than showing nothing, because it reads as if it is
+still there.
+
+The SDK says so directly: `conversation_reset` is *"emitted by /clear,
+plan-mode exit, and fresh-session flows. The surface should mount a fresh
+transcript under new_conversation_id and reset any cached session title."*
+
+So on that event the chat's events are emptied, the title reset, and
+`sdkSessionId` repointed at the new conversation, then every attached client
+is told to clear. Same chat, fresh context, both sides in step.
+
 ## Chats
 
 Conversations are kept as one JSON file each under `chats/`, listed newest

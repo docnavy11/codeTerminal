@@ -41,6 +41,7 @@ export type ClientEvent =
   | { kind: "cleared" }
   | { kind: "cwd"; path: string }
   | { kind: "watch"; description: string; detail: string }
+  | { kind: "conversation_reset"; newId: string }
   | { kind: "replayed" }
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "question"; id: string; questions: AskQuestion[] }
@@ -386,6 +387,14 @@ export class Session {
         }
         return;
       }
+
+      // /clear, plan-mode exit and fresh-session flows. The SDK has dropped
+      // its context; the transcript on our side has to go with it or the user
+      // sees a full history the model can no longer remember.
+      case "conversation_reset":
+        this.sdkSessionId = msg.new_conversation_id;
+        this.#emit({ kind: "conversation_reset", newId: msg.new_conversation_id });
+        return;
 
       case "result":
         this.#busy = false;

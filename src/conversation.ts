@@ -84,6 +84,21 @@ export class Manager {
   #record = (e: ClientEvent): void => {
     // "ready" and "commands" are state, not history — keep only the newest.
     if (e.kind === "status") { this.#emitAll(e); return; }   // live-only, never persisted
+
+    // The model's context is gone, so the transcript must go with it —
+    // otherwise the user reads a history the model cannot remember, which is
+    // worse than showing nothing.
+    if (e.kind === "conversation_reset") {
+      this.#rec.events = [];
+      this.#rec.title = "New chat";
+      this.#rec.sdkSessionId = e.newId;
+      this.#save();
+      this.#emitAll({ kind: "cleared" });
+      this.#emitAll({ kind: "local", text: "Context cleared." });
+      this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
+      this.#emitAll(this.#session.status());
+      return;
+    }
     if (e.kind === "ready" || e.kind === "commands") {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
