@@ -1,0 +1,32 @@
+# Lets the dev user manage the code-terminal service without a password.
+#
+# Deliberately narrow: exact commands, one unit, no wildcards. A wildcard such
+# as "systemctl restart *" would be equivalent to root, since it could restart
+# any unit on the box.
+#
+# journalctl is not listed because the unit's logs are already readable without
+# privilege.
+#
+# Install:
+#   sudo install -m 0440 -o root -g root \
+#     deploy/sudoers-code-terminal /etc/sudoers.d/code-terminal
+#
+# Remove:
+#   sudo rm /etc/sudoers.d/code-terminal
+
+dev ALL=(root) NOPASSWD: /usr/bin/systemctl restart code-terminal, \
+                         /usr/bin/systemctl restart code-terminal.service, \
+                         /usr/bin/systemctl start code-terminal, \
+                         /usr/bin/systemctl start code-terminal.service, \
+                         /usr/bin/systemctl stop code-terminal, \
+                         /usr/bin/systemctl stop code-terminal.service, \
+                         /usr/bin/systemctl status code-terminal, \
+                         /usr/bin/systemctl status code-terminal.service, \
+                         /bin/systemctl restart code-terminal, \
+                         /bin/systemctl restart code-terminal.service, \
+                         /bin/systemctl start code-terminal, \
+                         /bin/systemctl start code-terminal.service, \
+                         /bin/systemctl stop code-terminal, \
+                         /bin/systemctl stop code-terminal.service, \
+                         /bin/systemctl status code-terminal, \
+                         /bin/systemctl status code-terminal.service
