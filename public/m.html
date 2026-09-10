@@ -1,0 +1,272 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- viewport-fit=cover so the layout can reach under the notch and the home
+     indicator, then pad itself back with env(safe-area-inset-*). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#1a1e27">
+<title>code terminal</title>
+
+<!-- Installed to the iOS home screen this runs without browser chrome, which
+     is the only way to get the full height back on a phone. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="code terminal">
+<link rel="manifest" href="/m/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/m/icon-180.png">
+
+<link rel="stylesheet" href="/m/panel.css">
+<style>
+  /* ---------------- mobile ----------------
+     The side panel is already a single narrow column with no terminal, so the
+     layout carries over. What a phone needs on top: real touch targets, a
+     height that survives the browser toolbars, and room for the keyboard. */
+
+  /* The page itself must never scroll — only the transcript inside it does.
+     A plain `height:100svh; overflow:hidden` is not enough on iOS: when the
+     keyboard opens Safari keeps the layout viewport at full height, shrinks
+     only the visual viewport, and scrolls the document to reveal the focused
+     input. The result is a page you can drag past the composer. Pinning the
+     body with position:fixed removes the scrollable document entirely, and
+     --vvh (from visualViewport) keeps the column matched to what is visible. */
+  html { height: 100%; overflow: hidden; }
+  body {
+    position: fixed; inset: 0;
+    height: var(--vvh, 100svh);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  #log { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+  /* Touch targets. Apple asks for 44px; the panel was built for a mouse at
+     24-28px, which is a miss on a phone. */
+  header button, header select, .tabs .tab,
+  #status button, footer button, .fbar button, .fsel button {
+    min-height: 40px; padding-left: 12px; padding-right: 12px;
+  }
+  /* One row, not two. The second row held mode, tab context and the model
+     readout — all things the bar's own hierarchy already calls "status you set
+     once and then read", which is exactly what a 400px-tall keyboard leaves no
+     room for. They move into the settings sheet at load; see relocate() below.
+     Two rows cost 99px of a 664px screen, and the keyboard takes ~336 of what
+     is left. */
+  header { gap: 6px; padding: 5px 10px; }
+  header .row { gap: 7px; }
+  header .row.status { display: none; }
+
+  /* Except when the mode has consequences: then it stays on the bar, because
+     "Never ask" is not something to discover by opening a menu. */
+  #modeflag { display: none; align-items: center; height: 32px; padding: 0 9px;
+              border: 1px solid currentColor; border-radius: 6px;
+              font-size: 12px; font-weight: 600; white-space: nowrap; }
+  #modeflag.on { display: inline-flex; }
+  #modeflag.hot  { color: var(--bad); }
+  #modeflag.warm { color: var(--warn); }
+
+  /* While the keyboard is up the bar is dead weight — you are typing, not
+     navigating — so it folds away and gives the transcript its height back. */
+  body.kb header { display: none; }
+  body.kb #status { min-height: 0; padding-top: 2px; padding-bottom: 2px; }
+  #moremenu .mitem, #moremenu button { min-height: 44px; display: flex; align-items: center; }
+  #clist .c, #plist .p { min-height: 44px; align-items: center; }
+  .flist .row { min-height: 44px; }
+
+  /* A phone is read at arm's length, not 60cm. */
+  html { font-size: 15px; }
+  header button, header select, .tabs .tab { font-size: 14px; }
+  #meta { font-size: 12px; }
+
+  /* The status strip is one line of text; it does not need 47px. */
+  #status { padding: 3px 10px; }
+  #status button { min-height: 30px; }
+
+  /* The composer is the one thing that must never be covered. The bottom inset
+     only applies when the keyboard is down — when it is up, the keyboard
+     itself covers the home indicator. */
+  footer { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); gap: 8px; }
+  body.kb footer { padding-bottom: 8px; }
+  #box { min-height: 44px; max-height: 30vh; font-size: 16px; }  /* 16px or iOS zooms on focus */
+  footer button { min-width: 64px; justify-content: center; }
+
+  /* Hover styling does nothing on touch and leaves controls looking stuck. */
+  @media (hover: none) {
+    button:hover:not(:disabled) { border-color: var(--line); }
+    .flist .row:hover, #clist .c:hover, #plist .p:hover { background: transparent; }
+  }
+
+  /* Dropdowns are full-width sheets here rather than 224px popovers. */
+  #moremenu { left: 8px; right: 8px; width: auto; }
+  #clist, #plist { left: 6px; right: 6px; }
+
+  /* Wide phone / small tablet: the panel's own sizing is already right. */
+  @media (min-width: 620px) { html { font-size: 14px; } }
+</style>
+
+<script>
+/* Web implementation of the PLATFORM shim — see extension/platform.js. The
+   page is served by the server it talks to, so every URL is just this origin
+   and there is no extension storage to consult. */
+globalThis.PLATFORM = {
+  name: "mobile",
+  async wsUrl() {
+    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+  },
+  async httpBase() { return location.origin; },
+  /* No extension here, so no browser of our own to bind to. Returning null
+     lets the server route browser tools to whichever desktop browser has the
+     extension connected — which is the point of prompting from a phone. */
+  async instanceId() { return null; },
+  openUrl(url) { location.href = url; },
+  tabLabel(on) { return on ? "desktop tab" : "tab off"; },
+  tabTitle: "Attach your desktop browser's active tab to each prompt",
+  async takePendingPrompt() { return null; },
+  onPendingPrompt() { /* no context menu on a phone */ },
+};
+
+/* iOS shrinks the visual viewport when the keyboard opens but leaves the
+   layout viewport alone, so a fixed column keeps its full height and the
+   composer ends up underneath the keyboard. Track what is actually visible,
+   and undo the scroll Safari performs to reveal the focused input — that
+   scroll is what let the page drag past the bottom. */
+(() => {
+  const vv = window.visualViewport;
+  const doc = document.documentElement;
+  if (!vv) return;
+
+  // Below this much of the screen lost, treat the keyboard as open.
+  const KB_RATIO = 0.75;
+
+  const apply = () => {
+    doc.style.setProperty("--vvh", `${vv.height}px`);
+    const open = vv.height < window.innerHeight * KB_RATIO;
+    // This script runs in <head>, so on the first call there is no body yet.
+    // Throwing here used to abort the rest of the block, taking the settings
+    // relocation below down with it.
+    document.body?.classList.toggle("kb", open);
+    // Safari scrolls the document even though it has nothing to scroll; this
+    // puts it back so the composer cannot end up above the fold.
+    if (window.scrollY !== 0) window.scrollTo(0, 0);
+    const log = document.getElementById("log");
+    if (log) log.scrollTop = log.scrollHeight;
+  };
+
+  vv.addEventListener("resize", apply);
+  vv.addEventListener("scroll", apply);
+  window.addEventListener("orientationchange", () => setTimeout(apply, 200));
+  addEventListener("DOMContentLoaded", apply);
+  apply();
+})();
+
+/* The bar's second row — permission mode, tab context, the model readout — is
+   status: read often, set rarely. On a phone that is not worth a permanent row,
+   so it moves into the settings sheet. The elements themselves are moved rather
+   than duplicated, so the shared app.js still finds them by id. */
+addEventListener("DOMContentLoaded", () => {
+  const menu = document.getElementById("moremenu");
+  const mode = document.getElementById("mode");
+  const tab = document.getElementById("tabctx");
+  const meta = document.getElementById("meta");
+  if (!menu || !mode || !tab) return;
+
+  const row = (label, el) => {
+    const r = document.createElement("div");
+    r.className = "mrow";
+    const k = document.createElement("span");
+    k.className = "k";
+    k.textContent = label;
+    r.append(k, el);
+    return r;
+  };
+  menu.prepend(row("Permission mode", mode), row("Browser tab", tab));
+  if (meta) {
+    const foot = document.createElement("div");
+    foot.className = "mrow";
+    foot.style.cssText = "border-top:1px solid var(--line);margin-top:4px;padding-top:8px";
+    foot.append(meta);
+    menu.append(foot);
+  }
+
+  /* A mode with consequences does not get to hide in a menu. Mirror the hot /
+     warm state app.js already puts on the select back onto the bar. */
+  const flag = document.createElement("span");
+  flag.id = "modeflag";
+  flag.title = "Permission mode — tap to change";
+  flag.onclick = () => document.getElementById("more").click();
+  document.getElementById("more").before(flag);
+
+  const paint = () => {
+    const hot = mode.classList.contains("hot");
+    const warm = mode.classList.contains("warm");
+    flag.classList.toggle("on", hot || warm);
+    flag.classList.toggle("hot", hot);
+    flag.classList.toggle("warm", warm);
+    flag.textContent = mode.options[mode.selectedIndex]?.text ?? "";
+  };
+  new MutationObserver(paint).observe(mode, { attributes: true, attributeFilter: ["class"] });
+  mode.addEventListener("change", paint);
+  paint();
+});
+</script>
+
+<header>
+  <div class="row">
+    <span class="dot" id="dot"></span>
+    <span class="tabs"><span class="tab on" data-view="chat">chat</span><span class="tab" data-view="files">files</span></span>
+    <button id="newchat" title="Start a new conversation">New</button>
+    <button id="chatsbtn" title="Switch conversation">Chats ▾</button>
+    <button id="more" title="Settings" aria-haspopup="menu" aria-expanded="false">⋯</button>
+  </div>
+
+  <div class="row status">
+    <span class="lbl">mode</span>
+    <select id="mode" title="How much you want to be asked">
+      <option value="default">Ask</option>
+      <option value="acceptEdits">Auto-edits</option>
+      <option value="auto">Classifier</option>
+      <option value="plan">Plan only</option>
+      <option value="bypassPermissions">Never ask</option>
+    </select>
+    <button id="tabctx" title="Attach the active tab to each prompt">tab</button>
+    <span id="meta"></span>
+  </div>
+
+  <div id="moremenu" hidden>
+    <div class="mrow"><span class="k">Theme</span><button id="theme">auto</button></div>
+    <div class="mrow"><span class="k">Text size</span>
+      <span class="seg"><button id="fsdown" title="Smaller text">A−</button><button id="fsup" title="Larger text">A+</button></span>
+    </div>
+    <div class="mdiv"></div>
+    <div class="mitem" id="openui" hidden>Open the full UI in a tab</div>
+    <div class="mitem" id="manage">Manage chats, prompts &amp; projects</div>
+  </div>
+</header>
+
+<div id="clist"></div>
+<div id="log"></div>
+<div id="files" hidden>
+  <div class="fbar">
+    <button id="fup" title="Up">↑</button>
+    <span id="fpath" class="fpath">/</span>
+    <button id="frefresh" title="Refresh">⟳</button>
+    <button id="fcwd" title="Working directory for this chat">use here</button>
+    <button id="fupload">Upload</button>
+    <input type="file" id="fpick" multiple hidden>
+  </div>
+  <div id="fsel" class="fsel" hidden></div>
+  <div id="flist" class="flist"></div>
+  <div id="fview" class="fview" hidden></div>
+</div>
+
+<div id="status"><div id="plist"></div><button id="promptsbtn" title="Prepared prompts">prompts</button><span class="pip"></span><span id="statustext">connecting…</span><span class="t" id="statustime"></span></div>
+<footer>
+  <div id="menu"></div>
+  <textarea id="box" placeholder="Ask Claude…" autofocus></textarea>
+  <button id="stop" disabled>Stop</button>
+</footer>
+
+<script src="/vendor/marked/marked.umd.js"></script>
+<script src="/vendor/dompurify/purify.min.js"></script>
+
+<script src="/m/app.js"></script>

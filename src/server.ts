@@ -10,6 +10,7 @@ import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
 import { wantsContext } from "./prompt.js";
 import { pruneScreenshots } from "./screenshots.js";
+import { UsageLog } from "./usage.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
 import { resolveProject } from "./projects.js";
@@ -225,6 +226,19 @@ app.delete("/chats/:id", guard, async (req, res) => {
   }
 });
 
+/* Which controls actually get used. Local file, never leaves this box; it
+   exists so the navigation bar can be ordered from measurement next time
+   rather than from priors. */
+const usage = new UsageLog(new URL("../usage.json", import.meta.url).pathname);
+
+app.post("/usage", guard, express.json({ limit: "1kb" }), (req, res) => {
+  res.json({ ok: usage.record(String((req.body as { control?: unknown })?.control ?? "")) });
+});
+
+app.get("/usage", guard, (_req, res) => {
+  res.json({ counts: usage.counts() });
+});
+
 app.get("/projects", guard, (_req, res) => {
   res.json({ projects: convo.projects() });
 });
@@ -329,6 +343,15 @@ app.post("/files/upload", guard, express.raw({ type: "*/*", limit: MAX_UPLOAD })
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
   }
 });
+
+/* The mobile page shares the side panel's script and stylesheet verbatim.
+   MV3 forbids remote code, so the extension must load them from disk — serving
+   those same two files here keeps mobile and the panel from drifting apart
+   instead of maintaining a second copy. */
+app.get("/m/app.js", (_req, res) => res.type("js").sendFile(join(ROOT, "extension/sidepanel.js")));
+app.get("/m/panel.css", (_req, res) => res.type("css").sendFile(join(ROOT, "extension/panel.css")));
+/* Bare /m is what you type on a phone. */
+app.get("/m", (_req, res) => res.redirect(302, "/m.html"));
 
 app.use(express.static(join(ROOT, "public")));
 app.use("/vendor/xterm", express.static(join(ROOT, "node_modules/@xterm/xterm")));

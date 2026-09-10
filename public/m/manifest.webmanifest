@@ -1,0 +1,16 @@
+{
+  "name": "code terminal",
+  "short_name": "code term",
+  "description": "Drive a Claude Code session from your phone.",
+  "start_url": "/m.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#14171e",
+  "theme_color": "#1a1e27",
+  "icons": [
+    { "src": "/m/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/m/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/m/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -83,11 +83,29 @@
                    padding-top:4px; }
   .transcript .ctx { color:var(--dim); font-size:0.8rem; border-left:2px solid var(--line);
                      padding-left:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ---------------- mobile ----------------
+     Reached from the phone's settings menu, so it has to be usable there: the
+     desktop sizing puts ten controls under 40px, which is below any usable
+     touch target. */
+  @media (max-width: 700px) {
+    body { font-size: 15px; padding: 0 10px 40px;
+           padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+    nav { position: sticky; top: 0; z-index: 5; background: var(--bg);
+          overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    nav button { min-height: 44px; padding: 0 14px; font-size: 15px; }
+    button, input, select, textarea { min-height: 44px; font-size: 16px; }  /* 16px or iOS zooms */
+    .row { flex-wrap: wrap; gap: 6px; }
+    .row button { min-height: 40px; font-size: 0.9rem; padding: 0 12px; }
+    /* Hover is meaningless on touch and leaves controls looking stuck. */
+    @media (hover: none) { button:hover { border-color: var(--line); } }
+  }
+  @media (max-width: 700px) { header a#back { min-height: 44px; display: inline-flex; align-items: center; } }
 </style>
 
 <header>
   <h1>manage</h1>
-  <a href="/">← back to the terminal</a>
+  <a href="/" id="back">← back to the terminal</a>
 </header>
 
 <nav>
@@ -104,3 +122,16 @@
 <script src="/vendor/marked/marked.umd.js"></script>
 <script src="/vendor/dompurify/purify.min.js"></script>
 <script src="/manage.js"></script>
+
+<script>
+  /* Reached from the phone's settings menu, so "back" has to mean the mobile
+     UI — the desktop split view is not somewhere you want to land on a phone. */
+  (() => {
+    const fromMobile = document.referrer.includes("/m.html")
+      || matchMedia("(max-width: 700px)").matches;
+    if (!fromMobile) return;
+    const a = document.getElementById("back");
+    a.href = "/m.html";
+    a.textContent = "← back";
+  })();
+</script>
