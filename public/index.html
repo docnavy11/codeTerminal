@@ -34,6 +34,10 @@
     color-scheme: light;
   }
   * { box-sizing:border-box; }
+  /* The UA's [hidden] rule is display:none at the weakest specificity, so any
+     element with its own display (flex here) ignores it. Every toggle in this
+     file uses .hidden, so make it win. */
+  [hidden] { display:none !important; }
   html,body { margin:0; height:100%; overflow:hidden; }
   body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg);
          font:1rem/1.45 var(--mono); }

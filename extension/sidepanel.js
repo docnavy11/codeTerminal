@@ -270,6 +270,152 @@ function paintTab() {
 }
 $("tabctx").onclick = () => { withTab = !withTab; paintTab(); };
 
+/* ---------------- files ----------------
+   Same HTTP endpoints as the web UI. The panel talks to them over http://,
+   derived from the same server URL the socket uses. */
+const flist = $("flist"), fview = $("fview"), fpath = $("fpath"), fpick = $("fpick");
+let cwdPath = "", parentPath = null, filesLoaded = false, httpBase = "";
+
+const fmtSize = (n) =>
+  n < 1024 ? `${n} B`
+  : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB`
+  : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB`
+  : `${(n / 1024 ** 3).toFixed(2)} GB`;
+
+const fmtWhen = (ms) => {
+  if (!ms) return "";
+  const d = new Date(ms);
+  return Date.now() - ms < 86400000 ? d.toTimeString().slice(0, 5) : d.toISOString().slice(0, 10);
+};
+
+async function base() {
+  if (httpBase) return httpBase;
+  const { serverUrl } = await chrome.storage.local.get({ serverUrl: DEFAULT_EXT_URL });
+  httpBase = (serverUrl || DEFAULT_EXT_URL).replace(/^ws/, "http").replace(/\/ext\/?$/, "");
+  return httpBase;
+}
+
+async function fjson(path, opts) {
+  const r = await fetch((await base()) + path, opts);
+  const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+  return body;
+}
+
+async function browse(path = "") {
+  fview.hidden = true; flist.hidden = false;
+  try {
+    const d = await fjson(`/files/list?path=${encodeURIComponent(path)}`);
+    cwdPath = d.path; parentPath = d.parent;
+    const shown = "/" + (d.path || "");
+    fpath.textContent = shown.length > 40 ? "…/" + shown.slice(-38) : shown;
+    fpath.title = shown;
+    flist.replaceChildren(...d.entries.map(rowFor));
+    if (!d.entries.length) flist.append(Object.assign(document.createElement("div"), { className: "row", textContent: "(empty)" }));
+  } catch (e) {
+    flist.replaceChildren(Object.assign(document.createElement("div"), { className: "row", textContent: String(e.message) }));
+  }
+}
+
+function rowFor(e) {
+  const row = document.createElement("div");
+  row.className = "row" + (e.kind === "dir" ? " dir" : "");
+  const full = cwdPath ? `${cwdPath}/${e.name}` : e.name;
+  const n = document.createElement("span");
+  n.className = "n"; n.textContent = e.kind === "dir" ? e.name + "/" : e.name;
+  const sz = document.createElement("span");
+  sz.className = "s"; sz.textContent = e.kind === "dir" ? "" : `${fmtSize(e.size)} ${fmtWhen(e.mtime)}`;
+  row.append(n, sz);
+  if (e.kind === "file") {
+    const dl = document.createElement("span");
+    dl.className = "dl"; dl.textContent = "↓"; dl.title = "Download";
+    dl.onclick = (ev) => { ev.stopPropagation(); download(full, e.name); };
+    row.append(dl);
+  }
+  row.onclick = () => (e.kind === "dir" ? browse(full) : view(full, e));
+  return row;
+}
+
+async function download(path, name) {
+  const r = await fetch((await base()) + `/files/read?path=${encodeURIComponent(path)}`);
+  if (!r.ok) return;
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+async function view(path, entry) {
+  flist.hidden = true; fview.hidden = false;
+  fview.replaceChildren();
+  const hd = document.createElement("div");
+  hd.className = "hd";
+  const back = document.createElement("button");
+  back.textContent = "← back"; back.onclick = () => browse(cwdPath);
+  const dl = document.createElement("button");
+  dl.textContent = "Download"; dl.onclick = () => download(path, entry.name);
+  hd.append(back, dl, Object.assign(document.createElement("span"),
+    { textContent: `${entry.name} · ${fmtSize(entry.size)}` }));
+  fview.append(hd);
+
+  if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(entry.name)) {
+    const r = await fetch((await base()) + `/files/read?path=${encodeURIComponent(path)}`);
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(await r.blob());
+    fview.append(img);
+    return;
+  }
+  try {
+    const d = await fjson(`/files/read?path=${encodeURIComponent(path)}&preview=1`);
+    fview.append(Object.assign(document.createElement("pre"), {
+      textContent: d.kind === "text" ? d.text + (d.truncated ? "\n…[truncated]" : "")
+                                     : `Binary file, ${fmtSize(d.bytes)}. Use Download.`,
+    }));
+  } catch (e) {
+    fview.append(Object.assign(document.createElement("pre"), { textContent: String(e.message) }));
+  }
+}
+
+async function upload(fileList) {
+  for (const f of fileList) {
+    try {
+      await fjson(`/files/upload?path=${encodeURIComponent(cwdPath)}&name=${encodeURIComponent(f.name)}`,
+        { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } });
+    } catch (e) { alert(`Upload of ${f.name} failed: ${e.message}`); }
+  }
+  browse(cwdPath);
+}
+
+$("fup").onclick = () => browse(parentPath ?? "");
+$("frefresh").onclick = () => browse(cwdPath);
+$("fupload").onclick = () => fpick.click();
+fpick.onchange = () => { if (fpick.files.length) upload([...fpick.files]); fpick.value = ""; };
+for (const ev of ["dragenter", "dragover"]) flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.add("drop"); });
+for (const ev of ["dragleave", "drop"]) flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.remove("drop"); });
+flist.addEventListener("drop", (e) => { if (e.dataTransfer?.files?.length) upload([...e.dataTransfer.files]); });
+
+/* chat | files */
+document.querySelectorAll(".tabs .tab").forEach((tab) => {
+  tab.onclick = async () => {
+    const wantFiles = tab.dataset.view === "files";
+    document.querySelectorAll(".tabs .tab").forEach((t) => t.classList.toggle("on", t === tab));
+    log.hidden = wantFiles;
+    document.querySelector("footer").hidden = wantFiles;
+    $("files").hidden = !wantFiles;
+    if (wantFiles && !filesLoaded) {
+      filesLoaded = true;
+      try {
+        const info = await fjson("/files/info");
+        await browse(info.start ?? "");
+      } catch (e) {
+        flist.replaceChildren(Object.assign(document.createElement("div"),
+          { className: "row", textContent: `Cannot open files: ${e.message}` }));
+      }
+    }
+  };
+});
+
 /* ---------------- prompts handed over by the context menu ---------------- */
 
 /** Queue until the socket is up, so a cold panel does not drop the prompt. */

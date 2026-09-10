@@ -174,7 +174,8 @@ page still leaves title and URL.
 
 ## File browser
 
-A **files** tab beside the shell: browse, view, download, upload (button or
+A **files** tab in both surfaces: beside the shell in the web UI, and beside
+**chat** in the side panel. Browse, view, download, upload (button or
 drag-and-drop). Text files preview inline, images render, binaries offer a
 download.
 
@@ -201,9 +202,9 @@ Verified: `..`, absolute paths, symlinks out and symlinked files are all
 refused; new and nested-new paths are allowed; a PNG round-trips
 byte-identical; a cross-origin request gets 403.
 
-## Two CSS traps in this UI
+## Three CSS traps in this UI
 
-Both cost real debugging time; if the transcript ever looks wrong, check these
+All cost real debugging time; if the transcript ever looks wrong, check these
 first.
 
 **`white-space: pre-wrap` must not reach rendered markdown.** `.msg` sets it so
@@ -217,6 +218,12 @@ fixes it; `pre` inside re-enables `pre`.
 shrink below its content, overflows the column, and pushes the status bar and
 input over the transcript. `.pane` in the web UI already had it; the side panel
 did not.
+
+**The `hidden` attribute loses to any explicit `display`.** The UA rule is
+`[hidden] { display: none }` at the weakest possible specificity, so
+`#log { display: flex }` silently beats it and `el.hidden = true` does
+nothing — the chat log stayed visible underneath the file browser. Both files
+now declare `[hidden] { display: none !important }`.
 
 Tool lines are `text-overflow: ellipsis` on one line: a long tool argument
 (`ToolSearch {"query":"select:mcp__browser__…"}`) is one unbreakable string
