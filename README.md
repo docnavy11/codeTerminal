@@ -195,6 +195,15 @@ nothing.
 
 Auto-approved: reading a terminal you are already staring at changes nothing.
 
+The terminal and watch servers set `alwaysLoad: true`. MCP tools are deferred
+behind tool search by default, so only their names reach the prompt — and a
+model has no reason to go looking: asked to monitor a URL it reaches for Bash,
+and asked about "the error I just saw" it has no cue that the user's terminal
+is readable at all. Observed exactly that: a request to monitor a page
+produced a hand-rolled curl poller and never touched `watch_page`. The browser
+server stays deferred; it is nine tools, and ambient tab context already tells
+the model a browser is there.
+
 ## Ambient tab context
 
 Each prompt carries what you are looking at: the active tab's title and URL,

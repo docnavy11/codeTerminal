@@ -55,6 +55,11 @@ export function terminalTools(getShell: () => Shell | null) {
   return createSdkMcpServer({
     name: "terminal",
     version: "1.0.0",
+    // Always in context rather than deferred behind tool search. A model has
+    // no reason to go looking for these: asked to monitor a URL it reaches for
+    // Bash, and asked about "the error I just saw" it has no cue that the
+    // user's terminal is readable at all.
+    alwaysLoad: true,
     tools: [
       tool(
         "read",
@@ -80,6 +85,11 @@ export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, curren
   return createSdkMcpServer({
     name: "watch",
     version: "1.0.0",
+    // Always in context rather than deferred behind tool search. A model has
+    // no reason to go looking for these: asked to monitor a URL it reaches for
+    // Bash, and asked about "the error I just saw" it has no cue that the
+    // user's terminal is readable at all.
+    alwaysLoad: true,
     tools: [
       tool(
         "page",
