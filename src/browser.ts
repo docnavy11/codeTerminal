@@ -24,7 +24,10 @@ export class BrowserBridge {
   get connected(): boolean { return this.#ws?.readyState === 1; }
 
   attach(ws: WebSocket): void {
-    this.#ws?.close(4000, "replaced by a newer extension connection");
+    // 4001 tells the displaced extension it was replaced, so it backs off
+    // instead of reconnecting in 3s and displacing this one straight back —
+    // two browsers running the extension would otherwise thrash forever.
+    this.#ws?.close(4001, "replaced by a newer extension connection");
     this.#ws = ws;
     this.#onLog("extension connected");
 

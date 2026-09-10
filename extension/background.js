@@ -11,6 +11,10 @@ const DEFAULT_URL = "ws://devserver.tailnet-1234.ts.net:8123/ext";
 chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 const PING_MS = 20_000;
 const RECONNECT_MS = 3_000;
+// Another browser's extension took the bridge. Retry rarely, so the two do not
+// kick each other in a loop; whichever the user actually uses will win when the
+// other's browser closes.
+const DISPLACED_MS = 60_000;
 
 let ws = null;
 let pingTimer = null;
@@ -65,12 +69,17 @@ function connect() {
     }
   };
 
-  ws.onclose = () => { setBadge(false); clearInterval(pingTimer); ws = null; retry(); };
+  ws.onclose = (ev) => {
+    setBadge(false);
+    clearInterval(pingTimer);
+    ws = null;
+    retry(ev?.code === 4001 ? DISPLACED_MS : RECONNECT_MS);
+  };
   ws.onerror = () => { try { ws?.close(); } catch {} };
 }
 
 function reply(obj) { if (ws?.readyState === 1) ws.send(JSON.stringify(obj)); }
-function retry() { if (enabled) setTimeout(connect, RECONNECT_MS); }
+function retry(delay = RECONNECT_MS) { if (enabled) setTimeout(connect, delay); }
 // A backstop in case the socket dies while the worker is asleep.
 chrome.alarms?.create("reconnect", { periodInMinutes: 1 });
 chrome.alarms?.onAlarm.addListener(() => { if (enabled && !ws) connect(); });
