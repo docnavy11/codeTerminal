@@ -62,7 +62,7 @@ Fix: a synchronous `pending` flag set before the await.
 
 ---
 
-## Medium
+## Medium — 6, 7, 8 fixed (see "Fixed" below)
 
 ### 6. Streaming re-renders the whole reply on every token — **proven**
 `sidepanel.js` `delta` handler re-parses the entire accumulated markdown per
@@ -150,6 +150,10 @@ href>`; only the extension needs the blob path.
 | 4 | Session marks itself dead when the SDK stream ends, resolves pending approvals, emits one error; `LiveChat.prompt()` / `watchFired()` respawn a dead session (resuming the same conversation) | Scratch server: `SIGKILL` of the SDK child → status `idle`, one error event; the next prompt was answered (`PONG`) by a respawned session |
 | 5 | `LiveChat.prompt()` holds a synchronous `#sending` flag across the tab lookup; `busy` covers it | Scratch server: two prompts sent back-to-back — the second got "Still working — press Stop first.", the transcript has one user event for the pair |
 | + | **Found while fixing 2:** a ws `rename`/`open`/`delete` with a non-uuid id threw inside the message handler — an uncaught exception that **killed the server** (proven: `alive: "dead"` before, `200` after). The dispatch is now wrapped and the Manager treats a bad id as "no such chat". | Scratch server, before/after |
+
+| 6 | Streaming renders once per animation frame (`scheduleStreamRender`); the final `text` event still renders the full reply | 700 deltas / 23.8 KB through the real `handle()` on a scratch server: **6092 ms → 1 ms** of synchronous main-thread time; the frame after shows the full text rendered |
+| 7 | `desktop.js` pty socket retries every 3 s and starts a fresh shell; "[disconnected — reconnecting…]" once per outage, "[reconnected — new shell]" on return | Scratch server killed and restarted under an open desktop page: `ptyWs.readyState` back to 1, prompt redrawn |
+| 8 | `sendBox()` queues through `submit()` while the socket is down (box clears, status shows "reconnecting… (n queued)"); the queue drains one prompt per connect / turn end | Prompt typed while the server was down: box emptied, status "reconnecting… (1 queued)", after restart the user turn appeared and was answered ("OK") |
 
 Not measured: the *clean-end* branch of 4 (stream ends without throwing). The probe exercised the throwing branch (`terminated by signal SIGKILL`); the post-loop code runs on both.
 

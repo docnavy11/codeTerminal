@@ -27,18 +27,29 @@ function applyTermTheme() {
 }
 applyTermTheme();
 
-let ptyWs;
+let ptyWs, ptyRetry, ptyWasDown = false;
 async function connectShell() {
+  clearTimeout(ptyRetry);
   const url = (await PLATFORM.wsUrl()).replace(/\/ws$/, "/pty");
   ptyWs = new WebSocket(url);
   ptyWs.binaryType = "arraybuffer";
-  ptyWs.onopen = () => ptyWs.send(JSON.stringify({ type: "start", cols: term.cols, rows: term.rows }));
+  ptyWs.onopen = () => {
+    if (ptyWasDown) { ptyWasDown = false; term.write("\r\n\x1b[90m[reconnected — new shell]\x1b[0m\r\n"); }
+    ptyWs.send(JSON.stringify({ type: "start", cols: term.cols, rows: term.rows }));
+  };
   ptyWs.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) { term.write(new Uint8Array(ev.data)); return; }
-    const m = JSON.parse(ev.data);
-    if (m.type === "exit") term.write(`\r\n\x1b[90m[shell exited (${m.code}) — reload to restart]\x1b[0m\r\n`);
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === "exit") term.write(`\r\n\x1b[90m[shell exited (${m.code})]\x1b[0m\r\n`);
   };
-  ptyWs.onclose = () => term.write("\r\n\x1b[90m[disconnected]\x1b[0m\r\n");
+  // The server closes the socket when the shell exits, and drops it on a
+  // restart. Either way come back and start a fresh shell, the way the agent
+  // socket does — this pane used to stay dead until the page was reloaded.
+  ptyWs.onclose = () => {
+    if (!ptyWasDown) term.write("\r\n\x1b[90m[disconnected — reconnecting…]\x1b[0m\r\n");
+    ptyWasDown = true;
+    ptyRetry = setTimeout(connectShell, 3000);
+  };
 }
 term.onData((d) => { if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "input", data: d })); });
 

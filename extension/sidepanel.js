@@ -31,6 +31,21 @@ function el(cls, text) {
 const setBusy = (v) => { busy = v; stop.disabled = !v; };
 const renderMd = (t, raw) => { t.innerHTML = DOMPurify.sanitize(marked.parse(raw), { USE_PROFILES: { html: true } }); };
 
+// Deltas arrive faster than frames. Rendering on every one re-parsed the whole
+// accumulated reply per token — measured 3.2s of main-thread time for a 24KB
+// reply. One render per frame is all the eye can use; the final "text" event
+// renders the complete reply regardless.
+let streamFrame = 0;
+function scheduleStreamRender() {
+  if (streamFrame) return;
+  streamFrame = requestAnimationFrame(() => {
+    streamFrame = 0;
+    if (!streaming) return;
+    renderMd(streaming, streamRaw);
+    log.scrollTop = log.scrollHeight;
+  });
+}
+
 /* Everything platform-specific lives behind PLATFORM, defined by whichever
    host page loaded this file: the extension panel (chrome.* APIs) or the
    mobile page (plain URLs, since it is served by the server itself). The logic
@@ -99,8 +114,7 @@ function handle(m) {
     case "delta":
       if (!streaming) { streaming = el("msg md"); streamRaw = ""; }
       streamRaw += m.text;
-      renderMd(streaming, streamRaw);
-      log.scrollTop = log.scrollHeight;
+      scheduleStreamRender();
       break;
     case "text":
       if (streaming) { lastText = streaming; lastRaw = m.text; streaming = null; streamRaw = ""; }
@@ -140,6 +154,7 @@ function handle(m) {
       if (typeof m.costUsd === "number") cost += m.costUsd;
       el("end", `done${m.denials ? ` · ${m.denials} denied` : ""} · $${cost.toFixed(4)} est.`);
       lastText = null; streaming = null; streamRaw = "";
+      flushQueued();
       break;
     case "error":    el("msg err", m.message); break;
   }
@@ -314,8 +329,10 @@ function pick(i) {
 
 function sendBox() {
   const text = box.value.trim();
-  if (!text || busy || ws?.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "prompt", text, withTab }));
+  if (!text || busy) return;
+  // While the socket is down the prompt is queued and goes out on reconnect.
+  // It used to be dropped silently — the box kept the text, nothing happened.
+  submit(text);
   box.value = ""; box.style.height = "auto";
   menu.classList.remove("open"); matches = [];
   lastText = null;
@@ -781,19 +798,22 @@ document.addEventListener("click", (e) => { if (!plist.contains(e.target)) close
 
 /* ---------------- prompts handed over by the context menu ---------------- */
 
-/** Queue until the socket is up, so a cold panel does not drop the prompt. */
-let queued = null;
+/** Queue until the socket is up, so a cold panel or a reconnect does not drop the prompt. */
+const queued = [];
 function submit(text) {
   if (!text) return;
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "prompt", text, withTab }));
     lastText = null;
   } else {
-    queued = text;
+    queued.push(text);
+    meta.textContent = `reconnecting… (${queued.length} queued)`;
   }
 }
 function flushQueued() {
-  if (queued) { const t = queued; queued = null; submit(t); }
+  // One at a time: the server refuses a prompt while the previous one runs,
+  // so the rest wait for the next flush rather than being bounced.
+  if (queued.length) submit(queued.shift());
 }
 
 async function takePending() {
