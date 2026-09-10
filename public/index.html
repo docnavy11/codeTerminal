@@ -460,6 +460,7 @@ function connectAgent() {
         break;
       }
       case "local": el("local", m.text); lastText = null; break;
+      case "watch": el("local", `⌁ watch fired — ${m.description}: ${m.detail}`); lastText = null; break;
       case "commands": COMMANDS = m.commands; break;
       case "cleared": log.replaceChildren(); cost = 0; lastText = null; break;
       case "replayed": lastText = null; break;

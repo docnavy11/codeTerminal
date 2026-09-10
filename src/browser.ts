@@ -15,11 +15,15 @@ export class BrowserBridge {
   #pending = new Map<string, Pending>();
   #onLog: (line: string) => void;
   #timeoutMs: number;
+  /** Unsolicited frames from the extension — a watch firing, for instance. */
+  #onEvent: (msg: { type: string; [k: string]: unknown }) => void = () => {};
 
   constructor(onLog: (line: string) => void, timeoutMs = 30_000) {
     this.#onLog = onLog;
     this.#timeoutMs = timeoutMs;
   }
+
+  onEvent(f: (msg: { type: string; [k: string]: unknown }) => void): void { this.#onEvent = f; }
 
   get connected(): boolean { return this.#ws?.readyState === 1; }
 
@@ -32,9 +36,14 @@ export class BrowserBridge {
     this.#onLog("extension connected");
 
     ws.on("message", (raw) => {
-      let msg: { id?: string; ok?: boolean; result?: unknown; error?: string; type?: string };
+      let msg: { id?: string; ok?: boolean; result?: unknown; error?: string; type?: string; [k: string]: unknown };
       try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (msg.type === "pong") return;                 // keepalive
+      // Not every frame answers a request: watches report on their own.
+      if (!msg.id && typeof msg.type === "string") {
+        this.#onEvent(msg as { type: string; [k: string]: unknown });
+        return;
+      }
       if (!msg.id) return;
       const p = this.#pending.get(msg.id);
       if (!p) return;                                   // late reply after timeout

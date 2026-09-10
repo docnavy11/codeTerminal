@@ -156,6 +156,12 @@ function observeAgent() {
       lastState = m.state;
     }
 
+    // A watch firing is the whole reason notifications exist: by definition
+    // you are not looking at the panel when it happens.
+    if (m.kind === "watch") {
+      notify("Watch fired", `${m.description} — ${m.detail}`.slice(0, 180));
+    }
+
     if (m.kind === "turn_end") {
       const took = Date.now() - turnStartedAt;
       // Short turns are ones you watched happen; don't nag about those.
@@ -188,6 +194,82 @@ chrome.notifications.onClicked.addListener(async (id) => {
   } catch { /* needs a gesture in some contexts; nothing to do */ }
 });
 
+/* ---------------- page watches ---------------- */
+
+/**
+ * Polled from here rather than by injecting a MutationObserver into the page.
+ * An injected observer dies on every navigation — which is usually the very
+ * moment the thing being watched for happens. Polling from the worker survives
+ * navigation, SPA rerenders and the page replacing its own DOM.
+ *
+ * The /ext socket pings every 20s, which is what keeps this worker alive to do it.
+ */
+const watches = new Map();          // id -> {tabId, condition, baseline}
+const POLL_MS = 6000;
+let pollTimer = null;
+
+function ensurePolling() {
+  if (pollTimer || watches.size === 0) return;
+  pollTimer = setInterval(pollWatches, POLL_MS);
+}
+function stopPollingIfIdle() {
+  if (watches.size === 0 && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+/** Runs in the page. Returns what the condition needs to decide. */
+function probe(condition) {
+  const text = document.body?.innerText ?? "";
+  return {
+    url: location.href,
+    title: document.title,
+    hasSelector: condition.kind === "selector" ? !!document.querySelector(condition.value) : null,
+    contains: (condition.kind === "contains" || condition.kind === "missing")
+      ? text.includes(condition.value) : null,
+    // For "changes", compare the watched region rather than the whole page,
+    // since a clock or a counter would otherwise fire instantly.
+    snapshot: condition.kind === "changes"
+      ? (condition.value ? (document.querySelector(condition.value)?.innerText ?? "") : text).trim().slice(0, 20000)
+      : null,
+  };
+}
+
+async function pollWatches() {
+  for (const [id, w] of [...watches]) {
+    let r;
+    try {
+      const [res] = await chrome.scripting.executeScript({
+        target: { tabId: w.tabId }, func: probe, args: [w.condition], world: "MAIN",
+      });
+      r = res?.result;
+    } catch (e) {
+      // Tab closed, or navigated somewhere we cannot script. Report and stop.
+      watches.delete(id);
+      report(id, `stopped: the tab is no longer reachable (${String(e?.message ?? e).slice(0, 80)})`);
+      continue;
+    }
+    if (!r) continue;
+
+    let fired = null;
+    if (w.condition.kind === "contains" && r.contains) fired = `"${w.condition.value}" appeared`;
+    else if (w.condition.kind === "missing" && r.contains === false) fired = `"${w.condition.value}" is gone`;
+    else if (w.condition.kind === "selector" && r.hasSelector) fired = `element "${w.condition.value}" appeared`;
+    else if (w.condition.kind === "changes") {
+      if (w.baseline === undefined) w.baseline = r.snapshot;      // first poll sets the baseline
+      else if (r.snapshot !== w.baseline) fired = "the watched content changed";
+    }
+
+    if (fired) {
+      watches.delete(id);
+      report(id, `${fired} on ${r.title || r.url} (${r.url})`);
+    }
+  }
+  stopPollingIfIdle();
+}
+
+function report(id, detail) {
+  if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "watch_fired", watchId: id, detail }));
+}
+
 async function activeTab() {
   const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!t) throw new Error("no active tab");
@@ -218,6 +300,25 @@ async function handle(action, p) {
       }
       return { id: t.id, title: t.title, url: t.url, selection };
     }
+
+    case "watch_start": {
+      const t = await resolveTab(p.tabId);
+      watches.set(p.watchId, { tabId: t.id, condition: p.condition, baseline: undefined });
+      ensurePolling();
+      // Prime the baseline immediately so "changes" measures from now, not
+      // from six seconds from now.
+      if (p.condition.kind === "changes") await pollWatches();
+      return { watchId: p.watchId, tabId: t.id, url: t.url, title: t.title };
+    }
+
+    case "watch_stop": {
+      const had = watches.delete(p.watchId);
+      stopPollingIfIdle();
+      return { stopped: had };
+    }
+
+    case "watch_list":
+      return { ids: [...watches.keys()] };
 
     case "list_tabs": {
       const tabs = await chrome.tabs.query({});

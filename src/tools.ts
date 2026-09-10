@@ -5,6 +5,7 @@ import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
 import { SHOT_DIR, pruneScreenshots } from "./screenshots.js";
+import type { WatchRegistry, WatchCondition } from "./watches.js";
 
 const text = (v: unknown) => ({
   content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }],
@@ -67,6 +68,70 @@ export function terminalTools(getShell: () => Shell | null) {
           return text(`Last ${r.lines} lines of the user's terminal:\n\n${r.text}`);
         },
       ),
+    ],
+  });
+}
+
+/**
+ * Watches on a browser page. These return immediately: a watch is registered
+ * and reports later, rather than blocking the turn for however long it takes.
+ */
+export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, currentChat: () => string) {
+  return createSdkMcpServer({
+    name: "watch",
+    version: "1.0.0",
+    tools: [
+      tool(
+        "page",
+        "Watch a browser tab and report back later when something changes. Returns immediately — do not wait or poll. Use for 'tell me when X finishes/appears/changes'.",
+        {
+          description: z.string().describe("What you are waiting for, in the user's terms"),
+          until: z.enum(["contains", "missing", "selector", "changes"])
+            .describe("contains: text appears · missing: text disappears · selector: element appears · changes: watched content changes"),
+          value: z.string().optional().describe("Text for contains/missing, CSS selector for selector/changes. Omit with changes to watch the whole page."),
+          tabId: z.number().int().optional().describe("Tab to watch; omit for the active tab"),
+          minutes: z.number().int().optional().describe("Give up after this long (default 60, max 1440)"),
+        },
+        async (a) => {
+          if (a.until !== "changes" && !a.value) {
+            return text(`"${a.until}" needs a value.`);
+          }
+          const condition = { kind: a.until, value: a.value } as WatchCondition;
+          const w = watches.add({
+            chatId: currentChat(), description: a.description, url: "", tabId: a.tabId ?? null,
+            condition, minutes: a.minutes,
+          });
+          try {
+            const started = (await bridge.send("watch_start", {
+              watchId: w.id, tabId: a.tabId, condition,
+            })) as { url?: string; title?: string };
+            w.url = started.url ?? "";
+            return text(
+              `Watching. I will tell you when it happens — nothing further to do now.\n` +
+              `${watches.describe(w)}`,
+            );
+          } catch (e) {
+            watches.remove(w.id);
+            throw e;
+          }
+        },
+      ),
+
+      tool("list", "List the page watches you have set and their state.", {},
+        async () => {
+          const all = watches.all();
+          return text(all.length ? all.map((w) => watches.describe(w)).join("\n") : "No watches set.");
+        }),
+
+      tool("stop", "Stop a page watch by its id.",
+        { id: z.string().describe("Watch id, or its first 8 characters") },
+        async (a) => {
+          const w = watches.all().find((x) => x.id === a.id || x.id.startsWith(a.id));
+          if (!w) return text(`No watch matching ${a.id}.`);
+          watches.remove(w.id);
+          await bridge.send("watch_stop", { watchId: w.id }).catch(() => {});
+          return text(`Stopped ${watches.describe(w)}`);
+        }),
     ],
   });
 }

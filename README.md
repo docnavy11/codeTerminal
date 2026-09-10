@@ -146,6 +146,34 @@ you close it, which is exactly when a notification is worth having. It holds a
 second, read-only connection: `/ws?observe=1` skips the transcript replay, so
 attaching costs 2 events instead of 14.
 
+## Page watches
+
+The agent can watch a browser tab and report back later: "tell me when the
+build passes". `mcp__watch__page` registers a watch and **returns
+immediately** — the turn ends, the session goes idle, and you can keep using
+it. `watch list` and `watch stop` manage them.
+
+Four conditions: `contains` (text appears), `missing` (text disappears),
+`selector` (element appears), `changes` (watched content differs from when the
+watch started).
+
+**Polled from the service worker, not by injecting a MutationObserver.** An
+injected observer dies on navigation — which is usually the exact moment the
+awaited thing happens. Polling with `chrome.scripting.executeScript` every 6s
+survives navigation, SPA rerenders and a page replacing its own DOM. The
+`/ext` ping is what keeps the worker alive to do it.
+
+When one fires it notifies the desktop, because by definition you are not
+looking at the panel. It also wakes the owning chat — but only if that chat is
+the one currently running, since starting a turn in a background conversation
+you are not watching is worse than leaving a note. If it is not active the
+watch stays on the list for `watch list` to report.
+
+Watches live in memory only. A watch is a live observer on a live tab;
+restoring one after a restart would resurrect something whose tab is long
+gone. They expire (60 min default, 24h max), are capped at 20 active, fire at
+most once, and are dropped with the chat that owns them.
+
 ## The terminal bridge
 
 The agent can read the shell pane you are typing in, via

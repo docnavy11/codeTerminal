@@ -10,8 +10,9 @@ import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
 import { wantsContext } from "./prompt.js";
 import { pruneScreenshots } from "./screenshots.js";
+import { WatchRegistry } from "./watches.js";
 import { stat } from "node:fs/promises";
-import { setBridge, setShellSource } from "./session.js";
+import { setBridge, setShellSource, setWatchSource } from "./session.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
 
@@ -44,9 +45,46 @@ setBridge(bridge);
 let activeShell: Shell | null = null;
 setShellSource(() => activeShell);
 
+
+
 // Chats live on disk; only the active one has a running SDK session.
 const convo = new Manager(WORKSPACE, process.env.CODETERM_CHATS ?? join(ROOT, "chats"));
 await convo.boot();
+
+const watches = new WatchRegistry();
+setWatchSource(watches, () => convo.activeId);
+convo.onChatRemoved = (id) => {
+  const n = watches.removeForChat(id);
+  if (n) console.log(`[watch] dropped ${n} watch(es) with the deleted chat`);
+};
+
+/**
+ * A watch reported. Wake the chat that set it, if that chat is the one running;
+ * otherwise leave it on the list for `watch list` to report.
+ */
+bridge.onEvent((msg) => {
+  if (msg.type !== "watch_fired") return;
+  const id = String(msg.watchId ?? "");
+  const detail = String(msg.detail ?? "something changed");
+  const w = watches.fire(id, detail);
+  if (!w) return;
+  console.log(`[watch] fired: ${detail}`);
+  const outcome = convo.watchFired(
+    w.chatId,
+    w.description,
+    detail,
+    `A page watch you set has fired. You were waiting for: ${w.description}. ` +
+      `What happened: ${detail}. Tell the user, briefly. Do not re-set the watch unless asked.`,
+  );
+  if (outcome === "noted") console.log(`[watch] chat not active; left on the list`);
+});
+
+// Expired and long-fired watches should not clutter the list forever.
+setInterval(() => {
+  for (const w of watches.sweep()) {
+    void bridge.send("watch_stop", { watchId: w.id }).catch(() => {});
+  }
+}, 60_000).unref();
 
 const resolved = await tailnetSelf();
 if (!resolved) {

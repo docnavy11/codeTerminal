@@ -1,9 +1,10 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate, type PermissionMode, type SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { Pushable, deferred } from "./pushable.js";
-import { browserTools, terminalTools } from "./tools.js";
+import { browserTools, terminalTools, watchTools } from "./tools.js";
 import { composePrompt } from "./prompt.js";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
+import type { WatchRegistry } from "./watches.js";
 import { randomUUID } from "node:crypto";
 
 /**
@@ -39,6 +40,7 @@ export type ClientEvent =
   | { kind: "chats"; chats: unknown[]; activeId: string }
   | { kind: "cleared" }
   | { kind: "cwd"; path: string }
+  | { kind: "watch"; description: string; detail: string }
   | { kind: "replayed" }
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "question"; id: string; questions: AskQuestion[] }
@@ -66,6 +68,13 @@ export function setBridge(b: BrowserBridge): void { BRIDGE = b; }
 let GET_SHELL: () => Shell | null = () => null;
 export function setShellSource(f: () => Shell | null): void { GET_SHELL = f; }
 
+let WATCHES: WatchRegistry | null = null;
+let CURRENT_CHAT: () => string = () => "";
+export function setWatchSource(w: WatchRegistry, chat: () => string): void {
+  WATCHES = w;
+  CURRENT_CHAT = chat;
+}
+
 /**
  * Browser tools are auto-approved by explicit choice: full control, ungated.
  * They still appear in the transcript, so every action is visible after the
@@ -78,6 +87,7 @@ const BROWSER_TOOLS = [
 
 // Reading the user's own terminal is inert, so it never needs a prompt.
 const TERMINAL_TOOLS = ["mcp__terminal__read"];
+const WATCH_TOOLS = ["mcp__watch__page", "mcp__watch__list", "mcp__watch__stop"];
 
 /** Set CODETERM_ISOLATED=1 to run without your personal skills and CLAUDE.md. */
 const SETTING_SOURCES: ("user" | "project" | "local")[] =
@@ -141,10 +151,11 @@ export class Session {
         // 82 available commands. It does NOT weaken canUseTool — the explicit
         // permissionMode below wins over settings' defaultMode.
         settingSources: SETTING_SOURCES,
-        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS],
+        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS],
         mcpServers: {
           terminal: terminalTools(() => GET_SHELL()),
           ...(BRIDGE ? { browser: browserTools(BRIDGE) } : {}),
+          ...(BRIDGE && WATCHES ? { watch: watchTools(BRIDGE, WATCHES, () => CURRENT_CHAT()) } : {}),
         },
         permissionMode: this.#mode,
         allowDangerouslySkipPermissions: ALLOW_BYPASS,

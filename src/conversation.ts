@@ -56,6 +56,9 @@ export class Manager {
 
   list(): ChatSummary[] { return this.#store.list(); }
 
+  /** Set by the server so watches belonging to a deleted chat go with it. */
+  onChatRemoved?: (id: string) => void;
+
   /** Change the mode for the whole app, not just this chat. */
   async setMode(mode: PermissionMode): Promise<void> {
     await this.#session.setMode(mode);
@@ -94,6 +97,22 @@ export class Manager {
 
   #emitAll(e: ClientEvent): void {
     for (const emit of this.#live) emit(e);
+  }
+
+  /**
+   * A page watch fired. Only nudges the model when the owning chat is the one
+   * running — waking a background chat would silently start a turn in a
+   * conversation the user is not looking at.
+   */
+  watchFired(chatId: string, description: string, detail: string, prompt: string): "woken" | "noted" {
+    // Announce to every attached client regardless of which chat owns it —
+    // the point of a watch is that you are not looking at this window.
+    this.#emitAll({ kind: "watch", description, detail });
+    if (chatId !== this.#rec.id) return "noted";
+    this.#record({ kind: "local", text: `Watch fired — ${description}: ${detail}` });
+    if (this.#session.busy) return "noted";   // do not interrupt a turn in flight
+    this.#session.send(prompt);
+    return "woken";
   }
 
   recordUser(text: string, context?: string): void {
@@ -139,6 +158,7 @@ export class Manager {
 
   async remove(id: string): Promise<void> {
     this.#store.remove(id);
+    this.onChatRemoved?.(id);
     if (id === this.#rec.id) {
       const next = this.#store.list()[0];
       await this.#activate((next && this.#store.read(next.id)) || this.#blank());

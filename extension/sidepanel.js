@@ -73,6 +73,7 @@ function handle(m) {
       break;
     }
     case "local":    el("local", m.text); lastText = null; break;
+    case "watch":    el("local", `⌁ watch fired — ${m.description}: ${m.detail}`); lastText = null; break;
     case "text":
       if (lastText) lastRaw += "\n" + m.text; else { lastText = el("msg md"); lastRaw = m.text; }
       renderMd(lastText, lastRaw);
