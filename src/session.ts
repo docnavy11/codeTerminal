@@ -1,7 +1,8 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate, type PermissionMode, type SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { Pushable, deferred } from "./pushable.js";
-import { browserTools } from "./tools.js";
+import { browserTools, terminalTools } from "./tools.js";
 import type { BrowserBridge } from "./browser.js";
+import type { Shell } from "./shell.js";
 import { randomUUID } from "node:crypto";
 
 /**
@@ -59,6 +60,10 @@ export const ALLOW_BYPASS = process.env.CODETERM_ALLOW_BYPASS === "1";
 let BRIDGE: BrowserBridge | null = null;
 export function setBridge(b: BrowserBridge): void { BRIDGE = b; }
 
+/** Resolved lazily: the shell pane comes and goes as tabs open and close. */
+let GET_SHELL: () => Shell | null = () => null;
+export function setShellSource(f: () => Shell | null): void { GET_SHELL = f; }
+
 /**
  * Browser tools are auto-approved by explicit choice: full control, ungated.
  * They still appear in the transcript, so every action is visible after the
@@ -68,6 +73,9 @@ const BROWSER_TOOLS = [
   "list_tabs", "read_page", "snapshot", "navigate",
   "click", "fill", "press", "eval", "screenshot",
 ].map((n) => `mcp__browser__${n}`);
+
+// Reading the user's own terminal is inert, so it never needs a prompt.
+const TERMINAL_TOOLS = ["mcp__terminal__read"];
 
 /** Set CODETERM_ISOLATED=1 to run without your personal skills and CLAUDE.md. */
 const SETTING_SOURCES: ("user" | "project" | "local")[] =
@@ -131,8 +139,11 @@ export class Session {
         // 82 available commands. It does NOT weaken canUseTool — the explicit
         // permissionMode below wins over settings' defaultMode.
         settingSources: SETTING_SOURCES,
-        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS],
-        ...(BRIDGE ? { mcpServers: { browser: browserTools(BRIDGE) } } : {}),
+        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS],
+        mcpServers: {
+          terminal: terminalTools(() => GET_SHELL()),
+          ...(BRIDGE ? { browser: browserTools(BRIDGE) } : {}),
+        },
         permissionMode: this.#mode,
         allowDangerouslySkipPermissions: ALLOW_BYPASS,
         canUseTool: this.#canUseTool,

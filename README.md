@@ -146,6 +146,27 @@ you close it, which is exactly when a notification is worth having. It holds a
 second, read-only connection: `/ws?observe=1` skips the transcript replay, so
 attaching costs 2 events instead of 14.
 
+## The terminal bridge
+
+The agent can read the shell pane you are typing in, via
+`mcp__terminal__read`. So "why did that just fail?" works without pasting
+anything.
+
+`Shell` keeps a 64KB rolling tail of everything the pty printed. On read it is
+stripped of escape sequences — colour, cursor moves, and the OSC window-title
+the prompt emits before every command — because none of that helps a model
+read a stack trace.
+
+It reports the user's terminal only. The agent's own `Bash` output never lands
+here, and the tool description says so, or it would answer questions about its
+own commands by reading the wrong pane.
+
+Several tabs can each hold a shell; the newest wins, since that is the one you
+are looking at. With no shell open the tool says so rather than returning
+nothing.
+
+Auto-approved: reading a terminal you are already staring at changes nothing.
+
 ## Ambient tab context
 
 Each prompt carries what you are looking at: the active tab's title and URL,

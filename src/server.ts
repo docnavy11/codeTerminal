@@ -8,7 +8,7 @@ import type { ClientEvent } from "./session.js";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
-import { setBridge } from "./session.js";
+import { setBridge, setShellSource } from "./session.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
 
@@ -35,6 +35,11 @@ mkdirSync(WORKSPACE, { recursive: true });
 // The Chrome extension dials in here; browser tools speak through it.
 const bridge = new BrowserBridge((line) => console.log(`[ext] ${line}`));
 setBridge(bridge);
+
+// The most recently opened shell pane. Several tabs can each have one; the
+// agent reads the newest, which is the one the user is looking at.
+let activeShell: Shell | null = null;
+setShellSource(() => activeShell);
 
 // Chats live on disk; only the active one has a running SDK session.
 const convo = new Manager(WORKSPACE, join(ROOT, "chats"));
@@ -273,13 +278,15 @@ function attachAgent(ws: WebSocket, replay = true): void {
 
 /** The shell: a real PTY, no approval gate. */
 function attachShell(ws: WebSocket): void {
-  const shell = new Shell(
+  const shell: Shell = new Shell(
     (chunk) => { if (ws.readyState === ws.OPEN) ws.send(Buffer.from(chunk, "utf8"), { binary: true }); },
     (code) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "exit", code }));
       ws.close();
     },
   );
+
+  activeShell = shell;
 
   ws.on("message", (raw, isBinary) => {
     if (isBinary) { shell.write(raw.toString("utf8")); return; }
@@ -292,7 +299,11 @@ function attachShell(ws: WebSocket): void {
     }
   });
 
-  const close = () => shell.kill();
+  const close = () => {
+    // Only clear it if a newer pane has not already taken over.
+    if (activeShell === shell) activeShell = null;
+    shell.kill();
+  };
   ws.on("close", close);
   ws.on("error", close);
 }

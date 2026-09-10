@@ -6,8 +6,27 @@ import { existsSync } from "node:fs";
  * in session.ts constrains Claude, not you. Anyone holding the token gets this,
  * which is why server.ts refuses to bind a public interface.
  */
+/** Roughly a few hundred lines of output; enough to hold a failed build. */
+const SCROLLBACK_BYTES = 64 * 1024;
+
+/**
+ * Terminal output is a stream of escape sequences: colours, cursor moves, the
+ * title-setting OSC the prompt emits every command. None of that is useful to
+ * a model reading a build failure, so strip it.
+ */
+export function stripAnsi(s: string): string {
+  return s
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")   // OSC (window title)
+    .replace(/\x1b[@-Z\\-_]/g, "")                          // single-char escapes
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")               // CSI (colour, cursor)
+    .replace(/\r(?!\n)/g, "\n")                             // bare CR from progress output
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+}
+
 export class Shell {
   #pty: IPty | null = null;
+  /** Raw tail of what the terminal printed, so the agent can be shown it. */
+  #scrollback = "";
   #onData: (chunk: string) => void;
   #onExit: (code: number) => void;
 
@@ -30,7 +49,13 @@ export class Shell {
       env: shellEnv(),
     });
 
-    this.#pty.onData(this.#onData);
+    this.#pty.onData((chunk) => {
+      this.#scrollback += chunk;
+      if (this.#scrollback.length > SCROLLBACK_BYTES) {
+        this.#scrollback = this.#scrollback.slice(-SCROLLBACK_BYTES);
+      }
+      this.#onData(chunk);
+    });
     this.#pty.onExit(({ exitCode }) => {
       this.#pty = null;
       this.#onExit(exitCode);
@@ -40,6 +65,17 @@ export class Shell {
   write(data: string): void {
     this.#pty?.write(data);
   }
+
+  /** The last `lines` lines the terminal printed, escape codes removed. */
+  recent(lines = 200): { lines: number; text: string } {
+    const all = stripAnsi(this.#scrollback).split("\n");
+    // Trailing blank lines are just the prompt sitting there.
+    while (all.length && all[all.length - 1].trim() === "") all.pop();
+    const tail = all.slice(-Math.max(1, Math.min(2000, lines)));
+    return { lines: tail.length, text: tail.join("\n") };
+  }
+
+  get hasOutput(): boolean { return this.#scrollback.length > 0; }
 
   resize(cols: number, rows: number): void {
     if (!this.#pty) return;

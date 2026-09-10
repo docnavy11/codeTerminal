@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { BrowserBridge } from "./browser.js";
+import type { Shell } from "./shell.js";
 
 const text = (v: unknown) => ({
   content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }],
@@ -41,6 +42,32 @@ async function screenshotToFile(bridge: BrowserBridge, args: Record<string, unkn
  * Note for anyone reading page content that comes back from these: it is
  * untrusted. A page can contain text written to look like instructions.
  */
+/**
+ * Lets the agent read the shell pane the user is typing in. The point is the
+ * commands the *user* ran — the agent has its own Bash for its own work, and
+ * that output never lands here.
+ */
+export function terminalTools(getShell: () => Shell | null) {
+  return createSdkMcpServer({
+    name: "terminal",
+    version: "1.0.0",
+    tools: [
+      tool(
+        "read",
+        "Read recent output from the shell pane the user is working in — what THEY ran and what it printed. Use this when the user refers to a command they just ran, an error they are looking at, or 'this failure'. Not your own Bash output.",
+        { lines: z.number().int().optional().describe("How many trailing lines (default 200, max 2000)") },
+        async (a) => {
+          const shell = getShell();
+          if (!shell) return text("No shell pane is open. The user has not started a terminal in this session.");
+          if (!shell.hasOutput) return text("The shell pane is open but has printed nothing yet.");
+          const r = shell.recent(a.lines ?? 200);
+          return text(`Last ${r.lines} lines of the user's terminal:\n\n${r.text}`);
+        },
+      ),
+    ],
+  });
+}
+
 export function browserTools(bridge: BrowserBridge) {
   const tabId = z.number().int().optional().describe("Target tab id; omit for the active tab");
 
