@@ -8,48 +8,8 @@ import type { WatchRegistry } from "./watches.js";
 import type { PromptStore } from "./prompts.js";
 import { randomUUID } from "node:crypto";
 
-/**
- * What the agent is doing right now. Derived, not stored: whichever of these
- * is true takes precedence, so it cannot drift out of sync with reality.
- *   awaiting   an approval card is open — waiting on YOU, not on Claude
- *   tool       a tool is executing
- *   compacting the SDK is summarising the conversation
- *   thinking   a turn is running with no tool in flight
- *   idle       nothing running
- */
-export type StatusState = "idle" | "thinking" | "tool" | "awaiting" | "compacting";
-
-/** One question from the built-in AskUserQuestion tool. */
-export type AskQuestion = {
-  question: string;
-  header: string;
-  multiSelect: boolean;
-  options: { label: string; description: string; preview?: string }[];
-};
-
-/** What the browser receives. One flat, discriminated shape. */
-export type ClientEvent =
-  | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
-  | { kind: "user"; text: string; context?: string }
-  | { kind: "text"; text: string }
-  | { kind: "tool"; id: string; name: string; input: unknown }
-  | { kind: "approval"; id: string; tool: string; input: unknown; canAlways: boolean }
-  | { kind: "approval_closed"; id: string; decision: "allow" | "always" | "deny" | "gone" }
-  | { kind: "mode"; mode: PermissionMode }
-  | { kind: "commands"; commands: SlashCommand[] }
-  | { kind: "local"; text: string }
-  | { kind: "chats"; chats: unknown[]; activeId: string }
-  | { kind: "cleared" }
-  | { kind: "cwd"; path: string }
-  | { kind: "project"; id: string; name: string }
-  | { kind: "watch"; description: string; detail: string }
-  | { kind: "conversation_reset"; newId: string }
-  | { kind: "delta"; text: string }
-  | { kind: "replayed" }
-  | { kind: "status"; state: StatusState; detail: string; tokens: number }
-  | { kind: "question"; id: string; questions: AskQuestion[] }
-  | { kind: "turn_end"; costUsd: number | null; isError: boolean; denials: number }
-  | { kind: "error"; message: string };
+import type { ClientEvent, StatusState, AskQuestion } from "./protocol.js";
+export type { ClientEvent, StatusState, AskQuestion };
 
 /**
  * Auto-approved without a prompt. Local reads only — nothing here can modify

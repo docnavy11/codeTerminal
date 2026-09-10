@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type { ClientEvent } from "./session.js";
+import type { ClientEvent } from "./protocol.js";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";

@@ -692,6 +692,11 @@ function connectAgent() {
         meta.textContent = modelShown ? `${modelShown} · ${cwdShown}` : cwdShown;
         break;
       }
+      // Which project this chat belongs to. Shown on hover: the bar already
+      // carries model and cwd, and the project is implied by the cwd.
+      case "project":
+        meta.title = m.name === "General" ? cwdShown : `Project: ${m.name} — ${cwdShown}`;
+        break;
       case "ready": {
         modelShown = m.model;
         meta.textContent = `${m.model} · ${cwdShown || m.workspace}`;

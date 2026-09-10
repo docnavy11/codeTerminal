@@ -74,6 +74,10 @@ function handle(m) {
       meta.textContent = cwdShown.split("/").pop() || cwdShown;
       meta.title = cwdShown;
       break;
+    case "project":
+      // The panel has room for one word; the project name beats a cwd basename.
+      if (m.name && m.name !== "General") { meta.textContent = m.name; meta.title = `Project: ${m.name} — ${cwdShown}`; }
+      break;
     case "ready":
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;

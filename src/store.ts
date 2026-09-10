@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PermissionMode, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
-import type { ClientEvent } from "./session.js";
+import type { ClientEvent } from "./protocol.js";
 
 export type ChatRecord = {
   id: string;
