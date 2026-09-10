@@ -6,35 +6,57 @@
 <title>code terminal</title>
 <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
 <style>
+  /* Base type size — the A−/A+ buttons rewrite this, so every rem follows. */
+  html { font-size: 12px; }   /* default; A−/A+ override per browser */
+
   :root {
     --bg:#0f1115; --panel:#161922; --line:#252a36; --fg:#dfe3ec; --dim:#8b93a7;
     --accent:#7aa2f7; --ok:#7dcfa0; --warn:#e0af68; --bad:#f07178;
+    --code:#0b0d11; --card:#1c1a16; --qcard:#141824; --btn:#20242f; --sel:#2a3550; --inline:#1c2030;
     --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    color-scheme: dark;
+  }
+
+  /* Light palette. Applied when the OS asks for it and you have not overridden,
+     and again when you pick light explicitly, so the toggle wins both ways. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
+      --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b;
+      --code:#f4f5f8; --card:#fdf6e6; --qcard:#eef3fd; --btn:#e6e8ee; --sel:#cfdcf7; --inline:#eceef4;
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
+    --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b;
+    --code:#f4f5f8; --card:#fdf6e6; --qcard:#eef3fd; --btn:#e6e8ee; --sel:#cfdcf7; --inline:#eceef4;
+    color-scheme: light;
   }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; overflow:hidden; }
   body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg);
-         font:11px/1.45 var(--mono); }
+         font:1rem/1.45 var(--mono); }
 
   header { display:flex; align-items:center; gap:10px; padding:9px 14px;
            border-bottom:1px solid var(--line); background:var(--panel); flex-shrink:0; }
   header .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); }
   header .dot.on { background:var(--ok); }
-  header .meta { color:var(--dim); font-size:10px; margin-left:auto; }
-  header select { font:inherit; font-size:10px; background:#20242f; color:var(--fg);
+  header .meta { color:var(--dim); font-size:0.833rem; margin-left:auto; }
+  header select { font:inherit; font-size:0.833rem; background:var(--btn); color:var(--fg);
                   border:1px solid var(--line); border-radius:4px; padding:3px 6px; }
   header select.hot { border-color:var(--bad); color:var(--bad); }
   header select.warm { border-color:var(--warn); color:var(--warn); }
-  button.small { font-size:10px; padding:2px 7px; }
+  button.small { font-size:0.833rem; padding:2px 7px; }
 
   #split { flex:1; display:flex; min-height:0; }
   .pane { display:flex; flex-direction:column; min-width:0; min-height:0; }
   #left  { flex:1 1 50%; }
-  #right { flex:1 1 50%; border-left:1px solid var(--line); background:#0b0d11; }
-  .pane-hd { padding:4px 10px; font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+  #right { flex:1 1 50%; border-left:1px solid var(--line); background:var(--code); }
+  .pane-hd { padding:4px 10px; font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
              color:var(--dim); border-bottom:1px solid var(--line); background:var(--panel); flex-shrink:0;
              display:flex; align-items:center; gap:8px; }
-  .pane-hd .warn { color:var(--warn); text-transform:none; letter-spacing:0; margin-left:auto; font-size:11px; }
+  .pane-hd .warn { color:var(--warn); text-transform:none; letter-spacing:0; margin-left:auto; font-size:0.917rem; }
 
   #grip { width:5px; cursor:col-resize; background:var(--line); flex-shrink:0; }
   #grip:hover { background:var(--accent); }
@@ -48,50 +70,49 @@
   .md > :first-child { margin-top:0; }
   .md > :last-child { margin-bottom:0; }
   .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin:0 0 8px; }
-  .md h1, .md h2, .md h3, .md h4 { margin:10px 0 6px; font-size:14px; color:var(--fg); }
-  .md h1 { font-size:16px; } .md h2 { font-size:15px; }
+  .md h1, .md h2, .md h3, .md h4 { margin:10px 0 6px; font-size:1.167rem; color:var(--fg); }
+  .md h1 { font-size:1.333rem; } .md h2 { font-size:1.25rem; }
   .md ul, .md ol { padding-left:22px; }
   .md li { margin:2px 0; }
-  .md code { background:#1c2030; border:1px solid var(--line); border-radius:3px; padding:1px 5px; font-size:12.5px; }
-  .md pre { background:#0b0d11; border:1px solid var(--line); border-radius:5px; padding:9px 11px; overflow-x:auto; }
-  .md pre code { background:none; border:0; padding:0; font-size:12.5px; }
+  .md code { background:var(--inline); border:1px solid var(--line); border-radius:3px; padding:1px 5px; font-size:1.042rem; }
+  .md pre { background:var(--code); border:1px solid var(--line); border-radius:5px; padding:9px 11px; overflow-x:auto; }
+  .md pre code { background:none; border:0; padding:0; font-size:1.042rem; }
   .md blockquote { border-left:2px solid var(--dim); color:var(--dim); margin-left:0; padding-left:10px; }
   .md a { color:var(--accent); }
   .md hr { border:0; border-top:1px solid var(--line); margin:10px 0; }
-  .md table { border-collapse:collapse; font-size:13px; }
+  .md table { border-collapse:collapse; font-size:1.083rem; }
   .md th, .md td { border:1px solid var(--line); padding:3px 8px; text-align:left; }
   .md th { background:var(--panel); }
-  .tool { color:var(--dim); font-size:10px; }
+  .tool { color:var(--dim); font-size:0.833rem; }
   .tool b { color:var(--warn); font-weight:600; }
   .err  { color:var(--bad); }
-  .end  { color:var(--dim); font-size:10px; border-top:1px dashed var(--line); padding-top:5px; }
-  .card { border:1px solid var(--warn); border-radius:6px; padding:11px; background:#1c1a16; }
-  .card h4 { margin:0 0 5px; font-size:10.5px; color:var(--warn); }
-  .card pre { margin:0 0 9px; padding:8px; background:#0f1115; border-radius:4px;
-              max-height:180px; overflow:auto; font-size:10px; }
+  .end  { color:var(--dim); font-size:0.833rem; border-top:1px dashed var(--line); padding-top:5px; }
+  .card { border:1px solid var(--warn); border-radius:6px; padding:11px; background:var(--card); }
+  .card h4 { margin:0 0 5px; font-size:0.875rem; color:var(--warn); }
+  .card pre { margin:0 0 9px; padding:8px; background:var(--code); border-radius:4px;
+              max-height:180px; overflow:auto; font-size:0.833rem; }
   .card.done { opacity:.45; border-color:var(--line); }
 
   /* Claude asking you something — distinct from a permission prompt. */
-  .q { border:1px solid var(--accent); border-radius:6px; padding:11px; background:#141824; }
+  .q { border:1px solid var(--accent); border-radius:6px; padding:11px; background:var(--qcard); }
   .q.done { opacity:.5; border-color:var(--line); }
-  .q .chip { display:inline-block; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+  .q .chip { display:inline-block; font-size:0.792rem; letter-spacing:.06em; text-transform:uppercase;
              color:var(--accent); border:1px solid var(--accent); border-radius:3px;
              padding:1px 5px; margin-bottom:6px; }
-  .q .qt { margin:0 0 7px; font-size:11px; color:var(--fg); }
+  .q .qt { margin:0 0 7px; font-size:0.917rem; color:var(--fg); }
   .q .opt { display:block; width:100%; text-align:left; margin:0 0 5px; padding:6px 9px;
-            border:1px solid var(--line); background:#1a1e29; border-radius:4px; cursor:pointer;
+            border:1px solid var(--line); background:var(--btn); border-radius:4px; cursor:pointer;
             color:var(--fg); font:inherit; }
   .q .opt:hover:not(:disabled) { border-color:var(--accent); }
-  .q .opt.sel { border-color:var(--accent); background:#20263a; }
-  .q .opt .d { display:block; color:var(--dim); font-size:9.5px; margin-top:2px; }
-  .q .opt pre { margin:5px 0 0; padding:6px; background:#0f1115; border-radius:3px;
-                font-size:10px; color:var(--dim); overflow:auto; max-height:150px; }
+  .q .opt.sel { border-color:var(--accent); background:var(--sel); }
+  .q .opt .d { display:block; color:var(--dim); font-size:0.792rem; margin-top:2px; }
+  .q .opt pre { margin:5px 0 0; padding:6px; background:var(--code); border-radius:3px;
+                font-size:0.833rem; color:var(--dim); overflow:auto; max-height:150px; }
   .q .other { width:100%; box-sizing:border-box; background:#0f1115; color:var(--fg);
-              border:1px solid var(--line); border-radius:4px; padding:5px 8px; font:inherit;
-              font-size:11px; margin-top:2px; }
+              border:1px solid var(--line); border-radius:4px; padding:5px 8px; font:inherit; font-size:0.917rem; margin-top:2px; }
   .q .send { margin-top:7px; border-color:var(--accent); color:var(--accent); }
 
-  button { font:inherit; border:1px solid var(--line); background:#20242f; color:var(--fg);
+  button { font:inherit; border:1px solid var(--line); background:var(--btn); color:var(--fg);
            padding:3px 10px; border-radius:4px; cursor:pointer; }
   button:hover:not(:disabled) { border-color:var(--accent); }
   button:disabled { opacity:.4; cursor:default; }
@@ -109,13 +130,13 @@
               border-radius:6px; display:none; z-index:30; box-shadow:0 8px 28px rgba(0,0,0,.5); }
   #chatlist.open { display:block; }
   #chatlist .row { padding:6px 10px; cursor:pointer; display:flex; gap:8px; align-items:baseline; }
-  #chatlist .row:hover { background:#20242f; }
+  #chatlist .row:hover { background:var(--btn); }
   #chatlist .row.active { border-left:2px solid var(--accent); }
   #chatlist .row .t { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #chatlist .row .w { color:var(--dim); font-size:9px; flex-shrink:0; }
+  #chatlist .row .w { color:var(--dim); font-size:0.75rem; flex-shrink:0; }
   #chatlist .row .x { color:var(--dim); flex-shrink:0; padding:0 3px; }
   #chatlist .row .x:hover { color:var(--bad); }
-  #chatlist .empty { padding:9px; color:var(--dim); font-size:10px; }
+  #chatlist .empty { padding:9px; color:var(--dim); font-size:0.833rem; }
 
   #menu { position:absolute; bottom:100%; left:12px; right:12px; margin-bottom:6px;
           background:var(--panel); border:1px solid var(--line); border-radius:6px;
@@ -123,17 +144,17 @@
           box-shadow:0 -6px 24px rgba(0,0,0,.45); }
   #menu.open { display:block; }
   #menu .item { padding:6px 11px; cursor:pointer; display:flex; gap:10px; align-items:baseline; }
-  #menu .item.sel { background:#20242f; }
+  #menu .item.sel { background:var(--btn); }
   #menu .item .n { color:var(--accent); flex-shrink:0; }
-  #menu .item .h { color:var(--warn); font-size:9.5px; flex-shrink:0; }
-  #menu .item .d { color:var(--dim); font-size:9.5px; overflow:hidden;
+  #menu .item .h { color:var(--warn); font-size:0.792rem; flex-shrink:0; }
+  #menu .item .d { color:var(--dim); font-size:0.792rem; overflow:hidden;
                    text-overflow:ellipsis; white-space:nowrap; }
   footer { position:relative; }
-  .local { color:var(--dim); background:#12151c; border-left:2px solid var(--dim);
-           padding:5px 8px; white-space:pre-wrap; font-size:10px; border-radius:0 4px 4px 0; }
+  .local { color:var(--dim); background:var(--panel); border-left:2px solid var(--dim);
+           padding:5px 8px; white-space:pre-wrap; font-size:0.833rem; border-radius:0 4px 4px 0; }
 
   /* Status bar: sits directly above the input, where you are already looking. */
-  #status { display:flex; align-items:center; gap:6px; padding:3px 11px; font-size:9.5px;
+  #status { display:flex; align-items:center; gap:6px; padding:3px 11px; font-size:0.792rem;
             border-top:1px solid var(--line); background:var(--panel); color:var(--dim);
             flex-shrink:0; min-height:23px; }
   #status .pip { width:7px; height:7px; border-radius:50%; background:var(--line); flex-shrink:0; }
@@ -160,6 +181,9 @@
     <option value="plan">Plan only (no changes)</option>
     <option value="bypassPermissions">Never ask</option>
   </select>
+  <button id="theme" class="small" title="Theme: auto / light / dark">auto</button>
+  <button id="fsdown" class="small" title="Smaller text">A−</button>
+  <button id="fsup" class="small" title="Larger text">A+</button>
   <button id="chats" class="small">Chats ▾</button>
   <button id="reset" class="small">New chat</button>
   <div id="chatlist"></div>
@@ -200,6 +224,53 @@ const url = (path) => `${wsBase}${path}`;
 /* ---------------- claude pane ---------------- */
 const log = document.getElementById("log");
 const modeSel = document.getElementById("mode");
+
+/* ---- appearance: type size and theme, both remembered per browser ------- */
+const MIN_FS = 9, MAX_FS = 20;
+let fontSize = clampFs(parseFloat(localStorage.getItem("ct.fs")) || 12);
+let theme = localStorage.getItem("ct.theme") || "auto";   // auto | light | dark
+
+function clampFs(n) { return Math.min(MAX_FS, Math.max(MIN_FS, n)); }
+
+function applyFontSize() {
+  document.documentElement.style.fontSize = fontSize + "px";
+  localStorage.setItem("ct.fs", String(fontSize));
+  // The terminal is a canvas, so it needs telling separately.
+  if (typeof term !== "undefined" && term) {
+    term.options.fontSize = Math.max(8, Math.round(fontSize - 1));
+    try { fit.fit(); sendResize(); } catch {}
+  }
+}
+
+function applyTheme() {
+  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("ct.theme", theme);
+  document.getElementById("theme").textContent = theme;
+  document.getElementById("theme").title = `Theme: ${theme} (click to change)`;
+  applyTermTheme();
+}
+
+/** xterm paints on a canvas and cannot read CSS variables, so hand them over. */
+function applyTermTheme() {
+  if (typeof term === "undefined" || !term) return;
+  const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  term.options.theme = {
+    background: v("--code"), foreground: v("--fg"), cursor: v("--accent"),
+    selectionBackground: v("--sel"),
+    black: v("--line"), red: v("--bad"), green: v("--ok"), yellow: v("--warn"),
+    blue: v("--accent"), magenta: "#bb9af7", cyan: "#7dcfe0", white: v("--fg"),
+  };
+}
+
+document.getElementById("fsup").onclick   = () => { fontSize = clampFs(fontSize + 1); applyFontSize(); };
+document.getElementById("fsdown").onclick = () => { fontSize = clampFs(fontSize - 1); applyFontSize(); };
+document.getElementById("theme").onclick  = () => {
+  theme = { auto: "light", light: "dark", dark: "auto" }[theme];
+  applyTheme();
+};
+// Follow the OS while on auto.
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (theme === "auto") applyTermTheme(); });
 const box = document.getElementById("box");
 const dot = document.getElementById("dot");
 const meta = document.getElementById("meta");
@@ -614,12 +685,7 @@ const term = new Terminal({
   fontSize: 10,
   cursorBlink: true,
   scrollback: 10000,
-  theme: {
-    background: "#0b0d11", foreground: "#dfe3ec", cursor: "#7aa2f7",
-    selectionBackground: "#2a3550",
-    black:"#1a1d26", red:"#f07178", green:"#7dcfa0", yellow:"#e0af68",
-    blue:"#7aa2f7", magenta:"#bb9af7", cyan:"#7dcfe0", white:"#dfe3ec",
-  },
+
 });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
@@ -658,6 +724,10 @@ const sendResize = () => {
 };
 new ResizeObserver(sendResize).observe(document.getElementById("term"));
 addEventListener("resize", sendResize);
+
+// After sendResize exists, so a size change can propagate to the pty.
+applyFontSize();
+applyTheme();
 
 /* ---------------- draggable divider ---------------- */
 const grip = document.getElementById("grip");

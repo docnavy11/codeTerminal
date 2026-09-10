@@ -237,4 +237,26 @@ stop.onclick = () => ws?.send(JSON.stringify({ type: "interrupt" }));
 $("newchat").onclick = () => ws?.send(JSON.stringify({ type: "new" }));
 modeSel.onchange = () => ws?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
 
+/* ---- appearance, remembered per browser --------------------------------- */
+const MIN_FS = 9, MAX_FS = 20;
+const clampFs = (n) => Math.min(MAX_FS, Math.max(MIN_FS, n));
+let fontSize = clampFs(parseFloat(localStorage.getItem("ct.fs")) || 12);
+let theme = localStorage.getItem("ct.theme") || "auto";
+
+function applyFontSize() {
+  document.documentElement.style.fontSize = fontSize + "px";
+  localStorage.setItem("ct.fs", String(fontSize));
+}
+function applyTheme() {
+  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("ct.theme", theme);
+  $("theme").textContent = theme;
+}
+$("fsup").onclick   = () => { fontSize = clampFs(fontSize + 1); applyFontSize(); };
+$("fsdown").onclick = () => { fontSize = clampFs(fontSize - 1); applyFontSize(); };
+$("theme").onclick  = () => { theme = { auto: "light", light: "dark", dark: "auto" }[theme]; applyTheme(); };
+
+applyFontSize();
+applyTheme();
 connect();

@@ -71,6 +71,24 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## Type size and theme
+
+The header has a theme button cycling **auto → light → dark**, and `A−`/`A+`
+for type size (9–20px). Both are remembered per browser in `localStorage`, and
+both exist in the side panel too.
+
+Every font size is a `rem` off `html { font-size }`, so one number scales the
+whole UI. The terminal is a canvas and cannot read CSS, so `applyFontSize` and
+`applyTermTheme` hand it the values explicitly and refit the pty.
+
+`auto` follows `prefers-color-scheme`. The palettes are defined three times on
+purpose: dark on `:root`, light under the media query guarded by
+`:not([data-theme="dark"])`, and light again on `[data-theme="light"]` — so an
+explicit choice beats the OS in both directions.
+
+Adding a colour? Put it in the palette. Two hardcoded ones (`.md code`, the
+terminal background) turned into black-on-black the first time light mode ran.
+
 ## Chrome side panel
 
 The extension also ships the Claude session as a Chrome **side panel** — click
