@@ -16,6 +16,7 @@ const stop = $("stop"), modeSel = $("mode");
 const statusEl = $("status"), statusText = $("statustext"), statusTime = $("statustime");
 
 let cwdShown = "";
+let streaming = null, streamRaw = "";
 let ws = null, busy = false, lastText = null, lastRaw = "", cost = 0;
 let statusSince = 0, statusTick = null, statusState = "idle";
 let retry = null;
@@ -64,7 +65,7 @@ function handle(m) {
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
-    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; break;
+    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; break;
     case "replayed": lastText = null; break;
     case "user": {
       el("msg user", m.text);
@@ -74,8 +75,16 @@ function handle(m) {
     }
     case "local":    el("local", m.text); lastText = null; break;
     case "watch":    el("local", `⌁ watch fired — ${m.description}: ${m.detail}`); lastText = null; break;
+    case "delta":
+      if (!streaming) { streaming = el("msg md"); streamRaw = ""; }
+      streamRaw += m.text;
+      renderMd(streaming, streamRaw);
+      log.scrollTop = log.scrollHeight;
+      break;
     case "text":
-      if (lastText) lastRaw += "\n" + m.text; else { lastText = el("msg md"); lastRaw = m.text; }
+      if (streaming) { lastText = streaming; lastRaw = m.text; streaming = null; streamRaw = ""; }
+      else if (lastText) lastRaw += "\n" + m.text;
+      else { lastText = el("msg md"); lastRaw = m.text; }
       renderMd(lastText, lastRaw);
       log.scrollTop = log.scrollHeight;
       break;
@@ -109,7 +118,7 @@ function handle(m) {
     case "turn_end":
       if (typeof m.costUsd === "number") cost += m.costUsd;
       el("end", `done${m.denials ? ` · ${m.denials} denied` : ""} · $${cost.toFixed(4)} est.`);
-      lastText = null;
+      lastText = null; streaming = null; streamRaw = "";
       break;
     case "error":    el("msg err", m.message); break;
   }

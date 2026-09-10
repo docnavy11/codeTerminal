@@ -462,7 +462,7 @@ function connectAgent() {
       case "local": el("local", m.text); lastText = null; break;
       case "watch": el("local", `⌁ watch fired — ${m.description}: ${m.detail}`); lastText = null; break;
       case "commands": COMMANDS = m.commands; break;
-      case "cleared": log.replaceChildren(); cost = 0; lastText = null; break;
+      case "cleared": log.replaceChildren(); cost = 0; lastText = null; streaming = null; break;
       case "replayed": lastText = null; break;
       case "status": applyStatus(m); break;
       case "chats": CHATS = m.chats; ACTIVE = m.activeId; renderChats(); break;
@@ -471,16 +471,27 @@ function connectAgent() {
         modeSel.classList.toggle("hot", m.mode === "bypassPermissions");
         modeSel.classList.toggle("warm", m.mode === "auto" || m.mode === "acceptEdits");
         break;
+      // Streaming text as it is generated. The completed "text" event below
+      // replaces this with the authoritative copy, so a dropped delta cannot
+      // leave the reply subtly wrong.
+      case "delta":
+        if (!streaming) { streaming = el("msg md"); streamRaw = ""; }
+        streamRaw += m.text;
+        renderMd(streaming, streamRaw);
+        log.scrollTop = log.scrollHeight;
+        break;
+
       case "text":
         // Text arrives in blocks; keep the raw markdown and re-render the whole
         // message so constructs spanning blocks (lists, fences) stay intact.
-        if (lastText) lastRaw += "\n" + m.text;
+        if (streaming) { lastText = streaming; lastRaw = m.text; streaming = null; streamRaw = ""; }
+        else if (lastText) lastRaw += "\n" + m.text;
         else { lastText = el("msg md"); lastRaw = m.text; }
         renderMd(lastText, lastRaw);
         log.scrollTop = log.scrollHeight;
         break;
       case "tool": {
-        if (m.name === "AskUserQuestion") { lastText = null; break; }  // the card says it better
+        if (m.name === "AskUserQuestion") { lastText = null; streaming = null; break; }  // the card says it better
         const d = el("tool");
         d.innerHTML = "→ <b></b> ";
         d.querySelector("b").textContent = m.name;
@@ -503,9 +514,9 @@ function connectAgent() {
       case "turn_end":
         if (typeof m.costUsd === "number") cost += m.costUsd;
         el("end", `done${m.denials ? ` · ${m.denials} denied` : ""} · est. $${cost.toFixed(4)} (list price; not billed on a subscription)`);
-        lastText = null;
+        lastText = null; streaming = null; streamRaw = "";
         break;
-      case "error": el("msg err", m.message); break;
+      case "error": el("msg err", m.message); streaming = null; break;
     }
   };
 }
@@ -708,6 +719,7 @@ modeSel.onchange = () => {
 };
 
 let CHATS = [], ACTIVE = null, cwdShown = "", modelShown = "";
+let streaming = null, streamRaw = "";
 const chatList = document.getElementById("chatlist");
 
 function ago(ts) {

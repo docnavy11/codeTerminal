@@ -83,7 +83,9 @@ export class Manager {
 
   #record = (e: ClientEvent): void => {
     // "ready" and "commands" are state, not history — keep only the newest.
-    if (e.kind === "status") { this.#emitAll(e); return; }   // live-only, never persisted
+    // Live-only: deltas are the same text the completed "text" event carries,
+    // so persisting both would duplicate every reply in the transcript.
+    if (e.kind === "status" || e.kind === "delta") { this.#emitAll(e); return; }
 
     // The model's context is gone, so the transcript must go with it —
     // otherwise the user reads a history the model cannot remember, which is

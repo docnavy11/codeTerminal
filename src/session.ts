@@ -42,6 +42,7 @@ export type ClientEvent =
   | { kind: "cwd"; path: string }
   | { kind: "watch"; description: string; detail: string }
   | { kind: "conversation_reset"; newId: string }
+  | { kind: "delta"; text: string }
   | { kind: "replayed" }
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "question"; id: string; questions: AskQuestion[] }
@@ -152,6 +153,9 @@ export class Session {
         // 82 available commands. It does NOT weaken canUseTool — the explicit
         // permissionMode below wins over settings' defaultMode.
         settingSources: SETTING_SOURCES,
+        // Without this an assistant message only arrives complete, so a long
+        // turn shows nothing at all until the model finishes its first block.
+        includePartialMessages: true,
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS],
         mcpServers: {
           terminal: terminalTools(() => GET_SHELL()),
@@ -395,6 +399,16 @@ export class Session {
         this.sdkSessionId = msg.new_conversation_id;
         this.#emit({ kind: "conversation_reset", newId: msg.new_conversation_id });
         return;
+
+      // Live text as it is generated. Kept separate from the "text" event,
+      // which arrives complete and is the copy that gets persisted.
+      case "stream_event": {
+        const ev = msg.event as { type?: string; delta?: { type?: string; text?: string } };
+        if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
+          this.#emit({ kind: "delta", text: ev.delta.text });
+        }
+        return;
+      }
 
       case "result":
         this.#busy = false;
