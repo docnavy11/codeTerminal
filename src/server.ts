@@ -13,7 +13,7 @@ import { pruneScreenshots } from "./screenshots.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
 import { stat } from "node:fs/promises";
-import { setBridge, setShellSource, setWatchSource } from "./session.js";
+import { setBridge, setShellSource, setWatchSource, setPromptStore } from "./session.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
 
@@ -53,6 +53,7 @@ const convo = new Manager(WORKSPACE, process.env.CODETERM_CHATS ?? join(ROOT, "c
 await convo.boot();
 
 const prompts = new PromptStore(process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"));
+setPromptStore(prompts);
 
 const watches = new WatchRegistry();
 setWatchSource(watches, () => convo.activeId);

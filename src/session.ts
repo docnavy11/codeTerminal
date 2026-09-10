@@ -1,10 +1,11 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate, type PermissionMode, type SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { Pushable, deferred } from "./pushable.js";
-import { browserTools, terminalTools, watchTools } from "./tools.js";
+import { browserTools, terminalTools, watchTools, promptTools } from "./tools.js";
 import { composePrompt } from "./prompt.js";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
 import type { WatchRegistry } from "./watches.js";
+import type { PromptStore } from "./prompts.js";
 import { randomUUID } from "node:crypto";
 
 /**
@@ -70,6 +71,9 @@ export function setBridge(b: BrowserBridge): void { BRIDGE = b; }
 let GET_SHELL: () => Shell | null = () => null;
 export function setShellSource(f: () => Shell | null): void { GET_SHELL = f; }
 
+let PROMPTS: PromptStore | null = null;
+export function setPromptStore(p: PromptStore): void { PROMPTS = p; }
+
 let WATCHES: WatchRegistry | null = null;
 let CURRENT_CHAT: () => string = () => "";
 export function setWatchSource(w: WatchRegistry, chat: () => string): void {
@@ -90,6 +94,9 @@ const BROWSER_TOOLS = [
 // Reading the user's own terminal is inert, so it never needs a prompt.
 const TERMINAL_TOOLS = ["mcp__terminal__read"];
 const WATCH_TOOLS = ["mcp__watch__page", "mcp__watch__list", "mcp__watch__stop"];
+// Reading the library is inert. Saving and deleting are not auto-approved:
+// a saved prompt is something the user clicks and runs later.
+const PROMPT_TOOLS = ["mcp__prompts__list"];
 
 /** Set CODETERM_ISOLATED=1 to run without your personal skills and CLAUDE.md. */
 const SETTING_SOURCES: ("user" | "project" | "local")[] =
@@ -156,11 +163,12 @@ export class Session {
         // Without this an assistant message only arrives complete, so a long
         // turn shows nothing at all until the model finishes its first block.
         includePartialMessages: true,
-        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS],
+        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS],
         mcpServers: {
           terminal: terminalTools(() => GET_SHELL()),
           ...(BRIDGE ? { browser: browserTools(BRIDGE) } : {}),
           ...(BRIDGE && WATCHES ? { watch: watchTools(BRIDGE, WATCHES, () => CURRENT_CHAT()) } : {}),
+          ...(PROMPTS ? { prompts: promptTools(PROMPTS) } : {}),
         },
         permissionMode: this.#mode,
         allowDangerouslySkipPermissions: ALLOW_BYPASS,

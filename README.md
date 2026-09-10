@@ -513,6 +513,15 @@ retyping anything.
 Stored in `prompts.json`, seeded on first run with five examples, because an
 empty list teaches nobody what it is for.
 
+Claude can curate the library too: `mcp__prompts__list`, `save` and `delete`.
+"Save that as a prompt for github.com" works.
+
+Reading is auto-approved; **saving and deleting are not**. A saved prompt is
+something you click and run later, and untrusted page content already reaches
+this model — a page that talked the agent into saving one would be planting
+something for you to fire yourself. So a write stops at the approval card,
+showing the title and body before it lands.
+
 ## Streaming replies
 
 `includePartialMessages: true` makes the SDK emit `stream_event` frames, and

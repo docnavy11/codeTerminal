@@ -6,6 +6,7 @@ import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
 import { SHOT_DIR, pruneScreenshots } from "./screenshots.js";
 import type { WatchRegistry, WatchCondition } from "./watches.js";
+import type { PromptStore } from "./prompts.js";
 
 const text = (v: unknown) => ({
   content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }],
@@ -141,6 +142,55 @@ export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, curren
           watches.remove(w.id);
           await bridge.send("watch_stop", { watchId: w.id }).catch(() => {});
           return text(`Stopped ${watches.describe(w)}`);
+        }),
+    ],
+  });
+}
+
+/**
+ * Lets the agent curate the prompt library. Reading is free; writing is not
+ * auto-approved, because a saved prompt is something the user later clicks and
+ * runs — and page content reaches this model already. A page that talked the
+ * agent into saving a prompt would be planting something for the user to fire
+ * later, so a write goes through the gate.
+ */
+export function promptTools(prompts: PromptStore) {
+  const line = (p: { id: string; title: string; domains: string[]; text: string }) =>
+    `${p.id.slice(0, 8)}  ${p.title}  [${p.domains.length ? p.domains.join(" ") : "everywhere"}]\n    ${p.text.replace(/\s+/g, " ").slice(0, 110)}`;
+
+  return createSdkMcpServer({
+    name: "prompts",
+    version: "1.0.0",
+    alwaysLoad: true,
+    tools: [
+      tool("list", "List the user's saved prompts, with the domains each applies to.",
+        { host: z.string().optional().describe("Only those applying to this hostname") },
+        async (a) => {
+          const all = a.host ? prompts.for(a.host) : prompts.all();
+          return text(all.length ? all.map(line).join("\n") : "No saved prompts.");
+        }),
+
+      tool("save",
+        "Save a prompt to the user's library, or update one by id. Placeholders {url} {title} {host} {selection} are filled from the active tab when it runs.",
+        {
+          title: z.string().describe("Short label shown in the list"),
+          text: z.string().describe("The prompt body"),
+          domains: z.array(z.string()).optional()
+            .describe("Hostnames it applies to; omit or leave empty for everywhere"),
+          id: z.string().optional().describe("Update this prompt instead of creating one"),
+        },
+        async (a) => {
+          const p = prompts.upsert({ id: a.id, title: a.title, text: a.text, domains: a.domains ?? [] });
+          return text(`Saved.\n${line(p)}`);
+        }),
+
+      tool("delete", "Delete a saved prompt by id.",
+        { id: z.string().describe("Prompt id, or its first 8 characters") },
+        async (a) => {
+          const match = prompts.all().find((p) => p.id === a.id || p.id.startsWith(a.id));
+          if (!match) return text(`No prompt matching ${a.id}.`);
+          prompts.remove(match.id);
+          return text(`Deleted "${match.title}".`);
         }),
     ],
   });
