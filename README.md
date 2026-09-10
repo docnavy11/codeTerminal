@@ -106,6 +106,27 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## Two CSS traps in this UI
+
+Both cost real debugging time; if the transcript ever looks wrong, check these
+first.
+
+**`white-space: pre-wrap` must not reach rendered markdown.** `.msg` sets it so
+plain text keeps its line breaks, but `.msg.md` holds real HTML from `marked`,
+where every newline *between* block tags would render as a visible blank line.
+Measured before the fix: a `<ul>` with `margin-bottom: 6px` followed by a `<p>`
+with `margin-top: 0` produced a 23px gap. `.msg.md { white-space: normal }`
+fixes it; `pre` inside re-enables `pre`.
+
+**A scrolling flex child needs `min-height: 0`.** Without it `#log` cannot
+shrink below its content, overflows the column, and pushes the status bar and
+input over the transcript. `.pane` in the web UI already had it; the side panel
+did not.
+
+Tool lines are `text-overflow: ellipsis` on one line: a long tool argument
+(`ToolSearch {"query":"select:mcp__browser__…"}`) is one unbreakable string
+that otherwise forces the whole transcript to scroll sideways.
+
 ## Type size and theme
 
 The header has a theme button cycling **auto → light → dark**, and `A−`/`A+`
