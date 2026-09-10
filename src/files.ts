@@ -1,4 +1,4 @@
-import { readdir, stat, readFile, writeFile, mkdir, realpath } from "node:fs/promises";
+import { readdir, stat, lstat, readFile, writeFile, mkdir, realpath } from "node:fs/promises";
 import { resolve, join, dirname, relative, basename, sep } from "node:path";
 import { createReadStream } from "node:fs";
 
@@ -126,7 +126,14 @@ export async function collectForZip(
   let bytes = 0;
 
   const walk = async (abs: string, rel: string): Promise<void> => {
-    const st = await stat(abs);
+    // lstat, not stat: containment was checked on the *selected* name via
+    // safePath, but a symlink discovered while walking a directory was never
+    // re-checked — stat() follows it, so a link to /etc inside a ticked folder
+    // pulled /etc into the zip. Skipping symlinks closes that, and also removes
+    // the symlink-loop route into infinite recursion. Links are not followed in
+    // a bulk zip; a user who wants a link's target selects the target.
+    const st = await lstat(abs);
+    if (st.isSymbolicLink()) return;
     if (st.isDirectory()) {
       for (const child of await readdir(abs)) {
         await walk(join(abs, child), `${rel}/${child}`);

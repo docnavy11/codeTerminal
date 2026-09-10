@@ -1,6 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, symlink, rm, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, symlink, rm, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safePath, toRel, list, saveUpload, readTextPreview, collectForZip } from "../src/files.js";
@@ -173,6 +173,35 @@ describe("collectForZip", () => {
 
   test("a symlink pointing outside the root is refused", async () => {
     await assert.rejects(() => collectForZip(root, "", ["escape-file"], 1e9));
+  });
+
+  // The real hole: selecting a symlink directly is caught by safePath, but a
+  // symlink *inside* a ticked directory was walked with stat() (which follows
+  // it), pulling whatever it pointed at into the zip. A folder holding a link
+  // to /etc leaked /etc. The walk must not follow links discovered mid-walk.
+  test("a symlink nested inside a selected directory is not followed", async () => {
+    await mkdir(join(root, "bundle"), { recursive: true });
+    await writeFile(join(root, "bundle", "real.txt"), "legit");
+    await symlink(outside, join(root, "bundle", "nested-escape"));
+    await symlink(join(outside, "secret.txt"), join(root, "bundle", "nested-escape-file"));
+
+    const { entries } = await collectForZip(root, "", ["bundle"], 1e9);
+    const names = entries.map((e) => e.name);
+    assert.ok(names.includes("bundle/real.txt"), `real file kept: ${JSON.stringify(names)}`);
+    // Nothing whose real target lives outside the root.
+    for (const e of entries) {
+      const real = await realpath(e.abs);
+      assert.ok(real.startsWith(root + "/"), `leaked via symlink: ${e.name} -> ${real}`);
+    }
+    assert.ok(!names.some((n) => n.includes("secret")), "the outside secret must not appear");
+  });
+
+  test("a symlink loop inside a selected directory does not hang", async () => {
+    await mkdir(join(root, "loopdir"), { recursive: true });
+    await writeFile(join(root, "loopdir", "x.txt"), "x");
+    await symlink(join(root, "loopdir"), join(root, "loopdir", "self"));  // points at itself
+    const { entries } = await collectForZip(root, "", ["loopdir"], 1e9);
+    assert.deepEqual(entries.map((e) => e.name), ["loopdir/x.txt"]);
   });
 
   test("refuses a selection over the size limit", async () => {
