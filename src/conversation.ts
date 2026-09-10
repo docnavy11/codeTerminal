@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import { Session, type ClientEvent } from "./session.js";
+import { Session, type ClientEvent, type SessionDeps } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
 import { generateTitle } from "./titles.js";
 import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project } from "./projects.js";
@@ -10,45 +10,267 @@ import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project 
 const MAX_EVENTS = 3000;
 
 /**
- * Holds the one live Session and swaps it when you open another chat. Only the
- * active chat has a running SDK session — each one is a claude process, so
- * keeping every past chat warm would be expensive. Opening an old chat resumes
- * it by its sdkSessionId, which rebuilds the model's context from the
- * transcript on disk.
+ * How many conversations may hold a live `claude` process at once. Each is a
+ * real subprocess, so this is a memory and CPU ceiling, not a stylistic one.
  */
-export class Manager {
+const MAX_LIVE = 4;
+
+/**
+ * One conversation: its record, its session, and the clients watching it.
+ *
+ * Everything here used to live on a single-instance Manager, which is why two
+ * browsers saw the same chat — there was only ever one. Now each conversation
+ * owns its own, and a client attaches to whichever it wants.
+ */
+export class LiveChat {
+  #rec: ChatRecord;
   #store: Store;
+  #session: Session;
   #workspace: string;
-  #session!: Session;
-  #rec!: ChatRecord;
-  /** Every attached browser. A Set, not one slot: a second tab must not
-   *  silently starve the first of events. */
   #live = new Set<(e: ClientEvent) => void>();
   #saveTimer: NodeJS.Timeout | null = null;
   #titling = false;
   /** Set only when the user actually sends /clear. */
   #clearRequested = false;
+  #onChange: () => void;
 
-  /**
-   * Permission mode is app-level, not per-chat: you set it once and it holds
-   * across new chats and chat switches. It starts at "default" on every boot,
-   * so a process manager restarting the server can never re-arm "Never ask" —
-   * that was the only case the old per-chat downgrade was actually guarding.
-   */
+  constructor(rec: ChatRecord, store: Store, workspace: string,
+              deps: Omit<SessionDeps, "chatId">, mode: PermissionMode, onChange: () => void) {
+    this.#rec = rec;
+    this.#store = store;
+    this.#workspace = workspace;
+    this.#onChange = onChange;
+    this.#session = this.#spawn(deps, mode);
+  }
+
+  #deps!: Omit<SessionDeps, "chatId">;
   #mode: PermissionMode = "default";
 
-  #projectsRoot: string;
+  #spawn(deps: Omit<SessionDeps, "chatId">, mode: PermissionMode): Session {
+    this.#deps = deps;
+    this.#mode = mode;
+    const s = new Session(this.#rec.cwd ?? this.#workspace, this.#record, { ...deps, chatId: this.#rec.id });
+    if (mode !== "default") void s.setMode(mode);
+    s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted)
+      .catch((err) => this.#record({ kind: "error", message: String(err) }));
+    return s;
+  }
 
-  constructor(workspace: string, dir: string, projectsRoot: string) {
+  get id(): string { return this.#rec.id; }
+  get record(): ChatRecord { return this.#rec; }
+  get session(): Session { return this.#session; }
+  get clients(): number { return this.#live.size; }
+  get busy(): boolean { return this.#session.busy; }
+  get lastTouched(): number { return this.#rec.updatedAt ?? 0; }
+  get cwd(): string { return this.#rec.cwd ?? this.#workspace; }
+  get mode(): PermissionMode { return this.#session.mode; }
+
+  project(projects: Project[]): Project { return resolveProject(projects, this.#rec.project); }
+
+  /* ---------------- events ---------------- */
+
+  #record = (e: ClientEvent): void => {
+    // Live-only: status and deltas are the same words the completed events
+    // carry, so persisting them would duplicate every reply.
+    if (e.kind === "status" || e.kind === "delta") { this.#emitAll(e); return; }
+
+    if (e.kind === "conversation_reset") {
+      // The SDK emits this for /clear AND for fresh-session flows, and the
+      // event cannot tell them apart. Honouring it unconditionally wiped a
+      // transcript on every restart. Only a /clear the user sent may clear.
+      if (!this.#clearRequested) {
+        this.#rec.sdkSessionId = e.newId;
+        this.#save();
+        return;
+      }
+      this.#clearRequested = false;
+      this.#snapshot("before-clear");
+      this.#rec.events = [];
+      this.#rec.title = "New chat";
+      this.#rec.titleProvisional = false;
+      this.#rec.sdkSessionId = e.newId;
+      this.#save();
+      this.#emitAll({ kind: "cleared" });
+      this.#emitAll({ kind: "local", text: "Context cleared." });
+      this.#onChange();
+      return;
+    }
+
+    if (e.kind === "ready" || e.kind === "commands") {
+      this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
+    }
+    this.#rec.events.push(e);
+    if (this.#rec.events.length > MAX_EVENTS) {
+      this.#rec.events.splice(0, this.#rec.events.length - MAX_EVENTS);
+    }
+    this.#emitAll(e);
+    this.#scheduleSave();
+  };
+
+  #emitAll(e: ClientEvent): void { for (const emit of this.#live) emit(e); }
+
+  /** Announce something to this chat's clients without persisting it. */
+  announce(e: ClientEvent): void { this.#emitAll(e); }
+
+  attach(emit: (e: ClientEvent) => void, replay = true): void {
+    this.#live.add(emit);
+    if (replay) for (const e of this.#rec.events) emit(e);
+    emit({ kind: "replayed" });
+    emit({ kind: "cwd", path: this.cwd });
+    emit(this.#session.status());
+  }
+
+  detach(emit: (e: ClientEvent) => void): void { this.#live.delete(emit); }
+
+  /* ---------------- input ---------------- */
+
+  recordUser(text: string, context?: string): void {
+    if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
+    this.#record({ kind: "user", text, context });
+    if (this.#rec.title === "New chat") {
+      this.#rec.title = titleFrom(this.#rec.events);
+      this.#rec.titleProvisional = true;
+      this.#save();
+      this.#onChange();
+      void this.#maybeTitle();
+    }
+  }
+
+  rename(title: string): boolean {
+    const t = title.trim().slice(0, 64);
+    if (!t) return false;
+    this.#rec.title = t;
+    this.#rec.titleProvisional = false;
+    this.#save();
+    this.#onChange();
+    return true;
+  }
+
+  async setMode(mode: PermissionMode): Promise<void> {
+    await this.#session.setMode(mode);
+    this.#mode = this.#session.mode;
+  }
+
+  /** Point this chat at a directory. cwd is a launch option, so the session is rebuilt. */
+  async setCwd(abs: string): Promise<void> {
+    if (this.#session.busy) throw new Error("Finish or stop the current turn first.");
+    if (abs === this.cwd) return;
+    this.#rec.cwd = abs;
+    this.#save();
+    this.#restart();
+    this.#record({ kind: "local", text: `Working directory is now ${abs}` });
+  }
+
+  async setProject(target: Project): Promise<void> {
+    if (this.#session.busy) throw new Error("Finish or stop the current turn first.");
+    this.#rec.project = target.general ? undefined : target.id;
+    this.#rec.cwd = target.path;
+    this.#save();
+    this.#restart();
+    this.#record({ kind: "local", text: `Project: ${target.name} — working in ${target.path}` });
+    this.#emitAll({ kind: "project", id: target.id, name: target.name });
+  }
+
+  /** Rebuild the session in place, resuming the same conversation. */
+  #restart(): void {
+    this.#session.close();
+    this.#session = this.#spawn(this.#deps, this.#mode);
+    this.#emitAll({ kind: "cwd", path: this.cwd });
+  }
+
+  watchFired(description: string, detail: string, prompt: string): "woken" | "noted" {
+    this.#emitAll({ kind: "watch", description, detail });
+    this.#record({ kind: "local", text: `Watch fired — ${description}: ${detail}` });
+    if (this.#session.busy) return "noted";
+    this.#session.send(prompt);
+    return "woken";
+  }
+
+  close(): void {
+    this.#save();
+    this.#session.close();
+  }
+
+  /* ---------------- titling ---------------- */
+
+  async #maybeTitle(): Promise<void> {
+    if (!this.#rec.titleProvisional || this.#titling) return;
+    const firstUser = this.#rec.events.find((e) => e.kind === "user") as { text: string } | undefined;
+    if (!firstUser) return;
+
+    this.#titling = true;
+    let title: string | null = null;
+    try { title = await generateTitle(firstUser.text); } finally { this.#titling = false; }
+
+    if (!title) {
+      // Give up after a few turns rather than paying for a call on every one.
+      if (this.#rec.events.filter((e) => e.kind === "user").length >= 3) {
+        this.#rec.titleProvisional = false;
+      }
+      return;
+    }
+    this.#rec.title = title;
+    this.#rec.titleProvisional = false;
+    this.#save();
+    this.#onChange();
+  }
+
+  /* ---------------- persistence ---------------- */
+
+  #snapshot(why: string): void {
+    try {
+      const dir = join(dirname(this.#store.dir), "chats-snapshots");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${this.#rec.id}-${why}-${Date.now()}.json`), JSON.stringify(this.#rec));
+    } catch { /* a missing snapshot must not block the operation */ }
+  }
+
+  #scheduleSave(): void {
+    if (this.#saveTimer) return;
+    this.#saveTimer = setTimeout(() => { this.#saveTimer = null; this.#save(); }, 400);
+  }
+
+  #save(): void {
+    this.#rec.sdkSessionId = this.#session?.sdkSessionId ?? this.#rec.sdkSessionId;
+    this.#rec.granted = this.#session?.granted ?? this.#rec.granted;
+    this.#rec.mode = this.#session?.mode ?? this.#rec.mode;
+    this.#rec.updatedAt = Date.now();
+    this.#store.write(this.#rec);
+  }
+}
+
+/**
+ * The pool. Holds up to MAX_LIVE conversations with running sessions, and the
+ * store behind all of them. Clients pick which chat they are looking at, so two
+ * browsers can hold two different conversations at once.
+ */
+export class Manager {
+  #store: Store;
+  #workspace: string;
+  #projectsRoot: string;
+  #deps: Omit<SessionDeps, "chatId">;
+  #chats = new Map<string, LiveChat>();
+  #mode: PermissionMode = "default";
+
+  /** Told when any chat's title, project or list-visible state changes. */
+  onListChanged?: () => void;
+  onChatRemoved?: (id: string) => void;
+
+  constructor(workspace: string, dir: string, projectsRoot: string,
+              deps: Omit<SessionDeps, "chatId">) {
     this.#workspace = workspace;
     this.#store = new Store(dir);
     this.#projectsRoot = projectsRoot;
+    this.#deps = deps;
   }
 
-  /**
-   * Discovered fresh each time, so a new checkout just appears, then ordered
-   * by which ones you have actually been working in.
-   */
+  get mode(): PermissionMode { return this.#mode; }
+
+  list(): ChatSummary[] { return this.#store.list(); }
+  read(id: string): ChatRecord | null {
+    return this.#chats.get(id)?.record ?? this.#store.read(id);
+  }
+
   projects(): Project[] {
     const usage = new Map<string, { lastUsed: number; chats: number }>();
     for (const c of this.#store.list()) {
@@ -62,304 +284,75 @@ export class Manager {
     return orderByRecency(listProjects(this.#projectsRoot, this.#workspace), usage);
   }
 
-  get project(): Project { return resolveProject(this.projects(), this.#rec?.project); }
+  /** The chat a client with no preference should land on. */
+  newestId(): string | null { return this.#store.list()[0]?.id ?? null; }
 
-  /**
-   * Move this chat to a project. The project's directory becomes the working
-   * directory, so "which project" and "where does it work" cannot drift apart.
-   */
-  async setProject(id: string): Promise<void> {
-    if (this.#session.busy) throw new Error("Finish or stop the current turn first.");
-    const target = resolveProject(this.projects(), id);
-    if (target.id === this.project.id) return;
-    this.#rec.project = target.general ? undefined : target.id;
-    this.#rec.cwd = target.path;
-    this.#save();
-    await this.#activate(this.#rec);
-    this.#record({ kind: "local", text: `Project: ${target.name} — working in ${target.path}` });
-  }
+  /** Live chats, so a watch can find the conversation that set it. */
+  live(id: string): LiveChat | undefined { return this.#chats.get(id); }
 
-  get session() { return this.#session; }
-  get activeId() { return this.#rec.id; }
-  /** Where the active chat works — the shell pane opens here too. */
-  get cwd() { return this.#rec?.cwd ?? this.#workspace; }
-
-  /**
-   * Point this chat at a different directory. The SDK takes cwd only at
-   * launch, so the session is rebuilt and resumed by its sdkSessionId — the
-   * conversation survives, the working directory changes under it.
-   */
-  async setCwd(abs: string): Promise<void> {
-    if (this.#session.busy) throw new Error("Finish or stop the current turn first.");
-    if (abs === this.cwd) return;
-    this.#rec.cwd = abs;
-    this.#save();
-    await this.#activate(this.#rec);
-    this.#record({ kind: "local", text: `Working directory is now ${abs}` });
-  }
-
-  list(): ChatSummary[] { return this.#store.list(); }
-
-  /** The full record, for reading a chat without making it the active one. */
-  read(id: string): ChatRecord | null {
-    return id === this.#rec?.id ? this.#rec : this.#store.read(id);
-  }
-
-  /** Set by the server so watches belonging to a deleted chat go with it. */
-  onChatRemoved?: (id: string) => void;
-
-  /** Change the mode for the whole app, not just this chat. */
-  async setMode(mode: PermissionMode): Promise<void> {
-    await this.#session.setMode(mode);
-    // Adopt only what the session actually accepted (bypass can be refused).
-    this.#mode = this.#session.mode;
-  }
-
-  async boot(): Promise<void> {
-    const newest = this.#store.list()[0];
-    const prior = newest ? this.#store.read(newest.id) : null;
-    await this.#activate(prior ?? this.#blank());
-  }
-
-  #blank(): ChatRecord {
-    const now = Date.now();
-    return { id: randomUUID(), title: "New chat", createdAt: now, updatedAt: now,
-             // A new chat inherits where you are working, which is nearly
-             // always what you want when you start one mid-task.
-             sdkSessionId: null, cwd: this.#rec?.cwd ?? null, project: this.#rec?.project,
-             events: [], granted: [], mode: "default" };
-  }
-
-  #record = (e: ClientEvent): void => {
-    // "ready" and "commands" are state, not history — keep only the newest.
-    // Live-only: deltas are the same text the completed "text" event carries,
-    // so persisting both would duplicate every reply in the transcript.
-    if (e.kind === "status" || e.kind === "delta") { this.#emitAll(e); return; }
-
-    // The model's context is gone, so the transcript must go with it —
-    // otherwise the user reads a history the model cannot remember, which is
-    // worse than showing nothing.
-    if (e.kind === "conversation_reset") {
-      // The SDK emits this for /clear AND for "fresh-session flows", and the
-      // two are indistinguishable in the event. Honouring it unconditionally
-      // wiped a chat's transcript every time the server restarted and
-      // reactivated it. Only a /clear the user actually sent may clear.
-      if (!this.#clearRequested) {
-        this.#rec.sdkSessionId = e.newId;   // still follow the new session id
-        this.#save();
-        return;
-      }
-      this.#clearRequested = false;
-      this.#snapshot("before-clear");
-      this.#rec.events = [];
-      this.#rec.title = "New chat";
-      this.#rec.titleProvisional = false;
-      this.#rec.sdkSessionId = e.newId;
-      this.#save();
-      this.#emitAll({ kind: "cleared" });
-      this.#emitAll({ kind: "local", text: "Context cleared." });
-      this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
-      this.#emitAll(this.#session.status());
-      return;
-    }
-    if (e.kind === "ready" || e.kind === "commands") {
-      this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
-    }
-    this.#rec.events.push(e);
-    if (this.#rec.events.length > MAX_EVENTS) {
-      this.#rec.events.splice(0, this.#rec.events.length - MAX_EVENTS);
-    }
-    this.#emitAll(e);
-    this.#scheduleSave();
-
-  };
-
-  #emitAll(e: ClientEvent): void {
-    for (const emit of this.#live) emit(e);
-  }
-
-  /**
-   * A page watch fired. Only nudges the model when the owning chat is the one
-   * running — waking a background chat would silently start a turn in a
-   * conversation the user is not looking at.
-   */
-  watchFired(chatId: string, description: string, detail: string, prompt: string): "woken" | "noted" {
-    // Announce to every attached client regardless of which chat owns it —
-    // the point of a watch is that you are not looking at this window.
-    this.#emitAll({ kind: "watch", description, detail });
-    if (chatId !== this.#rec.id) return "noted";
-    this.#record({ kind: "local", text: `Watch fired — ${description}: ${detail}` });
-    if (this.#session.busy) return "noted";   // do not interrupt a turn in flight
-    this.#session.send(prompt);
-    return "woken";
-  }
-
-  recordUser(text: string, context?: string): void {
-    if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
-    this.#record({ kind: "user", text, context });
-    // Provisional: the opening line is rarely what a conversation turns out to
-    // be about. Replaced by a real title once there is a reply to name it from.
-    if (this.#rec.title === "New chat") {
-      this.#rec.title = titleFrom(this.#rec.events);
-      this.#rec.titleProvisional = true;
-      this.#save();
-      this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
-      // Name it from the question straight away — no reply needed, so a turn
-      // parked on an approval still ends up with a real title.
-      void this.#maybeTitle();
-    }
-  }
-
-  /** Rename by hand. Sticks — auto-titling never overwrites it. */
-  rename(id: string, title: string): boolean {
-    const t = title.trim().slice(0, 64);
-    if (!t) return false;
-    if (id === this.#rec.id) {
-      this.#rec.title = t;
-      this.#rec.titleProvisional = false;
-      this.#save();
-    } else {
-      const rec = this.#store.read(id);
-      if (!rec) return false;
-      rec.title = t;
-      rec.titleProvisional = false;
-      this.#store.write(rec);
-    }
-    this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
-    return true;
-  }
-
-  /**
-   * After the first exchange, name the chat properly. One Haiku call, once per
-   * chat, and never over a title the user set themselves.
-   */
-  async #maybeTitle(): Promise<void> {
-    if (!this.#rec.titleProvisional) return;
-    const events = this.#rec.events;
-    const firstUser = events.find((e) => e.kind === "user") as { text: string } | undefined;
-    if (!firstUser) return;
-
-    // An in-flight guard rather than clearing the flag: clearing it first meant
-    // a failed naming call left the chat stuck with its opening line forever.
-    if (this.#titling) return;
-    this.#titling = true;
-    const id = this.#rec.id;
-    let title: string | null = null;
-    try {
-      title = await generateTitle(firstUser.text);
-    } finally {
-      this.#titling = false;
-    }
-    // Give up after a few turns rather than paying for a naming call on every
-    // turn of a chat that will not name.
-    if (!title) {
-      if (events.filter((e) => e.kind === "user").length >= 3) this.#rec.titleProvisional = false;
-      return;
-    }
-
-    // The user may have switched chats while that call was in flight.
-    if (this.#rec.id === id) {
-      this.#rec.title = title;
-      this.#rec.titleProvisional = false;
-      this.#save();
-    } else {
-      const rec = this.#store.read(id);
-      if (rec && rec.titleProvisional !== false) { rec.title = title; rec.titleProvisional = false; this.#store.write(rec); }
-    }
-    this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
-  }
-
-  /**
-   * `replay: false` is for observers that only want live events — the
-   * extension's service worker watching for something worth a notification.
-   * Replaying the whole transcript at it would be pure waste.
-   */
-  attach(emit: (e: ClientEvent) => void, replay = true): void {
-    this.#live.add(emit);
-    if (replay) {
-      for (const e of this.#rec.events) emit(e);
-      emit({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
-    }
-    emit({ kind: "replayed" });
-    emit({ kind: "cwd", path: this.cwd });
-    emit(this.#session.status());   // so a reload mid-turn knows it is busy
-  }
-
-  detach(emit: (e: ClientEvent) => void): void { this.#live.delete(emit); }
-
-  /** Start a fresh chat, keeping the current one on disk. */
-  async create(): Promise<void> {
-    this.#save();
-    await this.#activate(this.#blank());
-  }
-
-  async open(id: string): Promise<void> {
-    if (id === this.#rec.id) return;
+  /** Bring a chat into the pool, evicting an idle one if it is full. */
+  get(id: string): LiveChat | null {
+    const existing = this.#chats.get(id);
+    if (existing) return existing;
     const rec = this.#store.read(id);
-    if (!rec) return;
-    this.#save();
-    await this.#activate(rec);
+    if (!rec) return null;
+    return this.#admit(rec);
   }
 
-  async remove(id: string): Promise<void> {
+  create(from?: LiveChat): LiveChat {
+    const now = Date.now();
+    // A new chat inherits where you were working, which is almost always what
+    // you want when you start one mid-task.
+    const rec: ChatRecord = {
+      id: randomUUID(), title: "New chat", createdAt: now, updatedAt: now,
+      sdkSessionId: null, cwd: from?.record.cwd ?? null, project: from?.record.project,
+      events: [], granted: [], mode: "default",
+    };
+    this.#store.write(rec);
+    const chat = this.#admit(rec);
+    this.onListChanged?.();
+    return chat;
+  }
+
+  #admit(rec: ChatRecord): LiveChat {
+    this.#evictIfFull();
+    const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, this.#mode,
+      () => this.onListChanged?.());
+    this.#chats.set(rec.id, chat);
+    return chat;
+  }
+
+  /**
+   * Evict the least recently touched chat that nobody is watching. A chat with
+   * clients attached is never evicted, however old — someone is looking at it.
+   */
+  #evictIfFull(): void {
+    while (this.#chats.size >= MAX_LIVE) {
+      const idle = [...this.#chats.values()]
+        .filter((c) => c.clients === 0 && !c.busy)
+        .sort((a, b) => a.lastTouched - b.lastTouched)[0];
+      if (!idle) return;   // everything is in use; go over the cap rather than cut someone off
+      idle.close();
+      this.#chats.delete(idle.id);
+    }
+  }
+
+  /** Drop a chat entirely. */
+  remove(id: string): void {
+    const live = this.#chats.get(id);
+    if (live) { live.close(); this.#chats.delete(id); }
     this.#store.remove(id);
     this.onChatRemoved?.(id);
-    if (id === this.#rec.id) {
-      const next = this.#store.list()[0];
-      await this.#activate((next && this.#store.read(next.id)) || this.#blank());
-    } else {
-      this.#emitAll({ kind: "chats", chats: this.list(), activeId: this.#rec.id });
-    }
+    this.onListChanged?.();
   }
 
-  async #activate(rec: ChatRecord): Promise<void> {
-    this.#session?.close();
-    this.#rec = rec;
-    this.#session = new Session(rec.cwd ?? this.#workspace, this.#record);
-
-    if (this.#mode !== "default") void this.#session.setMode(this.#mode);
-
-    this.#session
-      .start(rec.sdkSessionId ?? undefined, rec.granted)
-      .catch((err) => this.#record({ kind: "error", message: String(err) }));
-
-    // Save first, so the chat we just activated appears in its own list.
-    this.#save();
-    this.#emitAll({ kind: "cleared" });
-    for (const e of rec.events) this.#emitAll(e);
-    this.#emitAll({ kind: "replayed" });
-    this.#emitAll({ kind: "chats", chats: this.list(), activeId: rec.id });
-    // Always state the mode. Letting the UI keep a stale value is how you end
-    // up believing "Never ask" is on while the session is asking.
-    this.#emitAll({ kind: "mode", mode: this.#mode });
-    // system/init only arrives with the next turn, so the header would show a
-    // stale directory until then. Say it now.
-    this.#emitAll({ kind: "cwd", path: this.cwd });
-    this.#emitAll({ kind: "project", id: this.project.id, name: this.project.name });
-    this.#emitAll(this.#session.status());
+  /** Mode is app-level: set once, applies to every conversation. */
+  async setMode(mode: PermissionMode): Promise<void> {
+    this.#mode = mode;
+    await Promise.all([...this.#chats.values()].map((c) => c.setMode(mode).catch(() => {})));
+    this.#mode = [...this.#chats.values()][0]?.mode ?? mode;
   }
 
-  #scheduleSave(): void {
-    if (this.#saveTimer) return;
-    this.#saveTimer = setTimeout(() => { this.#saveTimer = null; this.#save(); }, 400);
-  }
-
-  /** A copy on disk before anything destructive, so a mistake is recoverable. */
-  #snapshot(why: string): void {
-    try {
-      const dir = join(dirname(this.#store.dir), "chats-snapshots");
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, `${this.#rec.id}-${why}-${Date.now()}.json`),
-        JSON.stringify(this.#rec));
-    } catch { /* a missing snapshot must not block the operation */ }
-  }
-
-  #save(): void {
-    if (!this.#rec) return;
-    this.#rec.sdkSessionId = this.#session.sdkSessionId;
-    this.#rec.granted = this.#session.granted;
-    this.#rec.mode = this.#session.mode;
-    this.#rec.updatedAt = Date.now();
-    this.#store.write(this.#rec);
-  }
+  /** Close everything cleanly. */
+  shutdown(): void { for (const c of this.#chats.values()) c.close(); }
 }

@@ -12,9 +12,10 @@ import { wantsContext } from "./prompt.js";
 import { pruneScreenshots } from "./screenshots.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
+import { resolveProject } from "./projects.js";
 import { ZipFile } from "yazl";
 import { stat } from "node:fs/promises";
-import { setBridge, setShellSource, setWatchSource, setPromptStore } from "./session.js";
+import type { LiveChat } from "./conversation.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
 
@@ -41,25 +42,32 @@ mkdirSync(WORKSPACE, { recursive: true });
 
 // The Chrome extension dials in here; browser tools speak through it.
 const bridge = new BrowserBridge((line) => console.log(`[ext] ${line}`));
-setBridge(bridge);
 
 // The most recently opened shell pane. Several tabs can each have one; the
 // agent reads the newest, which is the one the user is looking at.
 let activeShell: Shell | null = null;
-setShellSource(() => activeShell);
+
+/** Every attached client's list refresher, so a rename shows up everywhere. */
+const clients = new Set<() => void>();
+/** The chat most recently attached to, used when a shell pane asks for a cwd. */
+let lastChat: LiveChat | null = null;
+const lastChatCwd = () => lastChat?.cwd ?? WORKSPACE;
 
 
 
 // Chats live on disk; only the active one has a running SDK session.
 const PROJECTS_ROOT = process.env.CODETERM_PROJECTS_ROOT ?? "/home/dev/projects";
-const convo = new Manager(WORKSPACE, process.env.CODETERM_CHATS ?? join(ROOT, "chats"), PROJECTS_ROOT);
-await convo.boot();
-
-const prompts = new PromptStore(process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"));
-setPromptStore(prompts);
-
 const watches = new WatchRegistry();
-setWatchSource(watches, () => convo.activeId);
+const prompts = new PromptStore(process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"));
+
+const convo = new Manager(
+  WORKSPACE,
+  process.env.CODETERM_CHATS ?? join(ROOT, "chats"),
+  PROJECTS_ROOT,
+  { bridge, getShell: () => activeShell, watches, prompts },
+);
+convo.onListChanged = () => { for (const f of clients) f(); };
+
 convo.onChatRemoved = (id) => {
   const n = watches.removeForChat(id);
   if (n) console.log(`[watch] dropped ${n} watch(es) with the deleted chat`);
@@ -76,14 +84,16 @@ bridge.onEvent((msg) => {
   const w = watches.fire(id, detail);
   if (!w) return;
   console.log(`[watch] fired: ${detail}`);
-  const outcome = convo.watchFired(
-    w.chatId,
+  // Route it to the conversation that set it. If that chat is no longer live
+  // the watch stays on the list for `watch list` to report.
+  const chat = convo.live(w.chatId);
+  if (!chat) { console.log(`[watch] its chat is not live; left on the list`); return; }
+  chat.watchFired(
     w.description,
     detail,
     `A page watch you set has fired. You were waiting for: ${w.description}. ` +
       `What happened: ${detail}. Tell the user, briefly. Do not re-set the watch unless asked.`,
   );
-  if (outcome === "noted") console.log(`[watch] chat not active; left on the list`);
 });
 
 // Expired and long-fired watches should not clutter the list forever.
@@ -176,7 +186,7 @@ const guard: express.RequestHandler = (req, res, next) => {
  * session open.
  */
 app.get("/chats", guard, (_req, res) => {
-  res.json({ active: convo.activeId, projects: convo.projects(), chats: convo.list() });
+  res.json({ projects: convo.projects(), chats: convo.list() });
 });
 
 /** One chat's transcript, so the manage page is not renaming things blind. */
@@ -190,13 +200,14 @@ app.post("/chats/:id", guard, express.json({ limit: "64kb" }), async (req, res) 
   try {
     const id = String(req.params.id);
     const b = req.body as { title?: string; project?: string; open?: boolean };
-    if (typeof b.title === "string" && !convo.rename(id, b.title)) {
-      throw new Error("no such chat");
+    if (typeof b.title === "string") {
+      const chat = convo.get(id);
+      if (!chat?.rename(b.title)) throw new Error("no such chat");
     }
-    if (b.open === true) await convo.open(id);
     if (typeof b.project === "string") {
-      if (id !== convo.activeId) throw new Error("open the chat before moving it");
-      await convo.setProject(b.project);
+      const chat = convo.get(id);
+      if (!chat) throw new Error("no such chat");
+      await chat.setProject(resolveProject(convo.projects(), b.project));
     }
     res.json({ ok: true });
   } catch (e) {
@@ -206,7 +217,7 @@ app.post("/chats/:id", guard, express.json({ limit: "64kb" }), async (req, res) 
 
 app.delete("/chats/:id", guard, async (req, res) => {
   try {
-    await convo.remove(String(req.params.id));
+    convo.remove(String(req.params.id));
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
@@ -214,7 +225,7 @@ app.delete("/chats/:id", guard, async (req, res) => {
 });
 
 app.get("/projects", guard, (_req, res) => {
-  res.json({ active: convo.project.id, projects: convo.projects() });
+  res.json({ projects: convo.projects() });
 });
 
 app.get("/prompts", guard, async (_req, res) => {
@@ -248,7 +259,7 @@ app.get("/files/info", guard, async (_req, res) => {
   // the browsable root, else the root itself.
   let start = "";
   try { start = files.toRel(FILES_ROOT, await files.safePath(FILES_ROOT, WORKSPACE)); } catch { start = ""; }
-  res.json({ root: FILES_ROOT, start, maxUpload: MAX_UPLOAD, cwd: convo.cwd });
+  res.json({ root: FILES_ROOT, start, maxUpload: MAX_UPLOAD, cwd: lastChatCwd() });
 });
 
 app.get("/files/list", guard, async (req, res) => {
@@ -351,111 +362,147 @@ server.on("upgrade", async (req, socket, head) => {
   });
 });
 
-/** The Claude session: gated, streaming, and it survives a reload. */
+/**
+ * Every attached client picks its own conversation, so two browsers can hold
+ * two different chats at once. Before this there was a single active chat and
+ * every screen showed it.
+ */
 function attachAgent(ws: WebSocket, replay = true): void {
-  const send = (e: ClientEvent) => {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(e));
+  const send = (e: ClientEvent) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(e)); };
+
+  // Land on the most recent chat; the client can switch immediately.
+  const startId = convo.newestId();
+  let chat: LiveChat = (startId && convo.get(startId)) || convo.create();
+  lastChat = chat;
+
+  const listFor = () => send({ kind: "chats", chats: convo.list(), activeId: chat.id });
+  const enter = (next: LiveChat, clear: boolean) => {
+    chat.detach(send);
+    chat = next;
+    lastChat = next;
+    if (clear) send({ kind: "cleared" });
+    next.attach(send, true);
+    listFor();
+    send({ kind: "mode", mode: convo.mode });
+    const p = next.project(convo.projects());
+    send({ kind: "project", id: p.id, name: p.name });
   };
-  console.log(`[ws] client attached${replay ? "" : " (observer)"}`);
-  // Replays the whole conversation, including any approval still awaiting you —
-  // unless this is a pure observer (?observe=1).
-  convo.attach(send, replay);
+
+  chat.attach(send);
+  listFor();
+  send({ kind: "mode", mode: convo.mode });
+  {
+    const p = chat.project(convo.projects());
+    send({ kind: "project", id: p.id, name: p.name });
+  }
 
   ws.on("message", (raw) => {
     let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string;
                answers?: unknown; withTab?: boolean; path?: string; title?: string };
     try { msg = JSON.parse(raw.toString()); } catch { return; }
-    const session = convo.session;
 
     switch (msg.type) {
       case "prompt": {
         if (typeof msg.text !== "string" || !msg.text.trim()) return;
-        if (session.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
+        if (chat.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
         const text = msg.text;
-        // Ask the browser what the user is looking at. Never blocks the turn:
-        // activeTab resolves to null on timeout, restriction or no extension.
+        const target = chat;
         const attach = msg.withTab !== false && wantsContext(text);
         void (attach ? bridge.activeTab() : Promise.resolve(null)).then((tab) => {
           const context = tab?.url
             ? [`active tab: ${tab.title ?? "(untitled)"} — ${tab.url}`,
                tab.selection ? `selected text:\n${tab.selection}` : null].filter(Boolean).join("\n")
             : undefined;
-          convo.recordUser(text, context);
-          session.send(text, context);
+          target.recordUser(text, context);
+          target.session.send(text, context);
         });
         return;
       }
 
       case "answer":
         if (typeof msg.id === "string" && msg.answers && typeof msg.answers === "object") {
-          convo.session.answer(msg.id, msg.answers as Record<string, string>);
+          chat.session.answer(msg.id, msg.answers as Record<string, string>);
         }
         return;
 
       case "decision":
-        if (typeof msg.id === "string" && (msg.decision === "allow" || msg.decision === "always" || msg.decision === "deny")) {
-          session.decide(msg.id, msg.decision);
+        if (typeof msg.id === "string" &&
+            (msg.decision === "allow" || msg.decision === "always" || msg.decision === "deny")) {
+          chat.session.decide(msg.id, msg.decision);
         }
         return;
 
       case "cwd": {
         if (typeof msg.path !== "string") return;
-        // Same containment rule as the file browser, so a typo cannot point
-        // the agent somewhere unexpected.
+        const target = chat;
         files.safePath(FILES_ROOT, msg.path)
           .then(async (abs) => {
             const st = await stat(abs);
             if (!st.isDirectory()) throw new Error("not a directory");
-            await convo.setCwd(abs);
+            await target.setCwd(abs);
           })
           .catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
         return;
       }
 
+      case "project":
+        if (typeof msg.id === "string") {
+          chat.setProject(resolveProject(convo.projects(), msg.id))
+            .catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
+        }
+        return;
+
       case "mode":
         if (msg.mode === "default" || msg.mode === "acceptEdits" || msg.mode === "auto" ||
             msg.mode === "plan" || msg.mode === "dontAsk" || msg.mode === "bypassPermissions") {
-          convo.setMode(msg.mode).catch((e) => send({ kind: "error", message: String(e) }));
+          convo.setMode(msg.mode)
+            .then(() => send({ kind: "mode", mode: convo.mode }))
+            .catch((e: unknown) => send({ kind: "error", message: String(e) }));
         }
         return;
 
       case "interrupt":
-        session.interrupt().catch(() => {});
+        chat.session.interrupt().catch(() => {});
         return;
 
       case "new":
-        convo.create().catch((e: unknown) => send({ kind: "error", message: String(e) }));
+        enter(convo.create(chat), true);
         return;
 
-      case "open":
-        if (typeof msg.id === "string") {
-          convo.open(msg.id).catch((e: unknown) => send({ kind: "error", message: String(e) }));
-        }
+      // Switches THIS client only. Another browser keeps whatever it was on.
+      case "open": {
+        if (typeof msg.id !== "string" || msg.id === chat.id) return;
+        const next = convo.get(msg.id);
+        if (next) enter(next, true);
         return;
-
-      case "project":
-        if (typeof msg.id === "string") {
-          convo.setProject(msg.id).catch((e: unknown) =>
-            send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
-        }
-        return;
+      }
 
       case "rename":
-        if (typeof msg.id === "string" && typeof msg.title === "string") convo.rename(msg.id, msg.title);
+        if (typeof msg.id === "string" && typeof msg.title === "string") {
+          convo.get(msg.id)?.rename(msg.title);
+        }
         return;
 
       case "delete":
         if (typeof msg.id === "string") {
-          convo.remove(msg.id).catch((e: unknown) => send({ kind: "error", message: String(e) }));
+          const removingCurrent = msg.id === chat.id;
+          convo.remove(msg.id);
+          if (removingCurrent) {
+            const nextId = convo.newestId();
+            enter((nextId && convo.get(nextId)) || convo.create(), true);
+          } else listFor();
         }
         return;
     }
   });
 
-  // A closed tab must NOT end the session — that is the whole point.
-  const detach = () => { console.log(`[ws] client detached${replay ? "" : " (observer)"}`); convo.detach(send); };
+  const detach = () => { chat.detach(send); clients.delete(refresh); };
   ws.on("close", detach);
   ws.on("error", detach);
+
+  // Keep every client's chat list current when a title or project changes.
+  const refresh = () => listFor();
+  clients.add(refresh);
 }
 
 /** The shell: a real PTY, no approval gate. */
@@ -476,7 +523,8 @@ function attachShell(ws: WebSocket): void {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     switch (msg.type) {
       // The shell opens where the chat works, so both panes agree.
-      case "start":  shell.start(convo.cwd, msg.cols ?? 80, msg.rows ?? 24); return;
+      // The shell opens where the newest attached chat works.
+      case "start":  shell.start(lastChatCwd(), msg.cols ?? 80, msg.rows ?? 24); return;
       case "input":  if (typeof msg.data === "string") shell.write(msg.data); return;
       case "resize": shell.resize(msg.cols ?? 80, msg.rows ?? 24); return;
     }

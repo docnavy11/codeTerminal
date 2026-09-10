@@ -65,22 +65,21 @@ const READ_ONLY = ["Read", "Glob", "Grep", "NotebookRead", "TodoWrite"];
  */
 export const ALLOW_BYPASS = process.env.CODETERM_ALLOW_BYPASS === "1";
 
-let BRIDGE: BrowserBridge | null = null;
-export function setBridge(b: BrowserBridge): void { BRIDGE = b; }
-
-/** Resolved lazily: the shell pane comes and goes as tabs open and close. */
-let GET_SHELL: () => Shell | null = () => null;
-export function setShellSource(f: () => Shell | null): void { GET_SHELL = f; }
-
-let PROMPTS: PromptStore | null = null;
-export function setPromptStore(p: PromptStore): void { PROMPTS = p; }
-
-let WATCHES: WatchRegistry | null = null;
-let CURRENT_CHAT: () => string = () => "";
-export function setWatchSource(w: WatchRegistry, chat: () => string): void {
-  WATCHES = w;
-  CURRENT_CHAT = chat;
-}
+/**
+ * What a session needs from the rest of the server.
+ *
+ * Passed in rather than read from module globals: with several sessions live
+ * at once, a global "current chat" would attribute every session's watches to
+ * whichever chat happened to be last. Each session carries its own id.
+ */
+export type SessionDeps = {
+  chatId: string;
+  bridge: BrowserBridge | null;
+  /** Resolved lazily: the shell pane comes and goes as tabs open and close. */
+  getShell: () => Shell | null;
+  watches: WatchRegistry | null;
+  prompts: PromptStore | null;
+};
 
 /**
  * Browser tools are auto-approved by explicit choice: full control, ungated.
@@ -137,9 +136,12 @@ export class Session {
 
   sdkSessionId: string | null = null;
 
-  constructor(workspace: string, emit: (e: ClientEvent) => void) {
+  #deps: SessionDeps;
+
+  constructor(workspace: string, emit: (e: ClientEvent) => void, deps: SessionDeps) {
     this.#workspace = workspace;
     this.#emit = emit;
+    this.#deps = deps;
   }
 
   get busy() { return this.#busy; }
@@ -150,6 +152,7 @@ export class Session {
   setEmit(emit: (e: ClientEvent) => void): void { this.#emit = emit; }
 
   async start(resumeId?: string, granted: PermissionUpdate[] = []): Promise<void> {
+    const d = this.#deps;
     this.#granted = granted;
     this.#query = query({
       prompt: this.#input,
@@ -166,10 +169,12 @@ export class Session {
         includePartialMessages: true,
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS],
         mcpServers: {
-          terminal: terminalTools(() => GET_SHELL()),
-          ...(BRIDGE ? { browser: browserTools(BRIDGE) } : {}),
-          ...(BRIDGE && WATCHES ? { watch: watchTools(BRIDGE, WATCHES, () => CURRENT_CHAT()) } : {}),
-          ...(PROMPTS ? { prompts: promptTools(PROMPTS) } : {}),
+          terminal: terminalTools(this.#deps.getShell),
+          ...(d.bridge ? { browser: browserTools(d.bridge) } : {}),
+          // The chat id is this session's own, so a watch is always attributed
+          // to the conversation that set it.
+          ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId) } : {}),
+          ...(d.prompts ? { prompts: promptTools(d.prompts) } : {}),
         },
         permissionMode: this.#mode,
         allowDangerouslySkipPermissions: ALLOW_BYPASS,

@@ -490,6 +490,33 @@ So on that event the chat's events are emptied, the title reset, and
 `sdkSessionId` repointed at the new conversation, then every attached client
 is told to clear. Same chat, fresh context, both sides in step.
 
+## Several conversations at once
+
+Each attached client picks its own chat. Two browsers, or a browser and the
+side panel, can hold two different conversations running simultaneously —
+before this there was a single active chat and every screen showed it, so
+switching in one switched everywhere.
+
+`LiveChat` owns one conversation: its record, its session, and the clients
+watching it. `Manager` is a pool of up to four, since each is a real `claude`
+subprocess. When the pool is full the least recently touched **idle** chat is
+evicted; a chat with a client attached is never evicted, however old, because
+someone is looking at it. If everything is in use the pool goes over its cap
+rather than cutting someone off.
+
+`session.ts` no longer has module globals. A session is given its own
+`chatId`, bridge, shell source, watch registry and prompt store — a global
+"current chat" would have attributed every session's watches to whichever was
+last.
+
+Permission mode stays app-level and applies to every conversation, since it is
+a statement about how much you want to be asked, not about one chat.
+
+**Not done: the browser bridge is still single.** All sessions share one
+`/ext` connection, so with two browsers open the browser tools act in whichever
+one holds the bridge. Fine with a single browser; wrong with two. Routing tools
+to the browser a session belongs to is the remaining piece.
+
 ## Chats
 
 Conversations are kept as one JSON file each under `chats/`, listed newest
