@@ -58,6 +58,24 @@ export class BrowserBridge {
     ws.on("error", drop);
   }
 
+  /**
+   * What the user is looking at right now, for ambient context on a prompt.
+   * Never throws and never blocks a turn for long: no extension, a restricted
+   * page or a slow reply all just mean "no context this time".
+   */
+  async activeTab(timeoutMs = 2500): Promise<{ title?: string; url?: string; selection?: string } | null> {
+    if (!this.connected) return null;
+    try {
+      const race = await Promise.race([
+        this.send("active_tab", {}),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("slow")), timeoutMs)),
+      ]);
+      return race as { title?: string; url?: string; selection?: string };
+    } catch {
+      return null;
+    }
+  }
+
   /** Send one command and await its reply. Rejects rather than hanging. */
   send(action: string, params: Record<string, unknown>): Promise<unknown> {
     if (!this.connected) {

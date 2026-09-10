@@ -77,8 +77,8 @@ export class Manager {
     for (const emit of this.#live) emit(e);
   }
 
-  recordUser(text: string): void {
-    this.#record({ kind: "user", text });
+  recordUser(text: string, context?: string): void {
+    this.#record({ kind: "user", text, context });
     if (this.#rec.title === "New chat") {
       this.#rec.title = titleFrom(this.#rec.events);
       this.#save();

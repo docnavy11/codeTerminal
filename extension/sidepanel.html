@@ -59,6 +59,10 @@
   .msg.md code { font-size:0.833rem; background:var(--inline); border-radius:3px;
                  padding:1px 4px; overflow-wrap:anywhere; }
   .user { color:var(--accent); border-left:2px solid var(--accent); padding-left:8px; }
+  .ctx { color:var(--dim); font-size:0.75rem; border-left:2px solid var(--line);
+         padding-left:8px; margin-top:-3px; overflow:hidden; text-overflow:ellipsis;
+         white-space:nowrap; }
+  button.off { opacity:.5; }
   /* A tool line is a one-line summary; a long JSON arg must not force the
      whole transcript to scroll sideways. */
   .tool { color:var(--dim); font-size:0.833rem;
@@ -120,6 +124,7 @@
     <option value="bypassPermissions">Never ask</option>
   </select>
   <button id="newchat">New</button>
+  <button id="tabctx" title="Attach the active tab to each prompt">tab</button>
   <button id="theme" title="Theme">auto</button>
   <button id="fsdown" title="Smaller">A−</button>
   <button id="fsup" title="Larger">A+</button>

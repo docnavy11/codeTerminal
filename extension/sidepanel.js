@@ -59,7 +59,12 @@ function handle(m) {
       break;
     case "cleared":  log.replaceChildren(); cost = 0; lastText = null; break;
     case "replayed": lastText = null; break;
-    case "user":     el("msg user", m.text); lastText = null; break;
+    case "user": {
+      el("msg user", m.text);
+      if (m.context) { const c = el("ctx", "⌁ " + m.context.split("\n")[0]); c.title = m.context; }
+      lastText = null;
+      break;
+    }
     case "local":    el("local", m.text); lastText = null; break;
     case "text":
       if (lastText) lastRaw += "\n" + m.text; else { lastText = el("msg md"); lastRaw = m.text; }
@@ -225,7 +230,7 @@ box.addEventListener("keydown", (e) => {
   e.preventDefault();
   const text = box.value.trim();
   if (!text || busy || ws?.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "prompt", text }));
+  ws.send(JSON.stringify({ type: "prompt", text, withTab }));
   box.value = ""; box.style.height = "auto"; lastText = null;
 });
 box.addEventListener("input", () => {
@@ -257,6 +262,15 @@ $("fsup").onclick   = () => { fontSize = clampFs(fontSize + 1); applyFontSize();
 $("fsdown").onclick = () => { fontSize = clampFs(fontSize - 1); applyFontSize(); };
 $("theme").onclick  = () => { theme = { auto: "light", light: "dark", dark: "auto" }[theme]; applyTheme(); };
 
+let withTab = localStorage.getItem("ct.tab") !== "0";
+function paintTab() {
+  $("tabctx").textContent = withTab ? "tab" : "tab off";
+  $("tabctx").classList.toggle("off", !withTab);
+  localStorage.setItem("ct.tab", withTab ? "1" : "0");
+}
+$("tabctx").onclick = () => { withTab = !withTab; paintTab(); };
+
 applyFontSize();
 applyTheme();
+paintTab();
 connect();

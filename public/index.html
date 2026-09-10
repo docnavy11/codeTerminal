@@ -68,6 +68,10 @@
   .msg.md { white-space:normal; }
   .msg.md pre, .msg.md pre code { white-space:pre; }
   .user { color:var(--accent); border-left:2px solid var(--accent); padding-left:10px; }
+  .ctx { color:var(--dim); font-size:0.792rem; border-left:2px solid var(--line);
+         padding-left:10px; margin-top:-3px; overflow:hidden; text-overflow:ellipsis;
+         white-space:nowrap; }
+  button.off { opacity:.5; }
 
   /* rendered markdown (Claude's replies) */
   .md { white-space:normal; }
@@ -211,6 +215,7 @@
     <option value="plan">Plan only (no changes)</option>
     <option value="bypassPermissions">Never ask</option>
   </select>
+  <button id="tabctx" class="small" title="Attach the active browser tab to each prompt">tab: on</button>
   <button id="theme" class="small" title="Theme: auto / light / dark">auto</button>
   <button id="fsdown" class="small" title="Smaller text">A−</button>
   <button id="fsup" class="small" title="Larger text">A+</button>
@@ -307,6 +312,17 @@ function applyTermTheme() {
     blue: v("--accent"), magenta: "#bb9af7", cyan: "#7dcfe0", white: v("--fg"),
   };
 }
+
+/* Every prompt otherwise ships the current URL, so make it visible and optional. */
+let withTab = localStorage.getItem("ct.tab") !== "0";
+const tabBtn = document.getElementById("tabctx");
+function paintTab() {
+  tabBtn.textContent = withTab ? "tab: on" : "tab: off";
+  tabBtn.classList.toggle("off", !withTab);
+  localStorage.setItem("ct.tab", withTab ? "1" : "0");
+}
+tabBtn.onclick = () => { withTab = !withTab; paintTab(); };
+paintTab();
 
 document.getElementById("fsup").onclick   = () => { fontSize = clampFs(fontSize + 1); applyFontSize(); };
 document.getElementById("fsdown").onclick = () => { fontSize = clampFs(fontSize - 1); applyFontSize(); };
@@ -423,7 +439,15 @@ function connectAgent() {
         opt.textContent = m.canBypass ? "Never ask" : "Never ask (set CODETERM_ALLOW_BYPASS=1)";
         break;
       }
-      case "user": el("msg user", m.text); lastText = null; break;
+      case "user": {
+        el("msg user", m.text);
+        if (m.context) {
+          const c = el("ctx", "⌁ " + m.context.split("\n")[0]);
+          c.title = m.context;
+        }
+        lastText = null;
+        break;
+      }
       case "local": el("local", m.text); lastText = null; break;
       case "commands": COMMANDS = m.commands; break;
       case "cleared": log.replaceChildren(); cost = 0; lastText = null; break;
@@ -634,7 +658,7 @@ function pick(i) {
 function send() {
   const text = box.value.trim();
   if (!text || busy || agentWs?.readyState !== WebSocket.OPEN) return;
-  agentWs.send(JSON.stringify({ type: "prompt", text }));
+  agentWs.send(JSON.stringify({ type: "prompt", text, withTab }));
   box.value = ""; box.style.height = "auto";
   menu.classList.remove("open"); matches = [];
   lastText = null;

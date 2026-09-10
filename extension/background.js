@@ -102,6 +102,19 @@ async function run(tabId, fn, args = []) {
 
 async function handle(action, p) {
   switch (action) {
+    // Ambient context for a prompt: what the user is actually looking at.
+    // Deliberately small — title, url, and any selected text.
+    case "active_tab": {
+      const t = await activeTab();
+      let selection = "";
+      try {
+        selection = await run(t.id, () => (window.getSelection?.().toString() ?? "").trim().slice(0, 2000));
+      } catch {
+        // Restricted page (chrome://, the web store): title and url still work.
+      }
+      return { id: t.id, title: t.title, url: t.url, selection };
+    }
+
     case "list_tabs": {
       const tabs = await chrome.tabs.query({});
       return tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, active: t.active, windowId: t.windowId }));

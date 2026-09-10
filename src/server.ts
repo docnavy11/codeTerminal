@@ -199,17 +199,28 @@ function attachAgent(ws: WebSocket): void {
   convo.attach(send);
 
   ws.on("message", (raw) => {
-    let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string; answers?: unknown };
+    let msg: { type?: string; text?: string; id?: string; decision?: string; mode?: string;
+               answers?: unknown; withTab?: boolean };
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     const session = convo.session;
 
     switch (msg.type) {
-      case "prompt":
+      case "prompt": {
         if (typeof msg.text !== "string" || !msg.text.trim()) return;
         if (session.busy) { send({ kind: "error", message: "Still working — press Stop first." }); return; }
-        convo.recordUser(msg.text);
-        session.send(msg.text);
+        const text = msg.text;
+        // Ask the browser what the user is looking at. Never blocks the turn:
+        // activeTab resolves to null on timeout, restriction or no extension.
+        void (msg.withTab === false ? Promise.resolve(null) : bridge.activeTab()).then((tab) => {
+          const context = tab?.url
+            ? [`active tab: ${tab.title ?? "(untitled)"} — ${tab.url}`,
+               tab.selection ? `selected text:\n${tab.selection}` : null].filter(Boolean).join("\n")
+            : undefined;
+          convo.recordUser(text, context);
+          session.send(text, context);
+        });
         return;
+      }
 
       case "answer":
         if (typeof msg.id === "string" && msg.answers && typeof msg.answers === "object") {
