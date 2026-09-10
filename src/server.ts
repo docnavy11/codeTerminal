@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import type { ClientEvent } from "./session.js";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
+import * as files from "./files.js";
 import { setBridge } from "./session.js";
 import { Shell } from "./shell.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback } from "./tailnet.js";
@@ -17,6 +18,12 @@ const ROOT = join(HERE, "..");
 const HOST = process.env.CODETERM_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.CODETERM_PORT ?? 8123);
 const WORKSPACE = process.env.CODETERM_WORKSPACE ?? join(ROOT, "workspace");
+// The shell pane is already a full shell as this user, so scoping the file
+// browser tighter than that would be theatre. Root is configurable; it opens
+// in the workspace.
+const FILES_ROOT = process.env.CODETERM_FILES_ROOT ?? "/home/dev";
+const MAX_UPLOAD = Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024);
+
 const EXTRA_ORIGINS = (process.env.CODETERM_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
 if (HOST === "0.0.0.0" || HOST === "::") {
@@ -92,6 +99,64 @@ async function identityReason(req: IncomingMessage): Promise<string | null> {
 }
 
 const app = express();
+
+/**
+ * Same two checks as a WebSocket upgrade. Static assets stay open — they are
+ * inert without a session — but anything touching the filesystem does not.
+ */
+const guard: express.RequestHandler = (req, res, next) => {
+  denyReason(req, "/files").then((deny) => {
+    if (!deny) return next();
+    console.warn(`[deny] ${req.method} ${req.path} — ${deny}`);
+    res.status(403).json({ error: deny });
+  }).catch((e) => res.status(500).json({ error: String(e) }));
+};
+
+app.get("/files/info", guard, async (_req, res) => {
+  // Where the browser should open: the agent's workspace when it sits under
+  // the browsable root, else the root itself.
+  let start = "";
+  try { start = files.toRel(FILES_ROOT, await files.safePath(FILES_ROOT, WORKSPACE)); } catch { start = ""; }
+  res.json({ root: FILES_ROOT, start, maxUpload: MAX_UPLOAD });
+});
+
+app.get("/files/list", guard, async (req, res) => {
+  try {
+    res.json(await files.list(FILES_ROOT, typeof req.query.path === "string" ? req.query.path : undefined));
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.get("/files/read", guard, async (req, res) => {
+  try {
+    const path = String(req.query.path ?? "");
+    const f = await files.statFile(FILES_ROOT, path);
+    if (req.query.preview === "1") {
+      const t = await files.readTextPreview(f.abs, 256 * 1024);
+      res.json(t ? { kind: "text", name: f.name, ...t } : { kind: "binary", name: f.name, bytes: f.size });
+      return;
+    }
+    // Let the browser name the download; the client also sets its own.
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(f.name)}"`);
+    res.setHeader("Content-Length", String(f.size));
+    files.streamFile(f.abs).pipe(res);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+app.post("/files/upload", guard, express.raw({ type: "*/*", limit: MAX_UPLOAD }), async (req, res) => {
+  try {
+    const name = String(req.query.name ?? "");
+    const dir = typeof req.query.path === "string" ? req.query.path : undefined;
+    if (!name) throw new Error("missing ?name=");
+    res.json(await files.saveUpload(FILES_ROOT, dir, name, req.body as Buffer));
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 app.use(express.static(join(ROOT, "public")));
 app.use("/vendor/xterm", express.static(join(ROOT, "node_modules/@xterm/xterm")));
 app.use("/vendor/addon-fit", express.static(join(ROOT, "node_modules/@xterm/addon-fit")));
@@ -247,6 +312,7 @@ function announce(): void {
   console.log(`workspace      ${WORKSPACE}`);
   console.log(`shell          /pty — real PTY, NO approval gate`);
   console.log(`browser        /ext — extension bridge, tools ungated`);
+  console.log(`files          ${FILES_ROOT} (browse, upload, download)`);
   console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
 }
 

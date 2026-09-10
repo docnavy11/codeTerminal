@@ -171,6 +171,31 @@
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.25 } }
   #status .jump { color:var(--warn); text-decoration:underline; cursor:pointer; }
 
+  .pane-hd .tab { cursor:pointer; padding:1px 6px; border-radius:3px; }
+  .pane-hd .tab.on { color:var(--fg); background:var(--btn); }
+  .pane-hd .tab:hover:not(.on) { color:var(--fg); }
+
+  #files { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .fbar { display:flex; align-items:center; gap:5px; padding:5px 8px; flex-shrink:0;
+          border-bottom:1px solid var(--line); background:var(--panel); }
+  .fbar button { font-size:0.833rem; padding:2px 7px; }
+  .fpath { flex:1; color:var(--dim); font-size:0.833rem; overflow:hidden;
+           text-overflow:ellipsis; white-space:nowrap; }
+  .flist { flex:1; min-height:0; overflow:auto; }
+  .flist .row { display:flex; align-items:center; gap:8px; padding:3px 9px; cursor:pointer; }
+  .flist .row:hover { background:var(--btn); }
+  .flist .row .n { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .flist .row.dir .n { color:var(--accent); }
+  .flist .row .s { color:var(--dim); font-size:0.792rem; flex-shrink:0;
+                   font-variant-numeric:tabular-nums; }
+  .flist .row .dl { color:var(--dim); flex-shrink:0; padding:0 3px; }
+  .flist .row .dl:hover { color:var(--ok); }
+  .flist.drop { outline:2px dashed var(--accent); outline-offset:-4px; }
+  .fview { flex:1; min-height:0; overflow:auto; padding:9px; }
+  .fview pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:0.833rem; }
+  .fview img { max-width:100%; }
+  .fview .hd { display:flex; gap:8px; align-items:center; margin-bottom:7px; color:var(--dim); }
+
   #term { flex:1; min-height:0; padding:6px 0 0 8px; }
   .xterm-viewport::-webkit-scrollbar { width:9px; }
   .xterm-viewport::-webkit-scrollbar-thumb { background:var(--line); border-radius:5px; }
@@ -210,8 +235,23 @@
   <div id="grip"></div>
 
   <div class="pane" id="right">
-    <div class="pane-hd">shell <span class="warn">no approval gate</span></div>
+    <div class="pane-hd">
+      <span class="tab on" data-tab="shell">shell</span>
+      <span class="tab" data-tab="files">files</span>
+      <span class="warn" id="rightnote">no approval gate</span>
+    </div>
     <div id="term"></div>
+    <div id="files" hidden>
+      <div class="fbar">
+        <button id="fup" title="Up one level">↑</button>
+        <span id="fpath" class="fpath">/</span>
+        <button id="frefresh" title="Refresh">⟳</button>
+        <button id="fupload">Upload</button>
+        <input type="file" id="fpick" multiple hidden>
+      </div>
+      <div id="flist" class="flist"></div>
+      <div id="fview" class="fview" hidden></div>
+    </div>
   </div>
 </div>
 
@@ -754,6 +794,190 @@ grip.addEventListener("pointerdown", (e) => {
   };
   grip.addEventListener("pointermove", move);
   grip.addEventListener("pointerup", up);
+});
+
+/* ---------------- files pane ---------------- */
+const flist = document.getElementById("flist");
+const fview = document.getElementById("fview");
+const fpath = document.getElementById("fpath");
+const fpick = document.getElementById("fpick");
+let cwdPath = "";          // relative to the server's browsable root
+let parentPath = null;
+let filesRootNote = "";
+
+/** First open: ask the server where the root is and where to start. */
+async function openFiles() {
+  try {
+    const info = await fjson("/files/info");
+    filesRootNote = info.root;
+    document.getElementById("rightnote").textContent = info.root;
+    await browse(info.start ?? "");
+  } catch (e) {
+    flist.replaceChildren(Object.assign(document.createElement("div"),
+      { className: "row", textContent: `Cannot open file browser: ${e.message}` }));
+  }
+}
+
+const fmtSize = (n) =>
+  n < 1024 ? `${n} B`
+  : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB`
+  : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB`
+  : `${(n / 1024 ** 3).toFixed(2)} GB`;
+
+const fmtWhen = (ms) => {
+  if (!ms) return "";
+  const d = new Date(ms), now = Date.now();
+  return now - ms < 86400000
+    ? d.toTimeString().slice(0, 5)
+    : d.toISOString().slice(0, 10);
+};
+
+async function fjson(url, opts) {
+  const r = await fetch(url, opts);
+  const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+  return body;
+}
+
+async function browse(path = "") {
+  fview.hidden = true; flist.hidden = false;
+  try {
+    const d = await fjson(`/files/list?path=${encodeURIComponent(path)}`);
+    cwdPath = d.path; parentPath = d.parent;
+    const shown = "/" + (d.path || "");
+    // Keep the tail, which is the part that identifies where you are.
+    fpath.textContent = shown.length > 48 ? "…/" + shown.slice(-46) : shown;
+    fpath.title = shown;
+    flist.replaceChildren(...d.entries.map(rowFor));
+    if (!d.entries.length) {
+      flist.append(Object.assign(document.createElement("div"),
+        { className: "row", textContent: "(empty)" }));
+    }
+  } catch (e) {
+    flist.replaceChildren(Object.assign(document.createElement("div"),
+      { className: "row", textContent: String(e.message) }));
+  }
+}
+
+function rowFor(e) {
+  const row = document.createElement("div");
+  row.className = "row" + (e.kind === "dir" ? " dir" : "");
+  const full = cwdPath ? `${cwdPath}/${e.name}` : e.name;
+
+  const n = document.createElement("span");
+  n.className = "n";
+  n.textContent = e.kind === "dir" ? e.name + "/" : e.name;
+  const s = document.createElement("span");
+  s.className = "s";
+  s.textContent = e.kind === "dir" ? "" : `${fmtSize(e.size)}  ${fmtWhen(e.mtime)}`;
+  row.append(n, s);
+
+  if (e.kind === "file") {
+    const dl = document.createElement("span");
+    dl.className = "dl"; dl.textContent = "↓"; dl.title = "Download";
+    dl.onclick = (ev) => { ev.stopPropagation(); download(full, e.name); };
+    row.append(dl);
+  }
+  row.onclick = () => (e.kind === "dir" ? browse(full) : view(full, e));
+  return row;
+}
+
+/**
+ * Fetched as a blob rather than linked directly: a plain <a href> navigation
+ * sends no Origin header, and the server's guard wants one.
+ */
+async function download(path, name) {
+  const r = await fetch(`/files/read?path=${encodeURIComponent(path)}`);
+  if (!r.ok) { alert(`Download failed: ${r.status}`); return; }
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+async function view(path, entry) {
+  flist.hidden = true; fview.hidden = false;
+  fview.replaceChildren();
+
+  const hd = document.createElement("div");
+  hd.className = "hd";
+  const back = document.createElement("button");
+  back.textContent = "← back";
+  back.onclick = () => browse(cwdPath);
+  const dl = document.createElement("button");
+  dl.textContent = "Download";
+  dl.onclick = () => download(path, entry.name);
+  const label = document.createElement("span");
+  label.textContent = `${entry.name} · ${fmtSize(entry.size)}`;
+  hd.append(back, dl, label);
+  fview.append(hd);
+
+  if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(entry.name)) {
+    const r = await fetch(`/files/read?path=${encodeURIComponent(path)}`);
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(await r.blob());
+    fview.append(img);
+    return;
+  }
+  try {
+    const d = await fjson(`/files/read?path=${encodeURIComponent(path)}&preview=1`);
+    const pre = document.createElement("pre");
+    pre.textContent = d.kind === "text"
+      ? d.text + (d.truncated ? "\n…[truncated]" : "")
+      : `Binary file, ${fmtSize(d.bytes)}. Use Download.`;
+    fview.append(pre);
+  } catch (e) {
+    fview.append(Object.assign(document.createElement("pre"), { textContent: String(e.message) }));
+  }
+}
+
+async function upload(fileList) {
+  for (const f of fileList) {
+    try {
+      await fjson(`/files/upload?path=${encodeURIComponent(cwdPath)}&name=${encodeURIComponent(f.name)}`,
+        { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } });
+    } catch (e) {
+      alert(`Upload of ${f.name} failed: ${e.message}`);
+    }
+  }
+  browse(cwdPath);
+}
+
+document.getElementById("fup").onclick = () => browse(parentPath ?? "");
+document.getElementById("frefresh").onclick = () => browse(cwdPath);
+document.getElementById("fupload").onclick = () => fpick.click();
+fpick.onchange = () => { if (fpick.files.length) upload([...fpick.files]); fpick.value = ""; };
+
+for (const ev of ["dragenter", "dragover"]) {
+  flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.add("drop"); });
+}
+for (const ev of ["dragleave", "drop"]) {
+  flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.remove("drop"); });
+}
+flist.addEventListener("drop", (e) => {
+  if (e.dataTransfer?.files?.length) upload([...e.dataTransfer.files]);
+});
+
+/* right-pane tabs */
+const termEl = document.getElementById("term");
+const filesEl = document.getElementById("files");
+let filesLoaded = false;
+document.querySelectorAll(".pane-hd .tab").forEach((tab) => {
+  tab.onclick = () => {
+    const wantFiles = tab.dataset.tab === "files";
+    document.querySelectorAll(".pane-hd .tab").forEach((t) => t.classList.toggle("on", t === tab));
+    termEl.hidden = wantFiles;
+    filesEl.hidden = !wantFiles;
+    document.getElementById("rightnote").textContent =
+      wantFiles ? (filesRootNote || "") : "no approval gate";
+    if (wantFiles) {
+      if (!filesLoaded) { filesLoaded = true; openFiles(); }
+    } else {
+      // xterm mis-measures while display:none, so re-fit on the way back.
+      requestAnimationFrame(() => { try { fit.fit(); sendResize(); } catch {} });
+    }
+  };
 });
 
 connectAgent();

@@ -106,6 +106,35 @@ which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
 
+## File browser
+
+A **files** tab beside the shell: browse, view, download, upload (button or
+drag-and-drop). Text files preview inline, images render, binaries offer a
+download.
+
+Root is `CODETERM_FILES_ROOT`, default `/home/dev`; it opens in the workspace.
+Scoping it tighter than the shell would be theatre — `/pty` is already a full
+shell as this user — but the root is enforced properly all the same.
+
+`GET /files/info | /files/list | /files/read` and `POST /files/upload`, all
+behind the same Origin + `tailscale whois` guard as the WebSockets. Static
+assets stay open, since they are inert without a session.
+
+Downloads go through `fetch` into a blob rather than a plain `<a href>`: a
+top-level navigation sends no `Origin` header, and the guard wants one.
+
+**`safePath` resolves symlinks.** `path.resolve` collapses `..` but does not
+follow links, so a symlink inside the root pointing at `/etc` would pass a
+string-only check — it did, until this was fixed. It now `realpath`s the
+deepest existing component and tests containment on that, which still permits
+naming a file that does not exist yet, as an upload must. Upload filenames go
+through `basename`, so a name like `../../../../tmp/x` lands as `x` in the
+current directory.
+
+Verified: `..`, absolute paths, symlinks out and symlinked files are all
+refused; new and nested-new paths are allowed; a PNG round-trips
+byte-identical; a cross-origin request gets 403.
+
 ## Two CSS traps in this UI
 
 Both cost real debugging time; if the transcript ever looks wrong, check these
