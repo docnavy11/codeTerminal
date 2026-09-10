@@ -131,6 +131,65 @@ Note this changes *which filesystem the agent works on* — your laptop's files,
 not the VPS's. Point the Chrome extension at `ws://localhost:8123/ext` in its
 popup, and it drives the browser on the same machine as before.
 
+### Without tailscale, on a VPS
+
+The whole network boundary is `tailscale whois`. If you do not run tailscale,
+there are three shapes, in order of how well they hold up:
+
+**1. SSH tunnel — recommended.** Run in localhost mode on the VPS
+(`CODETERM_HOST=127.0.0.1`) and forward the port from your laptop:
+
+    ssh -L 8123:localhost:8123 your-vps
+
+Open `http://localhost:8123`. The connection reaches the server as loopback
+(sshd connects to `127.0.0.1:8123` on the VPS side), so it passes the loopback
+exemption; `localhost` is already an allowed Origin. **SSH is the
+authentication** — a stronger boundary than any token, and you already have it.
+No code, nothing to install.
+
+**2. A reverse proxy or tunnel with its own auth.** Caddy, nginx, oauth2-proxy,
+`cloudflared`, Tailscale Funnel — anything on the same box that connects to the
+server over loopback inherits the exemption (verified: a loopback proxy is
+accepted, and a spoofed `X-Forwarded-For` is ignored). The proxy's auth — basic
+auth, OAuth2, Cloudflare Access, mTLS — becomes the boundary. Add the public
+hostname so the Origin check accepts it:
+
+    CODETERM_ORIGINS=claude.yourdomain.com
+
+> **The sharp edge.** The server trusts loopback unconditionally and reads no
+> forwarded headers, so the proxy's auth is the *only* thing between the
+> internet and a root-equivalent ungated shell. A proxy with no auth, or one
+> with an SSRF that reaches `localhost:8123`, is full remote code execution.
+> Only do this if the proxy auth is solid and nothing else on the box can hit
+> that port.
+
+**3. WireGuard (or another VPN).** Bind the tunnel interface's IP and trust the
+tunnel subnet with `CODETERM_TRUSTED_CIDRS`; peers inside it are treated like
+loopback and never touch tailscale:
+
+    CODETERM_HOST=10.44.0.1
+    CODETERM_TRUSTED_CIDRS=10.44.0.0/24,fd00::/8
+
+Binding the tunnel IP (not `0.0.0.0`, which is refused) is what keeps the port
+off the public interface; the CIDR list then says which tunnel peers to admit.
+Every entry must be a private range — a public one, or `0.0.0.0/0`, **refuses to
+start** rather than opening the shell to a typo. Browse to the bound IP, or add
+your chosen name to `CODETERM_ORIGINS`.
+
+Verified on isolated servers: a network bind with no tailscale and a trusted
+CIDR boots and admits a peer from inside the range without ever spawning
+`tailscale`; the same bind with no CIDR refuses; `0.0.0.0/0` and a public
+address mixed into the list both refuse at boot.
+
+**Not supported: a public port with a shared password.** The original token
+was removed on purpose — a secret in a URL guarding an ungated shell leaks
+through logs, referrers and history. Access here is by network position.
+
+    localhost mode + ssh -L               → SSH is the auth (recommended)
+    same-box proxy/tunnel with auth       → the proxy is the auth (mind the edge)
+    tunnel IP + CODETERM_TRUSTED_CIDRS    → the VPN is the auth
+    public port + password                → not offered
+
 ## How it works
 
     browser ─┬─ /ws  ──> session.ts ──Agent SDK──> claude session  (gated)

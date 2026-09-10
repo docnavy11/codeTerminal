@@ -20,6 +20,7 @@ import type { LiveChat } from "./conversation.js";
 import { Shell } from "./shell.js";
 import { heartbeat } from "./heartbeat.js";
 import { whois, self as tailnetSelf, normaliseIp, isLoopback, isLoopbackHost } from "./tailnet.js";
+import { parseTrustedCidrs, ipInAny, type Cidr } from "./cidr.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -145,17 +146,35 @@ const FORCE_LOCAL = process.env.CODETERM_LOCALHOST === "1";
 const SELF: { userId: number; dnsName: string } | null =
   FORCE_LOCAL ? null : await tailnetSelf();
 
-if (!SELF && !isLoopbackHost(HOST)) {
+/**
+ * Extra peer addresses to trust like loopback — for a non-tailscale VPN
+ * (WireGuard, etc.): bind the tunnel interface and trust its subnet. Every
+ * entry must be a private range; a public one is refused here so a typo cannot
+ * open the shell to the internet.
+ */
+let TRUSTED_CIDRS: Cidr[];
+try {
+  TRUSTED_CIDRS = parseTrustedCidrs(process.env.CODETERM_TRUSTED_CIDRS);
+} catch (e) {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+}
+
+// A non-loopback bind needs *some* authenticator: a tailnet identity, or a
+// trusted-CIDR allowlist. Without either it would be an ungated shell reachable
+// with no authentication, so refuse.
+if (!SELF && !isLoopbackHost(HOST) && TRUSTED_CIDRS.length === 0) {
   console.error(
     FORCE_LOCAL
       ? "CODETERM_LOCALHOST=1 serves this machine only, so it needs a loopback bind."
       : "No tailnet identity (`tailscale status --json` failed), and not bound to loopback.",
   );
   console.error("Refusing to start: that would be an ungated shell reachable with no authentication.");
-  console.error("Run tailscale, or set CODETERM_HOST=127.0.0.1 to serve localhost only.");
+  console.error("Fixes: run tailscale · CODETERM_HOST=127.0.0.1 for localhost only ·");
+  console.error("       or CODETERM_TRUSTED_CIDRS=<your VPN subnet> and bind the tunnel interface.");
   process.exit(1);
 }
-const LOCALHOST_ONLY = !SELF;
+const LOCALHOST_ONLY = !SELF && TRUSTED_CIDRS.length === 0;
 
 /**
  * Origins a browser may legitimately be on. A cross-origin page gets rejected
@@ -209,11 +228,11 @@ async function identityReason(req: IncomingMessage): Promise<string | null> {
   const ip = normaliseIp(req.socket.remoteAddress ?? "");
   if (!ip) return "no peer address";
   if (isLoopback(ip)) return null; // same box — already has a shell
+  if (ipInAny(ip, TRUSTED_CIDRS)) return null; // an explicitly trusted VPN subnet
 
-  // Localhost mode has no identity to check a remote peer against, so only the
-  // same machine is allowed. (With a loopback bind this branch is unreachable;
-  // it is the backstop if someone points a network bind at localhost mode.)
-  if (!SELF) return "localhost-only mode: only same-machine connections are allowed";
+  // With no tailnet identity there is nothing to authenticate a remote peer
+  // against beyond the trusted-CIDR list just checked, so refuse the rest.
+  if (!SELF) return "localhost-only mode: only same-machine and trusted-CIDR connections are allowed";
 
   const who = await whois(ip, req.socket.remotePort ?? 0);
   if (!who) return `${ip} is not on this tailnet`;
@@ -716,7 +735,7 @@ function listenWithRetry(attempt = 0): void {
 
 function announce(): void {
   console.log(`code-terminal  http://${HOST}:${PORT}`);
-  console.log(`identity       ${SELF ? `${SELF.dnsName} · tailnet user ${SELF.userId}` : "localhost only — same-machine connections, no tailnet needed"}`);
+  console.log(`identity       ${SELF ? `${SELF.dnsName} · tailnet user ${SELF.userId}` : "no tailnet identity"}`);
   console.log(`workspace      ${WORKSPACE}`);
   console.log(`shell          /pty — real PTY, NO approval gate`);
   console.log(`browser        /ext — extension bridge, tools ungated`);
@@ -725,6 +744,11 @@ function announce(): void {
   console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
   if (LOCALHOST_ONLY) {
     console.log(`mode           localhost only — reachable from this machine, not the network`);
+  } else if (!SELF) {
+    console.log(`mode           trusted-CIDR only — no tailnet; peers authenticated by CODETERM_TRUSTED_CIDRS`);
+  }
+  if (TRUSTED_CIDRS.length) {
+    console.log(`trusted        ${process.env.CODETERM_TRUSTED_CIDRS} (treated like loopback)`);
   }
 }
 
