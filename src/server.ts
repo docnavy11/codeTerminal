@@ -160,6 +160,14 @@ async function denyReason(req: IncomingMessage, route: string): Promise<string |
     if (pinned && origin !== pinned) return `extension ${origin} is not the pinned one`;
     return identityReason(req);
   }
+  // A simple cross-site request (an <img>, a <form> GET, a <script>) carries no
+  // Origin, so the check above never sees it — yet it still issues from the
+  // authorised browser. Sec-Fetch-Site closes that gap: the browser sets it,
+  // page JS cannot forge it, and "cross-site" is exactly the case to refuse.
+  // Same-origin/same-site requests and non-browser clients (which omit it) pass.
+  const site = req.headers["sec-fetch-site"];
+  if (site === "cross-site") return "cross-site request";
+
   // Non-browser clients (curl, scripts) send no Origin. A browser always does,
   // so allowing absence costs nothing against the cross-site vector.
   if (typeof origin === "string" && !ALLOWED_ORIGINS.has(origin)) {

@@ -87,6 +87,12 @@ checks (`denyReason` in `src/server.ts`):
 2. **`tailscale whois`** on the peer address must return your own tailnet
    user id. Anything off-tailnet returns `peer not found` and is refused.
 
+A third guard backs up the first: a request whose **`Sec-Fetch-Site`** is
+`cross-site` is refused outright. That closes the one gap the `Origin` check
+leaves — a simple cross-site request (`<img>`, a `<form>` GET) carries no
+`Origin`, but the browser sets `Sec-Fetch-Site` and page JavaScript cannot
+forge it. Same-origin requests and non-browser clients (which omit it) pass.
+
 Loopback is exempt: a process on this box already has a shell.
 
 Browsing via a `/etc/hosts` alias? Add it to `CODETERM_ORIGINS` or the Origin
@@ -96,6 +102,7 @@ Verified:
 
     good Origin (magicdns / alias / none)  → CONNECTED
     Origin https://evil.example            → 403 on both sockets
+    Sec-Fetch-Site: cross-site             → 403 (CSRF-shape refused)
     whois 8.8.8.8                          → null (off-tailnet refused)
     whois MacBook                          → you@example.com, owner match
 
@@ -104,7 +111,8 @@ Verified:
     browser ─┬─ /ws  ──> session.ts ──Agent SDK──> claude session  (gated)
              └─ /pty ──> shell.ts   ──node-pty───> bash -l         (NOT gated)
 
-Two WebSocket endpoints, one shared token, one shared workspace.
+Two WebSocket endpoints, one shared workspace, no shared secret — access is
+by network position (Origin + tailscale whois), not a token.
 
 `src/session.ts` holds one SDK session per WebSocket. The prompt is an open
 `AsyncIterable` (`src/pushable.ts`), which keeps a single session alive across
@@ -117,9 +125,9 @@ gate both work.
 resize. It starts in the workspace as a login shell, so nvm/PATH are correct.
 
 **It has no approval gate.** The gate constrains Claude; it was never meant to
-constrain you. But it means the token buys a shell as `dev` on this box, which
-is why the server refuses to bind a public interface. `CODETERM_TOKEN` is
-stripped from the shell's environment so a stray `env` doesn't disclose it.
+constrain you. But it means reaching this box's port buys a shell as `dev`,
+which is why the server refuses to bind a public interface and leans on the
+tailnet for its boundary.
 
 xterm is served from `node_modules` under `/vendor/*` rather than a CDN, so the
 UI works with no outbound network. The same goes for `marked` + `DOMPurify`,
@@ -422,6 +430,14 @@ Worth understanding before leaving it on: the agent reads untrusted web pages
 *and* holds your logged-in sessions *and* can act, with no confirmation step.
 A page can contain text addressed to the agent rather than to you. The
 extension's toggle is the off switch.
+
+**Blast radius.** The manifest requests `<all_urls>`, and `list_tabs` returns
+*every* tab in *every* window — `read_page`, `screenshot`, `eval` and the rest
+can then target any of them by id, not just the one in front of you. So a
+prompt-injected page is not limited to itself: it can steer the agent to
+enumerate and read your other tabs — mail, bank, anything open. That is the
+cost of "any tab, all sites, ungated"; the narrower alternative is to scope
+`host_permissions` to specific origins and drop `<all_urls>`.
 
 MV3 note: service workers are evicted after ~30s idle, but since Chrome 116
 WebSocket traffic resets that timer - hence the 20s ping in `background.js`,

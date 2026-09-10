@@ -1,4 +1,4 @@
-import { readdir, stat, unlink } from "node:fs/promises";
+import { readdir, stat, unlink, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -38,6 +38,11 @@ export async function pruneScreenshots(dir = SHOT_DIR, opts: PruneOptions = {}):
   } catch {
     return 0; // no directory yet
   }
+
+  // Screenshots can show logged-in pages, and this dir sits in the shared /tmp.
+  // Tighten it on the boot sweep so a dir left world-readable by an older build
+  // becomes private; new files are already written 0600.
+  await chmod(dir, 0o700).catch(() => {});
 
   const files: { path: string; mtime: number }[] = [];
   for (const n of names) {

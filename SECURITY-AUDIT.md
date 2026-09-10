@@ -17,7 +17,7 @@ places where the code promises a narrower boundary than it enforces.
 
 ## HIGH
 
-> **H1, H2, M1 and M3 are FIXED** (this session), each verified end-to-end on
+> **Every finding is now addressed** (this session): H1, H2, M1, M2, M3, M4, L1, L2, L3, L5 fixed; L4 documented. Original details kept below. Highlights, each verified end-to-end on
 > the live server and mutation-checked:
 > - H1 — the zip endpoint no longer follows symlinks out of the root (0 escaped).
 > - H2 — the exfil pixel is blocked at the network layer (a local listener got 1
@@ -79,7 +79,7 @@ by accident: click a big log in the file browser.
 Fix: read only what you need — open a stream/FD and read the first
 `min(size, cap+8192)` bytes for the NUL sniff and the slice.
 
-### M2 — CSRF hardening gap: no-Origin requests skip the Origin check  ·  now: low · oss: med
+### M2 — CSRF hardening gap: no-Origin requests skip the Origin check  ·  FIXED · was now: low · oss: med
 `denyReason()` only rejects when an Origin header is *present and unlisted*.
 Simple cross-site requests (`<img>`, `<script>`, form-GET) send no Origin, so a
 malicious site open in your browser can drive **no-Origin GETs from your
@@ -139,7 +139,7 @@ doesn't). A half-open TCP connection (laptop sleeps, wifi drops) keeps its
 `MAX_LIVE=4` that's a real way to exhaust the pool with ghosts. Fix: `ws` server
 ping loop with `terminate()` on missed pong.
 
-### L3 — Prompt-injection delimiter is forgeable  ·  now: low
+### L3 — Prompt-injection delimiter is forgeable  ·  FIXED · was now: low
 `composePrompt` wraps untrusted page text in `<browser-context>…</browser-context>`
 but does not escape the closing tag. Verified: page text containing
 `</browser-context>` yields **2** closing tags in the composed prompt — the page
@@ -148,14 +148,14 @@ instruction. The tag is a hint to the model, not a parser boundary, so this is
 soft either way, but escaping `<` in the context (or using an unguessable nonce
 delimiter) removes the trick. `src/prompt.ts:26`.
 
-### L4 — `list_tabs` / screenshots span the whole browser, not the panel  ·  by design, worth documenting
+### L4 — `list_tabs` / screenshots span the whole browser, not the panel  ·  DOCUMENTED · by design
 The extension has `host_permissions: <all_urls>` and `list_tabs` returns every
 tab in every window. This is the documented "full control, ungated" choice, but
 an OSS reader should see it stated: a prompt-injected model can enumerate and
 read every open tab (your bank, your mail) with no gate. Keep, but make the
 blast radius explicit in the README.
 
-### L5 — Screenshots in a predictable world-listable /tmp dir  ·  now: low
+### L5 — Screenshots in a predictable world-listable /tmp dir  ·  FIXED · was now: low
 `/tmp/code-terminal-screenshots` is `0755`, files world-readable. On a
 multi-user box any local user can read captured screenshots (which may show
 logged-in pages). Fix: `0700` on the dir, `mkdtemp`, or write under the

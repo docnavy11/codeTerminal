@@ -3,8 +3,9 @@ import { existsSync } from "node:fs";
 
 /**
  * One PTY per WebSocket. This is a real shell with no approval gate — the gate
- * in session.ts constrains Claude, not you. Anyone holding the token gets this,
- * which is why server.ts refuses to bind a public interface.
+ * in session.ts constrains Claude, not you. Anyone who reaches the port gets
+ * this, which is why server.ts refuses to bind a public interface and gates
+ * access on the tailnet (Origin + whois), not a secret.
  */
 /** Roughly a few hundred lines of output; enough to hold a failed build. */
 const SCROLLBACK_BYTES = 64 * 1024;
@@ -94,7 +95,11 @@ export class Shell {
   }
 }
 
-/** The server's own secret must not leak into the interactive shell. */
+/**
+ * The shell inherits the server's environment. There is no auth token any more
+ * (access is by network position), but strip a legacy CODETERM_TOKEN if one is
+ * still set, so it can never surface in a stray `env`.
+ */
 function shellEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {

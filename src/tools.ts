@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
@@ -31,12 +31,17 @@ async function screenshotToFile(bridge: BrowserBridge, args: Record<string, unkn
     throw new Error("extension returned something that was not a png data url");
   }
   const buf = Buffer.from(r.dataUrl.slice(comma + 1), "base64");
-  await mkdir(SHOT_DIR, { recursive: true });
+  // A screenshot can show a logged-in page — mail, a bank. The dir lives in the
+  // shared /tmp, so keep it and the files private to this user (0700 / 0600)
+  // rather than the umask default of world-readable. chmod covers a dir left
+  // world-readable by an older build.
+  await mkdir(SHOT_DIR, { recursive: true, mode: 0o700 });
+  await chmod(SHOT_DIR, 0o700).catch(() => {});
   // Tidy the last run's leftovers, never this one's. Fire and forget: a
   // failure to clean up must not fail the screenshot.
   void pruneScreenshots();
   const path = join(SHOT_DIR, `tab-${r.tabId}-${Date.now()}.png`);
-  await writeFile(path, buf);
+  await writeFile(path, buf, { mode: 0o600 });
   return { tabId: r.tabId, url: r.url, path, bytes: buf.length, ...(pngSize(buf) ?? {}) };
 }
 
