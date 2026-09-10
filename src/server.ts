@@ -9,6 +9,7 @@ import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
 import { wantsContext } from "./prompt.js";
+import { pruneScreenshots } from "./screenshots.js";
 import { stat } from "node:fs/promises";
 import { setBridge, setShellSource } from "./session.js";
 import { Shell } from "./shell.js";
@@ -357,5 +358,8 @@ function announce(): void {
   console.log(`files          ${FILES_ROOT} (browse, upload, download)`);
   console.log(`origins        ${[...ALLOWED_ORIGINS].join("  ")}`);
 }
+
+// A restart is a good moment to drop what the previous run left behind.
+void pruneScreenshots().then((n) => { if (n) console.log(`[shots] pruned ${n} old screenshots`); });
 
 listenWithRetry();

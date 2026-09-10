@@ -1,16 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
+import { SHOT_DIR, pruneScreenshots } from "./screenshots.js";
 
 const text = (v: unknown) => ({
   content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }],
 });
 
-const SHOT_DIR = join(tmpdir(), "code-terminal-screenshots");
+
 
 /** Width/height straight out of the PNG IHDR, so we need no image dependency. */
 function pngSize(buf: Buffer): { width: number; height: number } | null {
@@ -30,6 +30,9 @@ async function screenshotToFile(bridge: BrowserBridge, args: Record<string, unkn
   }
   const buf = Buffer.from(r.dataUrl.slice(comma + 1), "base64");
   await mkdir(SHOT_DIR, { recursive: true });
+  // Tidy the last run's leftovers, never this one's. Fire and forget: a
+  // failure to clean up must not fail the screenshot.
+  void pruneScreenshots();
   const path = join(SHOT_DIR, `tab-${r.tabId}-${Date.now()}.png`);
   await writeFile(path, buf);
   return { tabId: r.tabId, url: r.url, path, bytes: buf.length, ...(pngSize(buf) ?? {}) };

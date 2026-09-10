@@ -223,6 +223,23 @@ Verified: `..`, absolute paths, symlinks out and symlinked files are all
 refused; new and nested-new paths are allowed; a PNG round-trips
 byte-identical; a cross-origin request gets 403.
 
+## Screenshots
+
+`screenshot` writes a PNG per call and returns the path, because a HiDPI
+capture is ~600k characters of base64 and useless inline. Nothing pruned them,
+so a long-running service accumulated them forever.
+
+`pruneScreenshots` runs at boot and after each capture: files older than six
+hours go, and beyond forty files the oldest go.
+
+The rule that matters is the recency floor — nothing under five minutes old is
+ever deleted. The whole point of a screenshot is that the agent `Read`s the
+path a moment later, so letting a count limit delete a fresh one would break
+the feature it is tidying up after. There is a test for exactly that, and
+removing the floor fails it.
+
+It never throws. Cleaning up must not be able to fail a capture.
+
 ## Tests
 
     npm test          # node:test via tsx
