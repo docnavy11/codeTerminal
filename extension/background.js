@@ -91,7 +91,11 @@ chrome.storage.onChanged.addListener((changes) => {
       setBadge(false);
     }
   } else if (changes.serverUrl && enabled) {
-    ws?.close(1000, "server changed");
+    // A live socket is closed and its onclose reconnects to the new address.
+    // With no socket yet (the address was just set for the first time) there
+    // is nothing to close, so connect directly.
+    if (ws && ws.readyState <= 1) { ws.close(1000, "server changed"); obs?.close(1000, "server changed"); }
+    else { connect(); observeAgent(); }
   }
 });
 

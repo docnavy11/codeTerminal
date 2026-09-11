@@ -215,3 +215,27 @@ def test_tool_rows_keep_their_height_when_the_log_overflows(browser, server):
     assert m["overflowing"], "the test must actually overflow the pane"
     assert m["rows"] == 80 and m["crushed"] == 0, m
     ctx.close()
+
+
+def test_extension_connects_once_its_address_is_set(server):
+    """The real extension in Chromium: it starts with no address (badge 'set'),
+    and connecting must begin the moment the address is stored — not on the
+    next worker restart."""
+    import json, urllib.request, tempfile
+    from playwright.sync_api import sync_playwright
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    prof = tempfile.mkdtemp(prefix="ct-ext-prof-")
+    connected = lambda: json.load(urllib.request.urlopen(server.base + "/setup"))["extension"]["connected"]
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                    args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        time.sleep(1.0)
+        assert connected() == [], "nothing should connect before an address is set"
+        assert sw.evaluate("() => chrome.action.getBadgeText({})") == "set"
+        sw.evaluate("(url) => chrome.storage.local.set({ serverUrl: url })", f"ws://127.0.0.1:{server.port}/ext")
+        t0 = time.time()
+        while time.time() - t0 < 10 and not connected(): time.sleep(0.2)
+        assert len(connected()) == 1, "the extension must connect as soon as the address is set"
+        assert sw.evaluate("() => chrome.action.getBadgeText({})") == "on"
+        ctx.close()

@@ -21,10 +21,18 @@ $("toggle").onclick = async () => {
   setTimeout(paint, 250);
 };
 
-$("url").onchange = async () => {
-  await chrome.storage.local.set({ serverUrl: $("url").value.trim() || DEFAULT_URL });
+// Saved as you type (debounced) and on Enter — not only on blur, which never
+// fires if the popup is closed straight after typing.
+let saveTimer = null;
+async function save() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const v = $("url").value.trim();
+  await chrome.storage.local.set({ serverUrl: v || DEFAULT_URL, enabled: true });
   setTimeout(paint, 250);
-};
+}
+$("url").oninput = () => { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); };
+$("url").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } };
+$("url").onchange = save;
 
 paint();
 setInterval(paint, 1500);
