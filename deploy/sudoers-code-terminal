@@ -1,6 +1,5 @@
-# Removes the password prompt for twelve commands. It does NOT grant dev a new
-# ability: dev is in the sudo group and already has (ALL : ALL) ALL, so it
-# could always restart this unit — after typing a password.
+# Removes the password prompt for twelve commands. It grants the service user
+# no new ability if that user already has sudo — it removes the *password*.
 #
 # The password is the whole point. The agent's /pty shell runs as dev with no
 # password to offer, so a NOPASSWD rule is the only sudo it can actually use.
@@ -16,14 +15,13 @@
 # it would spawn a pager as root — and a pager runs shell commands (!sh), so
 # the line would hand out a root shell. Same reasoning keeps journalctl out.
 #
-# Install:
-#   sudo install -m 0440 -o root -g root \
-#     deploy/sudoers-code-terminal /etc/sudoers.d/code-terminal
+# Install (renders __USER__ for the user running it):
+#   sudo deploy/install.sh --sudoers
 #
 # Remove:
 #   sudo rm /etc/sudoers.d/code-terminal
 
-dev ALL=(root) NOPASSWD: /usr/bin/systemctl restart code-terminal, \
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart code-terminal, \
                          /usr/bin/systemctl restart code-terminal.service, \
                          /usr/bin/systemctl start code-terminal, \
                          /usr/bin/systemctl start code-terminal.service, \

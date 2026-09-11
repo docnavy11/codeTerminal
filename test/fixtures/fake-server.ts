@@ -15,6 +15,7 @@ for (const d of ["ws", "chats", "files", "projects/p1", "home"]) mkdirSync(join(
 writeFileSync(join(ROOT, "files", "hello.txt"), "hello from the fixture\n");
 writeFileSync(join(ROOT, "files", "note.txt"), "note\n");
 writeFileSync(join(ROOT, "files", "blob.txt"), "x".repeat(300_000));
+writeFileSync(join(ROOT, "files", "huge.bin"), Buffer.alloc(5 * 1024 * 1024));   // over the fixture's 4 MB zip cap
 
 const inited = new WeakSet<FakeQuery>();
 const sdk = fakeSdk({ onUser: (m, q) => {

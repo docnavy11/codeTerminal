@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_URL = "ws://devserver.tailnet-1234.ts.net:8123/ext";
+const DEFAULT_URL = "";
 
 async function paint() {
   const s = await chrome.storage.local.get({ enabled: true, serverUrl: DEFAULT_URL });
@@ -9,7 +9,10 @@ async function paint() {
   const badge = await chrome.action.getBadgeText({});
   const live = badge === "on";
   $("dot").classList.toggle("on", live);
-  $("state").textContent = !s.enabled ? "disabled" : live ? "connected" : "connecting…";
+  $("state").textContent = !s.serverUrl ? "not configured" : !s.enabled ? "disabled" : live ? "connected" : "connecting…";
+  $("note").textContent = !s.serverUrl
+    ? "Enter your server's /ext address, e.g. ws://127.0.0.1:8123/ext, then press Enter."
+    : "Claude can read and drive every tab while this is on.";
 }
 
 $("toggle").onclick = async () => {

@@ -1,27 +1,73 @@
 # code terminal
 
-A web UI over a live Claude Code session. The browser sends prompts, the agent
-works in a confined workspace, and every action that could change something
-stops for your approval.
+A web UI, a Chrome side panel and a mobile page over one live Claude Code
+session. You type, the agent works in a workspace on your machine, and every
+action that could change something stops for your approval. Beside it: a real
+terminal, a file browser, saved prompts, and page watches that report back
+when a tab changes. It uses your Claude Code login — no API key, no credits.
 
-Runs on this box (`ubuntu-16gb-nbg1-1-dev-server`) against the Claude Code
-OAuth credentials in `~/.claude` — **no `ANTHROPIC_API_KEY`, no API credits.**
+| desktop `/` | side panel | mobile `/m` |
+|---|---|---|
+| ![desktop](docs/desktop.png) | ![side panel](docs/panel.png) | ![mobile](docs/mobile.png) |
+
+## Quick start
+
+You need **Node ≥ 22** and a **Claude Code login** — the agent runs on the
+OAuth credentials in `~/.claude`, so run `claude` once on this machine and
+log in (`npm i -g @anthropic-ai/claude-code` if you do not have the CLI).
+
+    git clone https://github.com/docnavy11/codeTerminal.git && cd codeTerminal
+    npm install
+    npm start
+
+Open **http://127.0.0.1:8123/**. That is localhost mode: reachable from this
+machine only, nothing else to configure. The first chat explains the pieces.
+
+- **Phone or another device:** bind a tailnet or VPN address instead — see
+  [Authentication](#authentication). There is deliberately no way to bind
+  `0.0.0.0`: the shell pane is a real shell.
+- **Browser control** (read and drive your tabs, page watches): load
+  `extension/` at `chrome://extensions` → Developer mode → *Load unpacked*,
+  click its icon, enter your server as `ws://127.0.0.1:8123/ext`, press Enter.
+  The side panel opens from the same icon. Reload the extension after pulling.
+- **Mobile page:** `http://<host>:8123/m` — add it to the home screen.
+- **As a service** (Linux, systemd): `sudo deploy/install.sh` — see
+  [Running as a service](#running-as-a-service).
+
+Configuration is `.env` (copy `.env.example`; every line is optional).
+
+### Platforms
+
+Developed and run on Linux (Ubuntu, x64) — that is where everything below
+was measured. macOS in localhost mode should work (`node-pty` ships
+prebuilds; nothing here is Linux-only except the systemd unit and the
+`tailscale` CLI, which localhost mode never calls) but **has not been
+tested**. Windows is not supported: the shell pane spawns `bash -l`.
+
+### Everything below is design notes
+
+The rest of this file explains how each part works and, more importantly,
+why it is built the way it is — including the security decisions. Two
+review documents sit beside it: [SECURITY-AUDIT.md](SECURITY-AUDIT.md) and
+[PROD-READINESS.md](PROD-READINESS.md). The module map is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
 
 ## Managing the service
 
 `deploy/sudoers-code-terminal` removes the password prompt for
-restart/start/stop of this one unit:
+restart/start/stop of this one unit, for the user the service runs as:
 
-    sudo install -m 0440 -o root -g root \
-      deploy/sudoers-code-terminal /etc/sudoers.d/code-terminal
+    sudo deploy/install.sh --sudoers
 
-It grants no new ability — `dev` is in the sudo group and already has
-`(ALL : ALL) ALL`. What it removes is the *password*, which matters because
-the agent's `/pty` shell runs as `dev` with no password to offer, so a
-NOPASSWD rule is the only sudo reachable from inside the product.
+It grants no new ability to a user who already has sudo. What it removes is
+the *password*, which matters because the agent's `/pty` shell runs as that
+user with no password to offer, so a NOPASSWD rule is the only sudo
+reachable from inside the product.
 
-No escalation: the unit runs as `dev:dev` and its file is root-owned, so a
-restart starts dev's own code as dev.
+No escalation: the unit runs as that user and its file is root-owned, so a
+restart starts the user's own code as the user.
 
 A restart is clean. systemd stops the unit with SIGTERM, and the server
 handles it: every live chat's pending save is flushed (transcript writes are
@@ -39,8 +85,10 @@ already work unprivileged.
 
     sudo deploy/install.sh
 
-Installs `deploy/code-terminal.service` as a system unit running as `dev`, and
-enables it, so it comes back after a reboot. Then:
+Renders `deploy/code-terminal.service` for the user running it (`__USER__`,
+`__HOME__`, `__REPO__` are filled from `sudo`'s caller and the checkout),
+installs it as a system unit and enables it, so it comes back after a
+reboot. Then:
 
     journalctl -u code-terminal -f
     sudo systemctl restart code-terminal
@@ -50,7 +98,7 @@ no need for `loginctl enable-linger`.
 
 Three things the unit has to get right:
 
-- **`HOME=/home/dev`.** The Agent SDK reads the Claude Code OAuth credentials
+- **`HOME` is set explicitly.** The Agent SDK reads the Claude Code OAuth credentials
   from `~/.claude`, and `settingSources` loads your config from there. Without
   it the service starts and every turn fails to authenticate.
 - **No shell, so node comes from `nvm-exec`.** systemd runs no shell, so nvm is
@@ -72,18 +120,6 @@ the product rather than secure it.
 
 Permission mode is per conversation, and a chat loaded from disk always starts
 in `default`, so a restart can never leave "Never ask" armed.
-
-## Run
-
-    cp .env.example .env
-    npm install
-    npm start
-
-Open `http://devserver.tailnet-1234.ts.net:8123/` from any device on the tailnet.
-No token, no login.
-
-The server refuses to bind `0.0.0.0` — this box has a public IP
-(46.224.183.233) and `/pty` is an ungated shell.
 
 ## Authentication
 
@@ -350,7 +386,7 @@ A **files** tab in both surfaces: beside the shell in the web UI, and beside
 drag-and-drop), create a folder. Text files preview inline, images render, binaries offer a
 download.
 
-Root is `CODETERM_FILES_ROOT`, default `/home/dev`; it opens in the workspace.
+Root is `CODETERM_FILES_ROOT`, default your home directory; it opens in the workspace.
 Scoping it tighter than the shell would be theatre — `/pty` is already a full
 shell as this user — but the root is enforced properly all the same.
 
@@ -631,7 +667,8 @@ live DOM.
 
 ## Projects and the manage page
 
-A **project is a subdirectory of `/home/dev/projects`** — discovered, never
+A **project is a subdirectory of `CODETERM_PROJECTS_ROOT`** (default
+`~/projects`) — discovered, never
 created. Make a directory and it appears; there is nothing to register. Plus
 one overarching **General** project for chats that are not about a directory,
 which is most of them.

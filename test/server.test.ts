@@ -150,6 +150,13 @@ describe("/files", () => {
     assert.equal((await s.post("/files/zip", { path: "", names: ["secret"] })).status, 400, "denied subtree");
     assert.equal((await s.post("/files/zip", { path: "", names: 42 })).status, 400);
   });
+  test("zip ?check=1 answers without streaming, with the same refusals", async () => {
+    const ok = await s.post("/files/zip?check=1", { path: "", names: ["hello.txt", "sub"] });
+    assert.equal(ok.status, 200); assert.equal(ok.body!.ok, true); assert.equal(ok.body!.files, 2);
+    assert.equal(ok.headers.get("content-type")?.includes("json"), true);
+    assert.equal((await s.post("/files/zip?check=1", { path: "", names: ["nope"] })).status, 400);
+    assert.equal((await s.post("/files/zip?check=1", { path: "", names: ["secret"] })).status, 400);
+  });
   test("zip refuses a selection over the cap before streaming", async () => {
     const big = Buffer.alloc(200 * 1024, 1);
     const { writeFile } = await import("node:fs/promises");

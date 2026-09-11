@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { pipeline } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
@@ -55,6 +56,7 @@ export type ServerConfig = {
 
 export function envConfig(): ServerConfig {
   const csv = (v: string | undefined, sepRe: RegExp) => (v ?? "").split(sepRe).map((s) => s.trim()).filter(Boolean);
+  const home = process.env.HOME ?? homedir();
   return {
     host: process.env.CODETERM_HOST ?? "127.0.0.1",
     port: Number(process.env.CODETERM_PORT ?? 8123),
@@ -63,8 +65,8 @@ export function envConfig(): ServerConfig {
     // The shell pane is already a full shell as this user, so scoping the file
     // browser tighter than that would be theatre. Root is configurable; it
     // opens in the workspace.
-    filesRoot: process.env.CODETERM_FILES_ROOT ?? "/home/dev",
-    projectsRoot: process.env.CODETERM_PROJECTS_ROOT ?? "/home/dev/projects",
+    filesRoot: process.env.CODETERM_FILES_ROOT ?? home,
+    projectsRoot: process.env.CODETERM_PROJECTS_ROOT ?? join(home, "projects"),
     promptsPath: process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"),
     usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
     maxUpload: Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024),
@@ -74,7 +76,7 @@ export function envConfig(): ServerConfig {
     trustedCidrSpec: process.env.CODETERM_TRUSTED_CIDRS,
     extOrigin: process.env.CODETERM_EXT_ORIGIN,
     denyExtra: csv(process.env.CODETERM_DENY, /:/),
-    home: process.env.HOME ?? "/home/dev",
+    home,
   };
 }
 
@@ -418,6 +420,9 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
 
       const { entries, bytes } = await files.collectForZip(FILES_ROOT, b.path, names, MAX_ZIP);
       if (!entries.length) throw new Error("nothing to zip — the selection held no files");
+      // ?check=1: the same-origin pages download through a hidden iframe, where
+      // an error body is invisible. They ask first, then submit the form.
+      if (req.query.check === "1") { res.json({ ok: true, files: entries.length, bytes }); return; }
 
       const stem = names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection";
       res.setHeader("Content-Type", "application/zip");

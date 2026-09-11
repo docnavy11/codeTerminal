@@ -1,6 +1,8 @@
 [Unit]
+# Template: deploy/install.sh fills __USER__, __HOME__ and __REPO__ from the
+# user that runs it and the checkout it lives in.
 Description=code terminal — Claude session, shell and browser bridge
-Documentation=file:///home/dev/projects/codeTerminal/README.md
+Documentation=file://__REPO__/README.md
 # Best-effort ordering. The server retries the bind itself, so a late
 # tailscale address is survivable rather than fatal.
 After=network-online.target tailscaled.service
@@ -10,28 +12,28 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=dev
-Group=dev
-WorkingDirectory=/home/dev/projects/codeTerminal
+User=__USER__
+Group=__USER__
+WorkingDirectory=__REPO__
 
 # HOME matters more than usual here: the Agent SDK reads the Claude Code OAuth
 # credentials from ~/.claude, and settingSources loads ~/.claude config.
-Environment=HOME=/home/dev
+Environment=HOME=__HOME__
 Environment=NODE_ENV=production
 # systemd gives no PATH at all. `tailscale` (whois) happens to sit in /usr/bin,
 # which the libc fallback covers, but state it rather than rely on that.
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=/home/dev/projects/codeTerminal/.env
+EnvironmentFile=__REPO__/.env
 
 # systemd gets no shell, so nvm is never on PATH. nvm-exec sources nvm and runs
 # the `default` alias (NODE_VERSION=default), so an `nvm install` does not break
 # the service at its next restart — the unit used to name one exact version.
 # Without nvm: replace the ExecStart with an absolute path to a node >= 22.
-Environment=NVM_DIR=/home/dev/.nvm
+Environment=NVM_DIR=__HOME__/.nvm
 Environment=NODE_VERSION=default
-ExecStart=/bin/bash /home/dev/.nvm/nvm-exec node \
-          /home/dev/projects/codeTerminal/node_modules/tsx/dist/cli.mjs \
-          /home/dev/projects/codeTerminal/src/server.ts
+ExecStart=/bin/bash __HOME__/.nvm/nvm-exec node \
+          __REPO__/node_modules/tsx/dist/cli.mjs \
+          __REPO__/src/server.ts
 
 Restart=always
 RestartSec=3

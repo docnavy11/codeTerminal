@@ -155,3 +155,32 @@ def test_new_folder_inline(page, server):
     page.press("#flist .row.newdir input", "Escape")
     assert page.locator("#flist .row.newdir").count() == 0
     assert page.errors == []
+
+
+def test_welcome_card_on_a_fresh_chat_only(page, server):
+    open_ui(page, server)
+    assert page.locator("#log .welcome").count() == 1
+    assert "approval" in page.text_content("#log .welcome")
+    send(page, "first words"); wait_reply(page, "You said: first words")
+    assert page.locator("#log .welcome").count() == 0
+    page.reload()
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect")
+    time.sleep(0.5)
+    assert page.locator("#log .welcome").count() == 0, "a chat with history gets no card"
+    page.click("#newchat")
+    wait(page, "() => !!document.querySelector('#log .welcome')", what="card on the new chat")
+    page.click("#log .welcome .dismiss")
+    assert page.locator("#log .welcome").count() == 0
+
+
+def test_file_pane_errors_show_inline(page, server):
+    open_ui(page, server)
+    page.click(".tabs .tab[data-view=files]")
+    page.wait_for_selector("#flist .row", timeout=5000)
+    page.click("#flist .row:has(.n:text-is('huge.bin')) .ck")
+    page.click("#fsel button:text-is('zip')")
+    wait(page, "() => (document.querySelector('#flist .ferr')?.textContent || '').includes('too large')", what="zip refusal inline")
+    big = os.path.join(server.root, "toolarge.bin"); open(big, "wb").write(b"\0" * (2 * 1024 * 1024))
+    page.set_input_files("#fpick", big)
+    wait(page, "() => (document.querySelector('#flist .ferr')?.textContent || '').includes('upload failed')", what="upload refusal inline")
+    assert page.errors == []

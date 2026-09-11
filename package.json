@@ -1,6 +1,9 @@
 {
   "name": "code-terminal",
   "version": "0.1.0",
+  "description": "A web UI, Chrome side panel and mobile page over a live Claude Code session: approval-gated agent, real shell, file browser, page watches.",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/docnavy11/codeTerminal.git" },
   "private": true,
   "engines": { "node": ">=22" },
   "type": "module",

@@ -4,7 +4,8 @@
  * MV3 service workers are evicted after ~30s idle. Since Chrome 116, WebSocket
  * traffic resets that timer, so a ping every 20s is what keeps this alive.
  */
-const DEFAULT_URL = "ws://devserver.tailnet-1234.ts.net:8123/ext";
+// No default server: it is yours to set in the popup (ws://host:8123/ext).
+const DEFAULT_URL = "";
 
 // Clicking the toolbar icon opens the Claude side panel. Settings moved to the
 // options page (right-click the icon -> Options), since the icon is taken.
@@ -101,6 +102,7 @@ function setBadge(on) {
 
 function connect() {
   if (!enabled || (ws && ws.readyState <= 1)) return;
+  if (!serverUrl) { setBadge(false); chrome.action.setBadgeText({ text: "set" }); return; }   // not configured yet
   try { ws = new WebSocket(serverUrl); } catch { return retry(); }
 
   ws.onopen = async () => {
@@ -158,8 +160,8 @@ let obs = null, obsTimer = null, turnStartedAt = 0, lastState = "idle";
 const LONG_TURN_MS = 20_000;
 
 function observeAgent() {
-  if (!enabled || (obs && obs.readyState <= 1)) return;
-  const url = (serverUrl || DEFAULT_URL).replace(/\/ext\/?$/, "/ws") + "?observe=1";
+  if (!enabled || !serverUrl || (obs && obs.readyState <= 1)) return;
+  const url = serverUrl.replace(/\/ext\/?$/, "/ws") + "?observe=1";
   try { obs = new WebSocket(url); } catch { return; }
 
   obs.onmessage = (ev) => {

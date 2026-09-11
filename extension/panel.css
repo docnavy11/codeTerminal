@@ -209,6 +209,11 @@
   .end  { color:var(--dim); font-size:0.792rem; border-top:1px dashed var(--line); padding-top:4px; }
   .local { color:var(--dim); background:var(--panel); border-left:2px solid var(--dim);
            padding:5px 7px; white-space:pre-wrap; font-size:0.833rem; }
+  .local.welcome { border-left-color:var(--accent); color:var(--fg); white-space:normal; }
+  .local.welcome p { margin:0 0 6px; }
+  .local.welcome .dismiss { font-size:0.75rem; padding:1px 8px; }
+  .flist .ferr { color:var(--bad); background:var(--panel); border-left:2px solid var(--bad);
+                 padding:4px 7px; font-size:0.792rem; white-space:pre-wrap; word-break:break-word; }
 
   /* See public/index.html: an accent rail rather than a hard outline, room to
      breathe, and a command that wraps instead of hiding its tail behind a

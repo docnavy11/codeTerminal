@@ -5,11 +5,11 @@
  * loads it from disk (MV3 forbids remote code) and the server serves the same
  * file over http. Everything that differs between the two hosts lives here.
  */
-const DEFAULT_EXT_URL = "ws://devserver.tailnet-1234.ts.net:8123/ext";
-
+/* No default: the popup is where the server address is set. An empty url
+   makes the panel say so instead of dialling nowhere. */
 async function serverUrl() {
-  const { serverUrl } = await chrome.storage.local.get({ serverUrl: DEFAULT_EXT_URL });
-  return serverUrl || DEFAULT_EXT_URL;
+  const { serverUrl } = await chrome.storage.local.get({ serverUrl: "" });
+  return serverUrl || "";
 }
 
 globalThis.PLATFORM = {

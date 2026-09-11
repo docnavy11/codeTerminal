@@ -55,6 +55,17 @@ async function agentUrl() { return PLATFORM.wsUrl(); }
 async function connect() {
   clearTimeout(retry);
   const url = await agentUrl();
+  if (!url) {
+    // The extension with no server set: say so once, and look again in a bit.
+    meta.textContent = "no server configured";
+    if (!log.querySelector(".welcome")) {
+      const w = el("local welcome", "Set the server address first: right-click the extension icon → Options (or click it), enter ws://your-host:8123/ext and press Enter.");
+      w.dataset.unconfigured = "1";
+    }
+    retry = setTimeout(connect, 3000);
+    return;
+  }
+  log.querySelector(".welcome[data-unconfigured]")?.remove();
   ws = new WebSocket(url);
 
   ws.onopen = async () => {
@@ -105,8 +116,9 @@ function handle(m) {
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
     case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; break;
-    case "replayed": lastText = null; break;
+    case "replayed": lastText = null; if (!log.querySelector(".msg")) welcome(); break;
     case "user": {
+      log.querySelector(".welcome")?.remove();
       el("msg user", m.text);
       if (m.context) { const c = el("ctx", "⌁ " + m.context.split("\n")[0]); c.title = m.context; }
       lastText = null;
@@ -161,6 +173,26 @@ function handle(m) {
       break;
     case "error":    el("msg err", m.message); break;
   }
+}
+
+/* A fresh chat used to be a blank pane. One dismissable card, never persisted,
+   says what the pieces are; it goes away with the first message. */
+function welcome() {
+  if (log.querySelector(".welcome")) return;
+  const w = el("local welcome");
+  const lines = [
+    "Ask anything below. Enter sends, Shift+Enter is a newline, / lists commands.",
+    "Anything that changes files or runs commands stops for your approval — the mode menu (▾) sets how often you are asked.",
+    PLATFORM.name === "extension"
+      ? "\"tab\" attaches the page you are looking at as context; the extension's toggle is the off switch for browser control."
+      : PLATFORM.name === "desktop"
+        ? "The shell pane on the right is a real terminal with no approval gate; \"files\" browses, uploads and downloads."
+        : "\"files\" browses, uploads and downloads. Add this page to your home screen to keep it.",
+  ];
+  for (const t of lines) { const p = document.createElement("p"); p.textContent = t; w.append(p); }
+  const x = document.createElement("button"); x.textContent = "got it"; x.className = "dismiss";
+  x.onclick = () => w.remove();
+  w.append(x);
 }
 
 function summarize(input) {
@@ -600,14 +632,28 @@ function formDownload(action, fields) {
   document.body.append(form); form.submit(); form.remove();
 }
 
+/* Errors in the files pane show in the pane, at the top of the listing, and
+   clear on the next browse — not in an alert() (which a side panel cannot
+   show) and not nowhere. */
+function fnote(text) {
+  let n = $("flist").querySelector(".ferr");
+  if (!n) { n = document.createElement("div"); n.className = "ferr"; $("flist").prepend(n); }
+  n.textContent = text;
+}
+
 async function downloadZip(names) {
   const url = (await base()) + "/files/zip";
-  if (sameOrigin()) { formDownload(url, { path: cwdPath, names }); return; }
-  const r = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: cwdPath, names }),
-  });
-  if (!r.ok) { alert((await r.json().catch(() => ({}))).error ?? `zip failed (${r.status})`); return; }
+  const body = JSON.stringify({ path: cwdPath, names });
+  if (sameOrigin()) {
+    // The download itself goes through a hidden iframe, where an error is
+    // invisible — so ask the server whether the selection is zippable first.
+    try { await fjson("/files/zip?check=1", { method: "POST", headers: { "Content-Type": "application/json" }, body }); }
+    catch (e) { fnote(`zip: ${e.message}`); return; }
+    formDownload(url, { path: cwdPath, names });
+    return;
+  }
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+  if (!r.ok) { fnote(`zip: ${(await r.json().catch(() => ({}))).error ?? `failed (${r.status})`}`); return; }
   saveBlob(await r.blob(), (names.length === 1 ? names[0].replace(/\W+/g, "-") : "selection") + ".zip");
 }
 
@@ -685,13 +731,15 @@ async function view(path, entry) {
 }
 
 async function upload(fileList) {
+  const failed = [];
   for (const f of fileList) {
     try {
       await fjson(`/files/upload?path=${encodeURIComponent(cwdPath)}&name=${encodeURIComponent(f.name)}`,
         { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } });
-    } catch (e) { alert(`Upload of ${f.name} failed: ${e.message}`); }
+    } catch (e) { failed.push(`${f.name}: ${e.message}`); }
   }
-  browse(cwdPath);
+  await browse(cwdPath);
+  if (failed.length) fnote(`upload failed — ${failed.join("; ")}`);
 }
 
 $("fup").onclick = () => browse(parentPath ?? "");
