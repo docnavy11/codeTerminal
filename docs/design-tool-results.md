@@ -1,15 +1,155 @@
-# Design: tool results in the transcript
+# Tool results: seeing what the agent found, not just what it did
 
-Gap #1 in [TUI-GAPS.md](../TUI-GAPS.md). Design only; nothing here is built.
+Gap #1 in [TUI-GAPS.md](../TUI-GAPS.md). This is the feature as the person
+using it experiences it. The engineering notes are in the appendix.
 
-## The problem
+## Who this is for, and when
 
-A tool call renders as one dim line — `→ Bash grep -c purchase "$f"` — and
-what it returned renders as nothing. The user sees the agent *doing* things
-and never what it *found*, so a turn is a list of verbs with no nouns. The
-56-call turn on 2026-09-11 showed the failure mode: twenty screenshots,
-twenty reads, six evals, and no way to tell from the pane whether any of
-them produced anything.
+You have asked for something that takes the agent a while — check these
+invoices, find why the build fails, read this page and compare it with the
+repo. The agent runs tools: it reads files, runs commands, looks at your
+browser. Today the pane shows you a list of verbs — `→ Bash`, `→ Read`,
+`→ screenshot` — and never a noun. You cannot tell whether the grep found
+anything, whether the page loaded, whether the twentieth screenshot looked
+any different from the first. You wait for the final answer and take it on
+trust, or you interrupt because it looks stuck.
+
+The feature: **every tool line answers "and?" in the same line**, and can
+open to show the whole thing.
+
+## What you see
+
+### While a turn is running
+
+```
+  Check these invoices against the Odoo bills tab.
+
+  I'll start by listing the open tabs.
+
+  → list_tabs                                   6 tabs
+  → read_page  Invoices · upbudget              Invoices · 4 100 chars
+  → screenshot tab 837210570                    image · 1 280×720
+  → Read       tab-837210570-…png               image · 1.2 MB
+  → eval       document.querySelectorAll…       42 rows
+  → Bash       grep -c purchase "$f"            3
+  → Bash       grep -i 'openrouter' "$f"        …
+                                                        thinking · 7 tools · 2 screenshots
+```
+
+Each line ends with a **result badge**: a number, a size, a title, the
+first line of output — whatever answers the question that tool was asked.
+The last line ends with `…`: that one is still running. The status bar
+counts the turn as it goes, so "seven tools, two screenshots" is a fact,
+not a feeling.
+
+### When something goes wrong
+
+```
+  → Bash       grep -i 'openrouter' "$f"        ✗ exit 2 · No such file or directory
+      grep: /home/dev/.claude/projects/x.txt: No such file or directory
+```
+
+An error is the one result that opens itself. Red badge, the failure's
+first line on the row, the full message under it. You do not have to hunt
+for it in a list of forty grey lines — and you can see it *before* the
+agent's next sentence explains it away.
+
+### When you want the whole thing
+
+Click a row (or its ▸) and it opens:
+
+```
+  → Bash       git log --oneline -5             ▾ 5 lines
+      e823942 Transcript: tool rows were crushed to 0px once the log overflowed
+      362f949 Setup & status page
+      2e8ef62 First contact: quickstart README with screenshots
+      1d564e4 File browser: New folder
+      17adc3d Drop the "//csp" pseudo-comment from the manifest
+```
+
+The body is the output as the agent saw it, in a box that scrolls on its
+own after ~12 lines so a 900-line file does not push the conversation off
+the screen. Click again to close. A **copy** button sits in the box's
+corner — the grep hit, the path, the stack trace go to your clipboard
+without selecting text in a scrolling box.
+
+### When you come back to an old chat
+
+The results are part of the transcript. Open a chat from last week and the
+rows carry the same badges and open the same way. Chats recorded before
+this shipped show what they always showed.
+
+### The spiral, seen
+
+The turn that motivated this — twenty screenshots, twenty reads, six evals,
+no text — would have looked like this:
+
+```
+  → screenshot tab 837210571                    image · 1 280×720
+  → Read       tab-837210571-…png               image · 1.2 MB
+  → screenshot tab 837210572                    image · 1 280×720
+  → Read       tab-837210572-…png               image · 1.2 MB
+  → eval       window.__inv                     null
+  → screenshot tab 837210572                    image · 1 280×720
+  → Read       tab-837210572-…png               image · 1.2 MB
+  → eval       window.__inv                     null
+                                                        thinking · 31 tools · 12 screenshots
+```
+
+`null`, `null`, `null` and *12 screenshots* in the status bar is a story
+you can read in two seconds: it is polling a page that never fills. Press
+Stop, tell it the page needs a login. Without the badges the same eight
+lines were indistinguishable from progress.
+
+## What each tool's badge says
+
+Written so that the collapsed transcript already tells the story:
+
+| the agent… | the badge |
+|---|---|
+| ran a command | the first line of output — `3`, `ok`, `v22.22.1`; `(no output)`; on failure `✗ exit N · first line of the error` |
+| read a file | `120 lines` (`of 900` when partial); `image · 1.2 MB` for a picture |
+| wrote or edited a file | `wrote src/x.ts · 40 lines` / `edited src/x.ts · +4 −1` |
+| searched | `8 matches in 3 files` / `12 files` / `no matches` |
+| read a web page | the page title and how much text it got |
+| looked at your browser | `6 tabs` / `42 elements` / `image · 1 280×720` / the eval's value |
+| read your terminal | `200 lines` |
+| was refused by you | `denied` — the approval card already said why |
+| was stopped | `interrupted` |
+
+## What it deliberately does not do
+
+- **No pictures inline.** A screenshot or an image file shows as `image ·
+  size`. Inline thumbnails in a 400 px panel would dominate the transcript;
+  the agent's words about what it saw are the point.
+- **No syntax colouring, no diff view.** Output is plain monospace. Diffs
+  for edits are their own feature (gap #2) because they belong on the
+  approval card, *before* the change, not after it.
+- **No auto-expanding of successful results**, however short. A turn with
+  forty tools stays forty lines tall; you open what you care about. (Open
+  decision — see below.)
+
+## On the phone and in the side panel
+
+Same rows. At 400 px wide the command keeps to one line with an ellipsis
+and the badge wraps beneath it rather than being cut off; opening a row
+uses the whole width. Tapping the row opens it — the ▸ is a hint, not a
+target.
+
+## Decisions to make
+
+1. **Short successes: closed or open?** Closed keeps the transcript
+   scannable; open (≤ 3 lines) means a `git status` shows its three lines
+   without a tap. Proposed: closed, with a per-chat "expand all" in the ⋯
+   menu for the times you are debugging *with* the agent.
+2. **How much to keep.** Each result is stored with the chat, capped at a
+   few pages of text; beyond the cap the box says `…truncated, N KB` and
+   the agent still had the whole thing. Cap to be set after measuring how
+   it affects opening old chats.
+
+---
+
+## Appendix: engineering notes
 
 ## What the SDK gives us (measured)
 
