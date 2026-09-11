@@ -52,6 +52,23 @@ function scheduleStreamRender() {
    below is identical in both, which is why it is one file rather than two. */
 async function agentUrl() { return PLATFORM.wsUrl(); }
 
+/* Liveness. The server beats every 30s; a socket that has been silent for
+   longer than STALE_MS is dead even if the browser still calls it open — after
+   a network drop the browser never learns, and this panel used to sit
+   "connected" with nothing behind it until a reload. */
+const STALE_MS = 75_000;
+let lastSeen = 0;
+function checkLiveness(now = Date.now()) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !lastSeen || now - lastSeen < STALE_MS) return false;
+  const dead = ws; ws = null;
+  dead.onclose = null; dead.onmessage = null;
+  try { dead.close(); } catch { /* half-open: close may never complete; we have already moved on */ }
+  dot.classList.remove("on"); meta.textContent = "reconnecting…"; setBusy(false);
+  connect();
+  return true;
+}
+setInterval(() => checkLiveness(), 15_000);
+
 async function connect() {
   clearTimeout(retry);
   const url = await agentUrl();
@@ -69,6 +86,7 @@ async function connect() {
   ws = new WebSocket(url);
 
   ws.onopen = async () => {
+    lastSeen = Date.now();
     dot.classList.add("on");
     meta.textContent = "";
     // The server replays the whole transcript on every attach. Without this
@@ -90,6 +108,7 @@ async function connect() {
     retry = setTimeout(connect, 3000);           // the server may just be restarting
   };
   ws.onmessage = ({ data }) => {
+    lastSeen = Date.now();
     let m; try { m = JSON.parse(data); } catch { return; }   // a bad frame is not worth a broken handler
     handle(m);
   };
@@ -97,6 +116,7 @@ async function connect() {
 
 function handle(m) {
   switch (m.kind) {
+    case "ping":     break;                              // liveness only; lastSeen was stamped above
     case "commands": COMMANDS = m.commands ?? []; break;
     case "chats":
       CHATS = m.chats ?? []; ACTIVE = m.activeId;

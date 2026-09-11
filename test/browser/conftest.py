@@ -64,11 +64,18 @@ def server():
 
 
 @pytest.fixture(scope="session")
-def browser():
+def playwright():
+    """One sync Playwright per session: a second sync_playwright() in the same
+    thread fails with 'Sync API inside the asyncio loop'."""
     with sync_playwright() as pw:
-        b = pw.chromium.launch()
-        yield b
-        b.close()
+        yield pw
+
+
+@pytest.fixture(scope="session")
+def browser(playwright):
+    b = playwright.chromium.launch()
+    yield b
+    b.close()
 
 
 @pytest.fixture

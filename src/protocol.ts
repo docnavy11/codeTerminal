@@ -48,13 +48,15 @@ export type ClientEvent =
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "question"; id: string; questions: AskQuestion[] }
   | { kind: "turn_end"; costUsd: number | null; isError: boolean; denials: number }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  /** Liveness beat from the server's heartbeat; carries nothing. */
+  | { kind: "ping" };
 
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "approval", "approval_closed", "mode", "commands",
   "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta",
-  "replayed", "status", "question", "turn_end", "error",
+  "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 
 /** The permission modes a client may ask for. Validated on the way in. */

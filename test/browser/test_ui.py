@@ -217,18 +217,17 @@ def test_tool_rows_keep_their_height_when_the_log_overflows(browser, server):
     ctx.close()
 
 
-def test_extension_connects_once_its_address_is_set(server):
+def test_extension_connects_once_its_address_is_set(server, playwright):
     """The real extension in Chromium: it starts with no address (badge 'set'),
     and connecting must begin the moment the address is stored — not on the
     next worker restart."""
     import json, urllib.request, tempfile
-    from playwright.sync_api import sync_playwright
     ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     prof = tempfile.mkdtemp(prefix="ct-ext-prof-")
     connected = lambda: json.load(urllib.request.urlopen(server.base + "/setup"))["extension"]["connected"]
-    with sync_playwright() as pw:
-        ctx = pw.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                    args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    try:
         sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
         time.sleep(1.0)
         assert connected() == [], "nothing should connect before an address is set"
@@ -238,4 +237,26 @@ def test_extension_connects_once_its_address_is_set(server):
         while time.time() - t0 < 10 and not connected(): time.sleep(0.2)
         assert len(connected()) == 1, "the extension must connect as soon as the address is set"
         assert sw.evaluate("() => chrome.action.getBadgeText({})") == "on"
+    finally:
         ctx.close()
+
+
+def test_a_silent_socket_is_dropped_and_redialled(page, server):
+    """After a network drop the browser keeps calling the socket open. The
+    client watches the server's beat and, past STALE_MS of silence, drops the
+    socket and dials again — without duplicating the transcript."""
+    open_ui(page, server)
+    send(page, "before the drop"); wait_reply(page, "You said: before the drop")
+    count = page.evaluate("() => document.querySelectorAll('.msg.user').length")
+    first = page.evaluate("() => { window.__first = ws; return !!ws; }")
+    assert first
+    # nothing has been silent for 75s; the check must be a no-op
+    assert page.evaluate("() => checkLiveness()") is False
+    # pretend 100s passed with no frame
+    assert page.evaluate("() => checkLiveness(Date.now() + 100000)") is True
+    wait(page, "() => ws && ws !== window.__first && ws.readyState === 1 && document.querySelector('#dot').classList.contains('on')", what="redialled")
+    time.sleep(0.5)
+    assert page.evaluate("() => document.querySelectorAll('.msg.user').length") == count
+    assert page.evaluate("() => window.__first.readyState >= 2"), "the stale socket was closed"
+    send(page, "after the drop"); wait_reply(page, "You said: after the drop")
+    assert page.errors == []

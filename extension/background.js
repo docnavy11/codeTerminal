@@ -48,6 +48,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 const PING_MS = 20_000;
+// The server beats every 30s (and answers our pings). Silence longer than this
+// means the socket is half-open — the browser still calls it open, but after
+// a network drop nothing will ever arrive on it. Measured: 1h42m on a dead
+// socket until the extension was reloaded by hand.
+const STALE_MS = 75_000;
+let wsSeen = 0, obsSeen = 0;
 const RECONNECT_MS = 3_000;
 // Another browser's extension took the bridge. Retry rarely, so the two do not
 // kick each other in a loop; whichever the user actually uses will win when the
@@ -110,6 +116,7 @@ function connect() {
   try { ws = new WebSocket(serverUrl); } catch { return retry(); }
 
   ws.onopen = async () => {
+    wsSeen = Date.now();
     setBadge(true);
     // Identify this browser before anything else, so no command can be routed
     // here while the server still has us under a placeholder.
@@ -122,9 +129,11 @@ function connect() {
   };
 
   ws.onmessage = async (ev) => {
+    wsSeen = Date.now();
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong" })); return; }
+    if (msg.type === "pong") return;
     if (!msg.id) return;
     try {
       const result = await handle(msg.action, msg.params ?? {});
@@ -145,10 +154,31 @@ function connect() {
 
 function reply(obj) { if (ws?.readyState === 1) ws.send(JSON.stringify(obj)); }
 function retry(delay = RECONNECT_MS) { if (enabled) setTimeout(connect, delay); }
-// A backstop in case the socket dies while the worker is asleep.
+
+/** Drop a socket that has gone silent and dial again. Returns true if it did. */
+function dropIfStale(now = Date.now()) {
+  let dropped = false;
+  if (ws && ws.readyState <= 1 && wsSeen && now - wsSeen > STALE_MS) {
+    const dead = ws; ws = null; dead.onclose = null; dead.onmessage = null;
+    try { dead.close(); } catch {}
+    clearInterval(pingTimer); setBadge(false); dropped = true;
+  }
+  if (obs && obs.readyState <= 1 && obsSeen && now - obsSeen > STALE_MS) {
+    const dead = obs; obs = null; dead.onclose = null; dead.onmessage = null;
+    try { dead.close(); } catch {}
+    dropped = true;
+  }
+  if (dropped && enabled) { connect(); observeAgent(); }
+  return dropped;
+}
+setInterval(() => dropIfStale(), 15_000);
+
+// A backstop in case the socket dies while the worker is asleep — the alarm
+// survives eviction, the interval above does not.
 chrome.alarms?.create("reconnect", { periodInMinutes: 1 });
 chrome.alarms?.onAlarm.addListener(() => {
   if (!enabled) return;
+  dropIfStale();
   if (!ws) connect();
   if (!obs) observeAgent();
 });
@@ -167,8 +197,10 @@ function observeAgent() {
   if (!enabled || !serverUrl || (obs && obs.readyState <= 1)) return;
   const url = serverUrl.replace(/\/ext\/?$/, "/ws") + "?observe=1";
   try { obs = new WebSocket(url); } catch { return; }
+  obs.onopen = () => { obsSeen = Date.now(); };
 
   obs.onmessage = (ev) => {
+    obsSeen = Date.now();
     let m; try { m = JSON.parse(ev.data); } catch { return; }
 
     if (m.kind === "status") {

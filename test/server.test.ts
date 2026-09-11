@@ -276,6 +276,19 @@ describe("upgrades", () => {
   });
 });
 
+describe("heartbeat beats", () => {
+  test("/ws gets {kind:'ping'} and /ext gets {type:'ping'} on the heartbeat schedule", async () => {
+    const t = await startTestServer({ cfg: { heartbeatMs: 60 } });
+    try {
+      const c = await t.socket("/ws");
+      await c.wait((m) => m.kind === "ping", 3000);
+      const ext = await t.socket("/ext", { origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop" });
+      await ext.wait((m) => m.type === "ping", 3000);
+      c.ws.close(); ext.ws.close(); await c.closed; await ext.closed;
+    } finally { await t.stop(); }
+  });
+});
+
 describe("shutdown", () => {
   test("flushes pending saves, closes sockets with 1001, stops listening", async () => {
     const t = await startTestServer();

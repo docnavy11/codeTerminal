@@ -54,6 +54,8 @@ export type ServerConfig = {
   titler?: SessionDeps["titler"];
   /** Whether systemd started this process; defaults to what INVOCATION_ID says. */
   systemd?: boolean;
+  /** Socket heartbeat period; tests shorten it. */
+  heartbeatMs?: number;
   log?: (line: string) => void;
   warn?: (line: string) => void;
 };
@@ -520,7 +522,8 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      heartbeat(ws);
+      // The extension speaks {type}, the panel and pty speak {kind}.
+      heartbeat(ws, cfg.heartbeatMs ?? 30_000, route === "/ext" ? '{"type":"ping"}' : '{"kind":"ping"}');
       if (route === "/ws") attachAgent(ws, ctx, new URL(req.url ?? "/", "http://x").searchParams.get("observe") !== "1");
       else if (route === "/ext") bridge.attach(ws);
       else attachShell(ws, ctx);

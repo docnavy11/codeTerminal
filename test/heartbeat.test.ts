@@ -41,6 +41,20 @@ describe("heartbeat", () => {
     mock.timers.reset();
   });
 
+  // The optional beat is an app-level frame on the same schedule, only while open.
+  test("sends the beat alongside each ping while the socket is open", async () => {
+    useFake();
+    const ws = new FakeWs(); (ws as unknown as { readyState: number; OPEN: number; sent: string[]; send(d: string): void }).readyState = 1;
+    const w = ws as unknown as { readyState: number; OPEN: number; sent: string[]; send(d: string): void };
+    w.OPEN = 1; w.sent = []; w.send = (d: string) => { w.sent.push(d); };
+    heartbeat(ws as unknown as WebSocket, 20, '{"kind":"ping"}');
+    await tick(22); ws.emit("pong"); await tick(22); ws.emit("pong");
+    assert.deepEqual(w.sent, ['{"kind":"ping"}', '{"kind":"ping"}']);
+    w.readyState = 3; await tick(22);
+    assert.equal(w.sent.length, 2, "nothing sent once closed");
+    mock.timers.reset();
+  });
+
   // Closing the socket stops the timer (no ping after close).
   test("close stops the heartbeat", async () => {
     useFake();

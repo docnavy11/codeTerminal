@@ -27,17 +27,32 @@ function applyTermTheme() {
 }
 applyTermTheme();
 
-let ptyWs, ptyRetry, ptyWasDown = false;
+let ptyWs, ptyRetry, ptyWasDown = false, ptySeen = 0;
+const PTY_STALE_MS = 75_000;
+/* The server beats every 30s on this socket too; silence past that is a dead
+   connection the browser has not noticed. Drop it and dial again. */
+function checkPtyLiveness(now = Date.now()) {
+  if (!ptyWs || ptyWs.readyState !== WebSocket.OPEN || !ptySeen || now - ptySeen < PTY_STALE_MS) return false;
+  const dead = ptyWs; ptyWs = null; dead.onclose = null; dead.onmessage = null;
+  try { dead.close(); } catch { /* half-open */ }
+  ptyWasDown = true;
+  term.write("\r\n\x1b[90m[connection lost — reconnecting…]\x1b[0m\r\n");
+  connectShell();
+  return true;
+}
+setInterval(() => checkPtyLiveness(), 15_000);
 async function connectShell() {
   clearTimeout(ptyRetry);
   const url = (await PLATFORM.wsUrl()).replace(/\/ws$/, "/pty");
   ptyWs = new WebSocket(url);
   ptyWs.binaryType = "arraybuffer";
   ptyWs.onopen = () => {
+    ptySeen = Date.now();
     if (ptyWasDown) { ptyWasDown = false; term.write("\r\n\x1b[90m[reconnected — new shell]\x1b[0m\r\n"); }
     ptyWs.send(JSON.stringify({ type: "start", cols: term.cols, rows: term.rows }));
   };
   ptyWs.onmessage = (ev) => {
+    ptySeen = Date.now();
     if (ev.data instanceof ArrayBuffer) { term.write(new Uint8Array(ev.data)); return; }
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === "exit") term.write(`\r\n\x1b[90m[shell exited (${m.code})]\x1b[0m\r\n`);
