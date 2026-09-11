@@ -15,7 +15,6 @@
   "host_permissions": [
     "<all_urls>"
   ],
-  "//csp": "The side panel renders model replies, which are shaped by untrusted page content, in a logged-in context. img-src/media-src are locked so an injected off-origin pixel cannot exfiltrate what the model saw. script-src 'self' means injected markup cannot run code (DOMPurify already strips it), so connect-src stays broad for the user-configurable ws/http server without opening an exfil path.",
   "content_security_policy": {
     "extension_pages": "default-src 'self'; script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' ws: wss: http: https:"
   },

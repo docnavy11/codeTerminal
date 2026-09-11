@@ -568,6 +568,18 @@ new profile, so `CODETERM_EXT_ORIGIN` pinning needs the id from
 
 ## Chrome extension
 
+The manifest's `content_security_policy.extension_pages` is the panel's
+counterpart of the server's CSP: it renders model replies, shaped by
+untrusted page content, in a logged-in context. `img-src`/`media-src` are
+locked to the extension's own origin plus `data:`/`blob:` so an injected
+off-origin pixel cannot exfiltrate what the model saw; `script-src 'self'`
+means injected markup cannot run code (DOMPurify already strips it); and
+`connect-src` stays broad because the server address is user-configured —
+that opens no exfil path, since only script could use it. (This used to be
+a `"//csp"` note inside the manifest; Chrome flags unknown keys, so it lives
+here.)
+
+
 `extension/` is an unpacked MV3 extension that lets the agent read and drive
 your real, logged-in browser. Load it via `chrome://extensions` -> Developer
 mode -> **Load unpacked** -> pick the `extension/` folder. Its popup shows the
