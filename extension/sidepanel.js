@@ -186,7 +186,10 @@ function handle(m) {
       break;
     case "status":   applyStatus(m); break;
     case "turn_end":
-      if (typeof m.costUsd === "number") cost += m.costUsd;
+      // New records carry a per-turn cost (plus the session's running total);
+      // records from before that carried the running total in costUsd, which
+      // must not be summed — the last one is the figure.
+      if (typeof m.costUsd === "number") cost = "sessionCostUsd" in m ? cost + m.costUsd : Math.max(cost, m.costUsd);
       el("end", `done${m.denials ? ` · ${m.denials} denied` : ""} · $${cost.toFixed(4)} est.`);
       lastText = null; streaming = null; streamRaw = "";
       flushQueued();

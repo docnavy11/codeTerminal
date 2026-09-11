@@ -18,6 +18,8 @@ writeFileSync(join(ROOT, "files", "blob.txt"), "x".repeat(300_000));
 writeFileSync(join(ROOT, "files", "huge.bin"), Buffer.alloc(5 * 1024 * 1024));   // over the fixture's 4 MB zip cap
 
 const inited = new WeakSet<FakeQuery>();
+const turns = new WeakMap<FakeQuery, { n: number }>();
+const turnsOf = (q: FakeQuery) => { let t = turns.get(q); if (!t) { t = { n: 0 }; turns.set(q, t); } return t; };
 const sdk = fakeSdk({ onUser: (m, q) => {
   if (!inited.has(q)) { inited.add(q); q.init(`fake-${Date.now()}`); }
   const content = String(m.message.content);
@@ -36,7 +38,7 @@ const sdk = fakeSdk({ onUser: (m, q) => {
   let i = 0;
   const tick = () => {
     if (i < words.length) { q.delta((i ? " " : "") + words[i++]); setTimeout(tick, 30); }
-    else { q.text(reply); q.result({ total_cost_usd: 0.001 }); }
+    else { q.text(reply); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n }); }   // a running total, like the SDK
   };
   tick();
 } });

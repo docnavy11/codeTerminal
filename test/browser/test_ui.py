@@ -260,3 +260,15 @@ def test_a_silent_socket_is_dropped_and_redialled(page, server):
     assert page.evaluate("() => window.__first.readyState >= 2"), "the stale socket was closed"
     send(page, "after the drop"); wait_reply(page, "You said: after the drop")
     assert page.errors == []
+
+
+def test_cost_line_sums_turns_not_running_totals(page, server):
+    """The SDK reports a running total per result; the fixture mirrors that
+    (0.001, 0.002, …). Two turns must show $0.0020, not $0.0030."""
+    open_ui(page, server)
+    send(page, "one"); wait_reply(page, "You said: one")
+    wait(page, "() => document.querySelectorAll('#log .end').length === 1", what="first end")
+    send(page, "two"); wait_reply(page, "You said: two")
+    wait(page, "() => document.querySelectorAll('#log .end').length === 2", what="second end")
+    ends = page.evaluate("() => [...document.querySelectorAll('#log .end')].map(e => e.textContent)")
+    assert "$0.0010" in ends[0] and "$0.0020" in ends[1], ends

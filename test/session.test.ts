@@ -102,6 +102,13 @@ describe("Session events", () => {
     assert.equal(m.statuses().at(-1), "idle");
   });
 
+  test("the SDK's running total becomes a per-turn cost, and the total rides along", async () => {
+    m.q.result({ total_cost_usd: 1.0 }); m.q.result({ total_cost_usd: 1.5 }); m.q.result({ total_cost_usd: 1.5 }); await settle();
+    const ends = m.events.filter((e): e is Extract<ClientEvent, { kind: "turn_end" }> => e.kind === "turn_end");
+    assert.deepEqual(ends.map((e) => e.costUsd), [1.0, 0.5, 0]);
+    assert.deepEqual(ends.map((e) => e.sessionCostUsd), [1.0, 1.5, 1.5]);
+  });
+
   test("a result without a cost reports null, an error result says so", async () => {
     m.q.result({ total_cost_usd: undefined, is_error: true }); await settle();
     const end = m.last("turn_end")!; assert.equal(end.costUsd, null); assert.equal(end.isError, true); assert.equal(end.denials, 0);

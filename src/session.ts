@@ -424,18 +424,28 @@ export class Session {
         return;
       }
 
-      case "result":
+      case "result": {
         this.#busy = false;
         this.#activeTools.clear();
         this.#compacting = false;
+        // total_cost_usd is the RUNNING TOTAL for this query() — "read the latest
+        // result rather than summing". The client sums per-turn costs, so hand
+        // it the difference; summing the totals showed $17.9 for a $4.53 chat.
+        const total = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null;
+        const turnCost = total === null ? null : Math.max(0, total - this.#costTotal);
+        if (total !== null) this.#costTotal = total;
         this.#emit({
           kind: "turn_end",
-          costUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null,
+          costUsd: turnCost,
+          sessionCostUsd: total,
           isError: msg.is_error === true,
           denials: msg.permission_denials?.length ?? 0,
         });
         this.#pushStatus();
         return;
+      }
     }
   }
+  /** The SDK's running total at the last result, so a turn's cost is the difference. */
+  #costTotal = 0;
 }
