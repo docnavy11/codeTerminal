@@ -348,3 +348,30 @@ describe("list marks a symlink that escapes the root", () => {
     await rm(base, { recursive: true, force: true });
   });
 });
+
+describe("makeDirectory", () => {
+  test("creates inside the root; refuses escapes, existing names, bad names and missing parents", async () => {
+    const { mkdtemp, mkdir, writeFile, rm, stat } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { makeDirectory, setDeniedPaths } = await import("../src/files.js");
+    const base = await mkdtemp(join(tmpdir(), "ct-mkdir-"));
+    const root = join(base, "root"); await mkdir(join(root, "keep"), { recursive: true });
+    await writeFile(join(root, "file.txt"), "x");
+    await setDeniedPaths([join(root, "keep")]);
+    try {
+      assert.deepEqual(await makeDirectory(root, "", "new one"), { path: "new one" });
+      assert.ok((await stat(join(root, "new one"))).isDirectory());
+      assert.deepEqual(await makeDirectory(root, "new one", "  nested  "), { path: "new one/nested" });
+      assert.deepEqual(await makeDirectory(root, "", "../../escaped"), { path: "escaped" }, "basename'd like an upload");
+      await assert.rejects(makeDirectory(root, "..", "x"), /outside/);
+      await assert.rejects(makeDirectory(root, "keep", "x"), /blocked/);
+      await assert.rejects(makeDirectory(root, "", "file.txt"), /already exists/);
+      await assert.rejects(makeDirectory(root, "", "new one"), /already exists/);
+      await assert.rejects(makeDirectory(root, "", ""), /bad folder name/);
+      await assert.rejects(makeDirectory(root, "", "."), /bad folder name/);
+      await assert.rejects(makeDirectory(root, "", "   "), /bad folder name/);
+      await assert.rejects(makeDirectory(root, "nowhere", "x"), /does not resolve|does not exist/);
+    } finally { await setDeniedPaths([]); await rm(base, { recursive: true, force: true }); }
+  });
+});

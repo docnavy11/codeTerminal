@@ -449,6 +449,16 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     }
   });
 
+  app.post("/files/mkdir", guard, express.json({ limit: "4kb" }), async (req, res) => {
+    try {
+      const b = req.body as { path?: string; name?: string };
+      if (typeof b.name !== "string") throw new Error("missing name");
+      res.json(await files.makeDirectory(FILES_ROOT, typeof b.path === "string" ? b.path : undefined, b.name));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   /* The mobile page shares the side panel's script and stylesheet verbatim.
      MV3 forbids remote code, so the extension must load them from disk — serving
      those same two files here keeps mobile and the panel from drifting apart

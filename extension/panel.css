@@ -161,6 +161,9 @@
   .flist .row:hover { background:var(--btn); }
   .flist .row .n { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .flist .row.dir .n { color:var(--accent); }
+  .flist .row.newdir { cursor:default; }
+  .flist .row.newdir input { flex:1; min-width:0; font:inherit; font-family:var(--mono); padding:2px 6px;
+    background:var(--bg); color:var(--fg); border:1px solid var(--accent); border-radius:4px; outline:none; }
   .flist .row .s { color:var(--dim); font-size:0.708rem; flex-shrink:0; font-variant-numeric:tabular-nums; }
   .flist .row .ck { flex-shrink:0; margin:0; accent-color:var(--accent); }
   .flist .row.sel { background:var(--btn); }

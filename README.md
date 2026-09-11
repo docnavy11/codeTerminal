@@ -347,15 +347,19 @@ page still leaves title and URL.
 
 A **files** tab in both surfaces: beside the shell in the web UI, and beside
 **chat** in the side panel. Browse, view, download, upload (button or
-drag-and-drop). Text files preview inline, images render, binaries offer a
+drag-and-drop), create a folder. Text files preview inline, images render, binaries offer a
 download.
 
 Root is `CODETERM_FILES_ROOT`, default `/home/dev`; it opens in the workspace.
 Scoping it tighter than the shell would be theatre — `/pty` is already a full
 shell as this user — but the root is enforced properly all the same.
 
-`GET /files/info | /files/list | /files/read` and `POST /files/upload`, all
-behind the same Origin + `tailscale whois` guard as the WebSockets. Static
+`GET /files/info | /files/list | /files/read`, `POST /files/upload | /files/zip
+| /files/mkdir`, all behind the same Origin + `tailscale whois` guard as the
+WebSockets. **New folder** is an inline row in the listing (a side panel
+cannot show a `prompt()` dialog): Enter creates, Escape cancels, and the
+name goes through the same `basename` + `safePath` + denylist path as an
+upload; an existing name is refused, not reused. Static
 assets stay open, since they are inert without a session.
 
 Tick the checkboxes to select several, then **Download as zip**. Ticking a

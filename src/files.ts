@@ -135,6 +135,26 @@ export function streamFile(abs: string) {
   return createReadStream(abs);
 }
 
+/**
+ * Create one directory inside `dir`. The name is basename'd like an upload's,
+ * the target goes through safePath (so the root and the denylist hold), and
+ * an existing entry — file or directory — is refused rather than reused.
+ */
+export async function makeDirectory(root: string, dir: string | undefined, name: string) {
+  const clean = basename(name.trim());
+  if (!clean || clean === "." || clean === "..") throw new Error("bad folder name");
+  const dirAbs = await safePath(root, dir);
+  const target = await safePath(root, join(toRel(root, dirAbs), clean));
+  try {
+    await mkdir(target);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error("something with that name already exists");
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error("the parent directory does not exist");
+    throw e;
+  }
+  return { path: toRel(root, target) };
+}
+
 /** Writes into `dir`, refusing anything that tries to escape it via the name. */
 export async function saveUpload(root: string, dir: string | undefined, name: string, body: Buffer) {
   const clean = basename(name);          // strips any path the client sent

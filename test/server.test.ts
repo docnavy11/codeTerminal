@@ -157,6 +157,17 @@ describe("/files", () => {
     const r = await s.post("/files/zip", { path: "", names: ["big.bin"] });
     assert.equal(r.status, 400); assert.match(String(r.body!.error), /too large/);
   });
+  test("mkdir: creates, then refuses duplicates, escapes, the denylist and a missing name", async () => {
+    const ok = await s.post("/files/mkdir", { path: "sub", name: "made" });
+    assert.equal(ok.status, 200); assert.equal(ok.body!.path, "sub/made");
+    assert.ok((await stat(join(s.root, "files", "sub", "made"))).isDirectory());
+    assert.equal((await s.post("/files/mkdir", { path: "sub", name: "made" })).status, 400);
+    assert.equal((await s.post("/files/mkdir", { path: "..", name: "x" })).status, 400);
+    assert.equal((await s.post("/files/mkdir", { path: "secret", name: "x" })).status, 400);
+    assert.equal((await s.post("/files/mkdir", { path: "" })).status, 400);
+    assert.equal((await s.post("/files/mkdir", { path: "", name: 7 })).status, 400);
+    assert.equal((await s.req("/files/mkdir", { method: "POST", headers: { "sec-fetch-site": "cross-site", "content-type": "application/json" }, body: "{}" })).status, 403);
+  });
   test("upload: streamed, 0600, basename'd; missing name and over-limit are 400 with nothing left behind", async () => {
     const ok = await s.req("/files/upload?path=sub&name=../../escape.txt", { method: "POST", body: "payload", headers: { "content-type": "application/octet-stream" } });
     assert.equal(ok.status, 200);

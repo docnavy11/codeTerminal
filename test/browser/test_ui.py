@@ -136,3 +136,22 @@ def test_mobile_page_fits_the_viewport(browser, server):
     assert m["header"] < 120, m
     send(pg, "on a phone"); wait_reply(pg, "You said: on a phone")
     ctx.close()
+
+
+def test_new_folder_inline(page, server):
+    open_ui(page, server)
+    page.click(".tabs .tab[data-view=files]")
+    page.wait_for_selector("#flist .row", timeout=5000)
+    page.click("#fmkdir")
+    page.fill("#flist .row.newdir input", "made here")
+    page.press("#flist .row.newdir input", "Enter")
+    wait(page, "() => document.querySelector('#fpath').textContent.includes('made here')", what="navigated into the new folder")
+    assert os.path.isdir(os.path.join(server.root, "files", "made here"))
+    page.click("#fup")
+    page.wait_for_selector("#flist .row.dir:has(.n:text-is('made here/'))", timeout=5000)
+    # a duplicate is refused and the row stays editable
+    page.click("#fmkdir"); page.fill("#flist .row.newdir input", "made here"); page.press("#flist .row.newdir input", "Enter")
+    wait(page, "() => { const i = document.querySelector('#flist .row.newdir input'); return !!i && !i.disabled && i.validationMessage.includes('already exists'); }", what="refusal shown")
+    page.press("#flist .row.newdir input", "Escape")
+    assert page.locator("#flist .row.newdir").count() == 0
+    assert page.errors == []

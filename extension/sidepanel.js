@@ -698,6 +698,36 @@ $("fup").onclick = () => browse(parentPath ?? "");
 $("frefresh").onclick = () => browse(cwdPath);
 $("fcwd").onclick = () => ws?.send(JSON.stringify({ type: "cwd", path: cwdPath }));
 $("fupload").onclick = () => fpick.click();
+
+/* New folder: an inline row at the top of the listing rather than a prompt()
+   dialog, which a side panel cannot show. Enter creates, Escape cancels. */
+$("fmkdir").onclick = () => {
+  const flist = $("flist");
+  if (flist.querySelector(".row.newdir")) { flist.querySelector(".row.newdir input").focus(); return; }
+  const row = document.createElement("div"); row.className = "row newdir";
+  const input = document.createElement("input");
+  input.placeholder = "folder name"; input.className = "n"; input.spellcheck = false;
+  row.append(input); flist.prepend(row); input.focus();
+  input.onkeydown = async (e) => {
+    if (e.key === "Escape") { row.remove(); return; }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const name = input.value.trim();
+    if (!name) return;
+    input.disabled = true;
+    try {
+      const made = await fjson("/files/mkdir", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: cwdPath, name }),
+      });
+      await browse(made.path);
+    } catch (err) {
+      input.disabled = false; input.select();
+      input.setCustomValidity(err.message); input.reportValidity();
+    }
+  };
+  input.onblur = () => { if (!input.value.trim() && !input.disabled) row.remove(); };
+};
 fpick.onchange = () => { if (fpick.files.length) upload([...fpick.files]); fpick.value = ""; };
 for (const ev of ["dragenter", "dragover"]) flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.add("drop"); });
 for (const ev of ["dragleave", "drop"]) flist.addEventListener(ev, (e) => { e.preventDefault(); flist.classList.remove("drop"); });
