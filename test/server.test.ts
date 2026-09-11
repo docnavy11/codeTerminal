@@ -85,6 +85,34 @@ describe("/chats", () => {
   });
 });
 
+describe("/setup", () => {
+  test("reports the running configuration and is guarded", async () => {
+    const r = await s.json("/setup");
+    assert.equal(r.status, 200);
+    assert.equal(r.body!.mode, "localhost"); assert.equal(r.body!.port, s.port);
+    assert.equal((r.body!.urls as { ui: string }).ui, `http://127.0.0.1:${s.port}/`);
+    assert.deepEqual((r.body!.urls as { extension: string[] }).extension, [`ws://127.0.0.1:${s.port}/ext`]);
+    const checks = r.body!.checks as Record<string, { level: string }>;
+    assert.equal(checks.network.level, "ok"); assert.equal(checks.service.level, "warn");
+    assert.equal((r.body!.login as { path: string }).path, join(s.root, "home", ".claude", ".credentials.json"));
+    assert.equal(checks.login.level, "bad", "the test home has no login");
+    assert.equal(r.body!.ready, false);
+    assert.equal((await s.req("/setup", { headers: { "sec-fetch-site": "cross-site" } })).status, 403);
+    assert.equal((await s.req("/setup.html")).status, 200);
+  });
+  test("extension and readiness flip the checks live", async () => {
+    const ext = await s.socket("/ext", { origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop" });
+    ext.send({ type: "hello", instance: "browser-S" }); await settle(4);
+    const c = s.running.convo.create(); s.sdk.last.init("sid-setup"); await settle(4);
+    const r = await s.json("/setup");
+    const checks = r.body!.checks as Record<string, { level: string; text: string }>;
+    assert.equal(checks.extension.level, "ok");
+    assert.ok((r.body!.extension as { connected: string[] }).connected.includes("browser-S"));
+    assert.equal((r.body!.login as { readySeen: boolean }).readySeen, true);
+    ext.ws.close(); await ext.closed; s.running.convo.remove(c.id);
+  });
+});
+
 describe("/usage and /prompts", () => {
   test("usage records valid control names only", async () => {
     assert.equal((await s.post("/usage", { control: "newchat" })).body!.ok, true);

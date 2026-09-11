@@ -192,7 +192,9 @@ function welcome() {
   for (const t of lines) { const p = document.createElement("p"); p.textContent = t; w.append(p); }
   const x = document.createElement("button"); x.textContent = "got it"; x.className = "dismiss";
   x.onclick = () => w.remove();
-  w.append(x);
+  const s = document.createElement("button"); s.textContent = "setup & status"; s.className = "dismiss";
+  s.onclick = async () => PLATFORM.openUrl((await base()) + "/setup.html");
+  w.append(x, document.createTextNode(" "), s);
 }
 
 function summarize(input) {
@@ -399,6 +401,7 @@ stop.onclick = () => ws?.send(JSON.stringify({ type: "interrupt" }));
 $("newchat").onclick = () => ws?.send(JSON.stringify({ type: "new" }));
 // A 400px column is the wrong place to curate; open the manage page in a tab.
 $("manage").onclick = async () => PLATFORM.openUrl((await base()) + "/manage.html");
+$("setup").onclick = async () => PLATFORM.openUrl((await base()) + "/setup.html");
 // The panel has no terminal and no split view; the full UI does.
 $("openui").onclick = async () => PLATFORM.openUrl((await base()) + "/");
 modeSel.onchange = () => ws?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));

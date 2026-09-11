@@ -18,7 +18,9 @@ import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
 import { attachAgent, attachShell, type AttachContext } from "./attach.js";
-import type { SessionDeps } from "./session.js";
+import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
+import { buildSetup } from "./setup.js";
+import { readFileSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -50,6 +52,8 @@ export type ServerConfig = {
   authDeps?: AuthConfig["deps"];
   spawnQuery?: SessionDeps["spawnQuery"];
   titler?: SessionDeps["titler"];
+  /** Whether systemd started this process; defaults to what INVOCATION_ID says. */
+  systemd?: boolean;
   log?: (line: string) => void;
   warn?: (line: string) => void;
 };
@@ -238,6 +242,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     ...(cfg.authDeps ? { deps: cfg.authDeps } : {}),
   });
 
+  let port = PORT;   // the bound port; differs from PORT only when PORT is 0 (tests)
   const app = express();
 
   app.use((_req, res, next) => {
@@ -331,6 +336,17 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
 
   app.get("/usage", guard, (_req, res) => {
     res.json({ counts: usage.counts() });
+  });
+
+  /** Setup & status: the answers to "is it working, and what do I do next". */
+  const pkgVersion = (() => { try { return (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }).version; } catch { return "?"; } })();
+  app.get("/setup", guard, (_req, res) => {
+    res.json(buildSetup({
+      version: pkgVersion, node: process.version, host: HOST, port, auth,
+      extOrigin: cfg.extOrigin, extensionInstances: bridge.instances, readySeen: convo.readySeen,
+      chats: convo.list().length, home: cfg.home, workspace: WORKSPACE, filesRoot: FILES_ROOT, projectsRoot: cfg.projectsRoot,
+      bypassAllowed: ALLOW_BYPASS, systemd: cfg.systemd ?? Boolean(process.env.INVOCATION_ID),
+    }));
   });
 
   app.get("/projects", guard, (_req, res) => {
@@ -517,7 +533,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
    * die, so the unit does not need to guess at ordering — this also covers
    * tailscale restarting or the address changing under us.
    */
-  const port = await new Promise<number>((resolveListen, rejectListen) => {
+  port = await new Promise<number>((resolveListen, rejectListen) => {
     function listenWithRetry(attempt = 0): void {
       const onError = (err: NodeJS.ErrnoException) => {
         const retryable = err.code === "EADDRNOTAVAIL" || err.code === "EADDRINUSE";

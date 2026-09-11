@@ -33,7 +33,7 @@ export async function startTestServer(opts: { sdk?: FakeOpts; cfg?: Partial<Serv
     promptsPath: join(root, "prompts.json"), usagePath: join(root, "usage.json"),
     maxUpload: 64 * 1024, maxZip: 128 * 1024, extraOrigins: [], forceLocal: true,
     denyExtra: [join(root, "files", "secret")], home: join(root, "home"),
-    spawnQuery: sdk.spawnQuery, titler: async () => null,
+    spawnQuery: sdk.spawnQuery, titler: async () => null, systemd: false,
     log: (l) => logs.push(l), warn: (l) => warns.push(l),
     ...opts.cfg,
   };

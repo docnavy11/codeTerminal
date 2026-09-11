@@ -34,8 +34,11 @@ export class LiveChat {
   #clearRequested = false;
   #onChange: () => void;
 
+  #onReady: () => void;
   constructor(rec: ChatRecord, store: Store, workspace: string,
-              deps: Omit<SessionDeps, "chatId">, mode: PermissionMode, onChange: () => void) {
+              deps: Omit<SessionDeps, "chatId">, mode: PermissionMode, onChange: () => void,
+              onReady: () => void = () => {}) {
+    this.#onReady = onReady;
     this.#rec = rec;
     this.#store = store;
     this.#workspace = workspace;
@@ -112,6 +115,7 @@ export class LiveChat {
       return;
     }
 
+    if (e.kind === "ready") this.#onReady();
     if (e.kind === "ready" || e.kind === "commands") {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
@@ -307,6 +311,8 @@ export class Manager {
 
   /** Told when any chat's title, project or list-visible state changes. */
   onListChanged?: () => void;
+  /** True once any session has reported `ready` this run — the login works. */
+  readySeen = false;
   onChatRemoved?: (id: string) => void;
 
   constructor(workspace: string, dir: string, projectsRoot: string,
@@ -448,7 +454,7 @@ export class Manager {
   #admit(rec: ChatRecord, mode: PermissionMode = "default"): LiveChat {
     this.#evictIfFull();
     const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, mode,
-      () => this.onListChanged?.());
+      () => this.onListChanged?.(), () => { this.readySeen = true; });
     this.#chats.set(rec.id, chat);
     return chat;
   }

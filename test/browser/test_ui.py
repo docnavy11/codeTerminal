@@ -184,3 +184,17 @@ def test_file_pane_errors_show_inline(page, server):
     page.set_input_files("#fpick", big)
     wait(page, "() => (document.querySelector('#flist .ferr')?.textContent || '').includes('upload failed')", what="upload refusal inline")
     assert page.errors == []
+
+
+def test_setup_page_renders_live_checks(page, server):
+    page.goto(server.base + "/setup.html")
+    page.wait_for_selector(".check", timeout=10000)
+    checks = page.evaluate("() => [...document.querySelectorAll('.check')].map(c => c.className.replace('check ', '') + ':' + c.querySelector('.t').textContent)")
+    assert any(c.startswith("bad:No Claude Code login") for c in checks), checks   # the fixture home has no login
+    assert any("localhost mode" in c for c in checks), checks
+    assert f"ws://127.0.0.1:{server.port}/ext" in page.text_content("#checks")
+    assert "Something needs fixing" in page.text_content("#summary")
+    assert page.errors == []
+    # reachable from the welcome card and the menu
+    open_ui(page, server)
+    assert page.locator("#log .welcome button:has-text('setup')").count() == 1

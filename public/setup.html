@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>code terminal — manage</title>
+<title>code terminal — setup</title>
 <style>
   :root {
     --bg:#14171e; --panel:#1a1e27; --line:#2b3140; --fg:#dfe3ec; --dim:#8b93a7;
@@ -102,37 +102,45 @@
   }
   @media (max-width: 700px) { header a#back { min-height: 44px; display: inline-flex; align-items: center; } }
 </style>
+<style>
+  .checks { display:flex; flex-direction:column; gap:8px; margin:10px 0 18px; }
+  .check { display:grid; grid-template-columns:14px 1fr; gap:10px; padding:10px 12px; border:1px solid var(--line);
+           border-radius:8px; background:var(--panel); }
+  .check .dot { width:10px; height:10px; border-radius:50%; margin-top:6px; background:var(--dim); }
+  .check.ok .dot { background:var(--ok); } .check.warn .dot { background:var(--warn); } .check.bad .dot { background:var(--bad); }
+  .check .t { font-weight:600; } .check .h { color:var(--dim); font-size:0.85rem; margin-top:2px; }
+  .check code, .kv code { font-family:var(--mono); background:var(--code); padding:1px 5px; border-radius:3px; overflow-wrap:anywhere; }
+  h2 { font-size:1rem; margin:18px 0 6px; }
+  .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 14px; font-size:0.9rem; }
+  .kv .k { color:var(--dim); }
+  .copy { margin-left:8px; font-size:0.8rem; padding:1px 7px; }
+  .steps { color:var(--dim); font-size:0.9rem; }
+  .steps li { margin:4px 0; }
+  .summary { padding:10px 12px; border-radius:8px; border:1px solid var(--line); margin-bottom:6px; }
+  .summary.ok { border-color:var(--ok); } .summary.bad { border-color:var(--bad); }
+</style>
 
 <header>
-  <h1>manage</h1>
-  <a href="/setup.html" style="margin-left:auto">setup &amp; status</a>
-  <a href="/" id="back" style="margin-left:14px">← back to the terminal</a>
+  <h1>setup &amp; status</h1>
+  <a href="/" id="back">← back to the terminal</a>
 </header>
 
-<nav>
-  <button data-tab="chats" class="on">Chats</button>
-  <button data-tab="prompts">Prompts</button>
-  <button data-tab="projects">Projects</button>
-</nav>
-
 <div id="err" class="err" hidden></div>
-<section id="chats"></section>
-<section id="prompts" hidden></section>
-<section id="projects" hidden></section>
+<div id="summary" class="summary">checking…</div>
+<div id="checks" class="checks"></div>
 
-<script src="/vendor/marked/marked.umd.js"></script>
-<script src="/vendor/dompurify/purify.min.js"></script>
-<script src="/manage.js"></script>
+<h2>How the pieces fit</h2>
+<ol class="steps">
+  <li><b>The server</b> runs where your code is, on the Claude Code login of that machine.</li>
+  <li><b>This page and the terminal</b> (<code id="u-ui"></code>) work from any browser that can reach the server.</li>
+  <li><b>The browser extension</b> lets the agent read and drive tabs. It dials the server from <i>its</i> machine, so the address it needs depends on where that browser is.</li>
+  <li><b>The phone page</b> (<code id="u-m"></code>) needs the server bound to an address the phone can reach — a tailnet or VPN, never the open internet.</li>
+</ol>
 
-<script>
-  /* Reached from the phone's settings menu, so "back" has to mean the mobile
-     UI — the desktop split view is not somewhere you want to land on a phone. */
-  (() => {
-    const fromMobile = document.referrer.includes("/m.html")
-      || matchMedia("(max-width: 700px)").matches;
-    if (!fromMobile) return;
-    const a = document.getElementById("back");
-    a.href = "/m.html";
-    a.textContent = "← back";
-  })();
-</script>
+<h2>Addresses</h2>
+<div class="kv" id="kv"></div>
+
+<h2>Paths</h2>
+<div class="kv" id="paths"></div>
+
+<script src="/setup.js"></script>
