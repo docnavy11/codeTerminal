@@ -198,3 +198,20 @@ def test_setup_page_renders_live_checks(page, server):
     # reachable from the welcome card and the menu
     open_ui(page, server)
     assert page.locator("#log .welcome button:has-text('setup')").count() == 1
+
+
+def test_tool_rows_keep_their_height_when_the_log_overflows(browser, server):
+    """A column flexbox gives overflow:hidden children min-height:0, so once the
+    transcript was taller than the pane every one-line tool row shrank to 0px
+    (measured: 80 of 80 rows at 0px). Nothing in the log may shrink."""
+    ctx = browser.new_context(viewport={"width": 546, "height": 600}); pg = ctx.new_page()
+    open_ui(pg, server, "/m")
+    pg.evaluate("""() => { for (let i = 0; i < 40; i++) {
+        handle({kind:'tool', id:'t'+i, name:'mcp__browser__screenshot', input:{tabId: i}});
+        handle({kind:'tool', id:'r'+i, name:'Read', input:{file_path:'/tmp/shot-' + i + '.png'}}); } }""")
+    m = pg.evaluate("""() => { const t = [...document.querySelectorAll('#log .tool')]; const lh = parseFloat(getComputedStyle(t[0]).lineHeight);
+        return { rows: t.length, crushed: t.filter(x => x.getBoundingClientRect().height < lh - 0.5).length,
+                 overflowing: document.getElementById('log').scrollHeight > document.getElementById('log').clientHeight }; }""")
+    assert m["overflowing"], "the test must actually overflow the pane"
+    assert m["rows"] == 80 and m["crushed"] == 0, m
+    ctx.close()

@@ -182,6 +182,12 @@
 
   #log { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding:9px;
          display:flex; flex-direction:column; gap:6px; }
+  /* The log is a column flexbox. A child with overflow:hidden (the one-line
+     tool rows) gets min-height:0 from flex, so once the transcript is taller
+     than the pane every such row is crushed toward zero height and the text
+     is clipped — 56 tool calls in one turn made it visible. Nothing in the
+     log may shrink; the log scrolls instead. */
+  #log > * { flex-shrink:0; }
   .msg { white-space:pre-wrap; word-break:break-word; }
   /* Rendered markdown is real HTML: pre-wrap would turn every newline
      marked emits between block tags into a visible blank line. */
