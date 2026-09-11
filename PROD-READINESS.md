@@ -11,9 +11,11 @@ raises it.
 
 **Status: every item below is closed** (commits `523e802`, `617eecd`,
 `baf82fd`, `45f5332`); the "Fixed" tables record how each was verified.
-Three things remain unmeasured and are marked as such: the clean-end branch
-of the dead-session fix, the extension's evict→restore round trip, and
-`close()` → `interrupt()` on a running turn.
+One thing remains unmeasured and is marked as such: the extension's
+evict→restore round trip for page watches. The clean-end branch of the
+dead-session fix and `close()` → `interrupt()` on a running turn, unmeasured
+when this was written, are now covered by `test/session.test.ts` against
+the scripted SDK.
 
 The earlier security audit (SECURITY-AUDIT.md) is fully closed and its fixes
 were re-verified live during this pass. This review is about what is *left*.
@@ -161,7 +163,7 @@ href>`; only the extension needs the blob path.
 | 13 | whois memo capped at `WHOIS_CACHE_MAX = 512` (expired swept first, then oldest) | `test/tailnet.test.ts`: 1536 distinct IPs with a stub lookup → size ≤ 512, freshest still memoised |
 | 14 | Desktop/mobile download via a plain link (file) or a form POST into a hidden same-origin iframe (zip); only the extension buffers a blob. `frame-src 'none'` → `'self'`; the zip route also accepts urlencoded | Playwright on the desktop page: 405 KB file and a 2-file zip saved with the right names, **0 blob: URLs**, no page-side fetch. Trade-off: a zip error (too large, nothing selected) lands in the hidden iframe and is not shown |
 
-Not measured: the *clean-end* branch of 4 (stream ends without throwing). The probe exercised the throwing branch (`terminated by signal SIGKILL`); the post-loop code runs on both.
+The *clean-end* branch of 4 (stream ends without throwing) was not reachable by the scratch probe (it exercised the throwing branch, `terminated by signal SIGKILL`); it is now tested directly — `test/session.test.ts` "a clean end marks the session dead, frees busy, denies pending, reports once" — as is `close()` interrupting a running turn.
 
 ---
 

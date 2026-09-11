@@ -68,19 +68,21 @@ leaf: path containment (`files`), CIDR trust (`cidr`), peer identity
 - `conversation` → projects, session, store, titles. `LiveChat` (one chat:
   record + session + attached clients) and `Manager` (the pool).
 
-**Top — `server.ts`, 758 lines, imports 14 modules.** It is the composition
-root, and that is where the layering gets weaker: it is also the HTTP router,
-the authentication policy (`denyReason`), the boot-time mode selection, *and*
-`attachAgent` — the per-client loop that translates 15 WebSocket message
-types into Manager/LiveChat calls. Four jobs in one file. It is the only
-module that knows about every other, and the only one that cannot be tested
-without a running server (which is why its behaviour is verified with scratch
-instances rather than unit tests).
+**Top — `server.ts`, ~560 lines.** The composition root and HTTP router,
+exported as `boot(config)`: the config carries every path, port and limit,
+plus injection points for the SDK entry point, the titler and the tailscale
+calls. The process entry under it is a dozen lines (read the environment,
+boot, wire SIGTERM). That shape is what lets the whole server run
+in-process under test on a free port with a scripted SDK — it used to be
+the one module that could only be verified with scratch instances. The
+policy (`auth.ts`) and the per-client loops (`attach.ts`) live beside it.
 
 **The SDK boundary is three modules.** `session.ts` (the real `query()`),
 `tools.ts` (`createSdkMcpServer`), and `titles.ts` (a second, throwaway
 `query()` on Haiku to name a chat). `conversation.ts` and `store.ts` import
-types only. Swapping or upgrading the SDK touches three files.
+types only. Swapping or upgrading the SDK touches three files. Both `query()`
+calls are reached through `SessionDeps` (`spawnQuery`, `titler`), which is
+how the tests substitute a scripted SDK without a subprocess.
 
 ## The protocol
 
@@ -272,4 +274,7 @@ aborted downloads, unbounded caches and logs — were found and closed in
   fails loudly rather than opening a shell.
 - Recoverability: deletes archive, `/clear` snapshots, the SDK's own transcripts
   survive independently under `~/.claude/projects`.
-- The `PLATFORM` shim — one client codebase for two hosts, no drift.
+- The `PLATFORM` shim — one client codebase for three hosts, no drift.
+- A test harness that reaches everything: three fakes (SDK, socket, in-process
+  server) put 97.7% of `src/` lines under test, failure paths included, and a
+  Playwright suite drives the real client against a fixture server.
