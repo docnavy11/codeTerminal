@@ -520,8 +520,37 @@ def test_a_chat_keeps_running_while_you_are_on_another_and_shows_the_answer_on_r
     page.click("#newchat")                                              # switch away while it is still streaming
     wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="on the new chat")
     time.sleep(2.5)                                                      # the original finishes in the background
-    page.click("#chatsbtn"); page.wait_for_selector("#clist .c", timeout=5000)
-    page.click("#clist .c:has(.ct:text-is('" + long[:64] + "'))") if len(long) <= 64 else page.click("#clist .c:not(.on) >> nth=0")
+    page.click("#chatsbtn"); page.wait_for_selector("#clist .cfind input", timeout=5000)
+    page.fill("#clist .cfind input", "please echo")                          # the title is the first message
+    page.wait_for_selector("#clist .c:has(.ct:text-matches('please echo'))", timeout=5000)
+    page.click("#clist .c:has(.ct:text-matches('please echo'))")
     wait(page, "() => [...document.querySelectorAll('#log .msg.md')].some(m => m.textContent.includes('You said: please echo') && m.textContent.includes('w49'))", what="the full answer, finished while away")
     assert page.locator("#log .end").count() == 1, "turn ended in the background"
     assert page.text_content("#statustext") == "ready"
+
+
+def test_site_and_eval_cards(page, server):
+    open_ui(page, server)
+    send(page, "site-me")
+    page.wait_for_selector(".card.site", timeout=10000)
+    assert page.text_content(".card.site h4") == "Let Claude use bank.example?"
+    labels = page.evaluate("() => [...document.querySelectorAll('.card.site .row button')].map(b => b.textContent)")
+    assert labels == ["Allow (this chat)", "Always (this site)", "Deny"], labels
+    assert page.text_content("#statustext") == "waiting for you — a site"
+    page.click(".card.site button[data-decision=deny]"); wait_reply(page, "site: deny")
+    send(page, "eval-me")
+    page.wait_for_selector(".card.site", timeout=10000)
+    cards = page.locator(".card.site"); last = cards.nth(cards.count() - 1)
+    assert last.locator("h4").text_content() == "Run JavaScript on bank.example?"
+    assert last.locator("pre").text_content() == "document.title"
+    assert last.locator(".row button").all_text_contents() == ["Allow once", "Allow on this site (this chat)", "Deny"]
+    last.locator("button[data-decision=allow]").click(); wait_reply(page, "eval: allow")
+
+
+def test_manage_page_browser_sites(page, server):
+    page.goto(server.base + "/manage.html"); page.click("nav button[data-tab=browser]")
+    page.wait_for_selector("#browser .bar input", timeout=5000)
+    page.fill("#browser .bar input", "*.corp.example"); page.press("#browser .bar input", "Enter")
+    wait(page, "() => [...document.querySelectorAll('#browser .row .title')].some(t => t.textContent === '*.corp.example')", what="added")
+    page.click("#browser .row:has(.title:text-is('*.corp.example')) button")
+    wait(page, "() => ![...document.querySelectorAll('#browser .row .title')].some(t => t.textContent === '*.corp.example')", what="removed")

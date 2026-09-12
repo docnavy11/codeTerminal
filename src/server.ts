@@ -21,6 +21,7 @@ import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
 import { buildSetup } from "./setup.js";
 import { toMarkdown, exportFilename } from "./export.js";
+import { BrowserAllowlist, normaliseHost } from "./browser-allow.js";
 import { readFileSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,9 @@ export type ServerConfig = {
   projectsRoot: string;
   promptsPath: string;
   usagePath: string;
+  /** Standing list of sites the browser tools may use without asking; null disables the gate. */
+  browserAllowPath: string | null;
+  browserAllowSeed: string[];
   maxUpload: number;
   maxZip: number;
   extraOrigins: string[];
@@ -76,6 +80,8 @@ export function envConfig(): ServerConfig {
     projectsRoot: process.env.CODETERM_PROJECTS_ROOT ?? join(home, "projects"),
     promptsPath: process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"),
     usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
+    browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : join(ROOT, "browser-allow.json"),
+    browserAllowSeed: csv(process.env.CODETERM_BROWSER_ALLOW, /,/),
     maxUpload: Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024),
     maxZip: Number(process.env.CODETERM_MAX_ZIP ?? 500 * 1024 * 1024),
     extraOrigins: csv(process.env.CODETERM_ORIGINS, /,/),
@@ -184,13 +190,14 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
 
   const watches = new WatchRegistry();
   const prompts = new PromptStore(cfg.promptsPath);
+  const browserAllow = cfg.browserAllowPath ? new BrowserAllowlist(cfg.browserAllowPath, cfg.browserAllowSeed) : null;
 
   const convo = new Manager(
     WORKSPACE,
     cfg.chatsDir,
     cfg.projectsRoot,
     // prefer is replaced per-chat by LiveChat, which knows its own browser.
-    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined,
+    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow,
       ...(cfg.spawnQuery ? { spawnQuery: cfg.spawnQuery } : {}),
       ...(cfg.titler ? { titler: cfg.titler } : {}) },
   );
@@ -366,7 +373,22 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       extOrigin: cfg.extOrigin, extensionInstances: bridge.instances, readySeen: convo.readySeen,
       chats: convo.list().length, home: cfg.home, workspace: WORKSPACE, filesRoot: FILES_ROOT, projectsRoot: cfg.projectsRoot,
       bypassAllowed: ALLOW_BYPASS, systemd: cfg.systemd ?? Boolean(process.env.INVOCATION_ID),
+      browserSites: browserAllow ? browserAllow.all().length : null,
     }));
+  });
+
+  /** The standing browser-site list; the card's "Always" adds here, the manage page edits it. */
+  app.get("/browser-allow", guard, (_req, res) => {
+    res.json({ gated: browserAllow !== null, hosts: browserAllow?.all() ?? [] });
+  });
+  app.post("/browser-allow", guard, express.json({ limit: "4kb" }), (req, res) => {
+    const host = normaliseHost(String((req.body as { host?: unknown })?.host ?? ""));
+    if (!host) { res.status(400).json({ error: "not a hostname (use example.com or *.example.com)" }); return; }
+    if (!browserAllow) { res.status(400).json({ error: "the browser gate is disabled (CODETERM_BROWSER_GATE=0)" }); return; }
+    res.json({ added: browserAllow.add(host), hosts: browserAllow.all() });
+  });
+  app.delete("/browser-allow/:host", guard, (req, res) => {
+    res.json({ removed: browserAllow?.remove(String(req.params.host)) ?? false, hosts: browserAllow?.all() ?? [] });
   });
 
   app.get("/projects", guard, (_req, res) => {

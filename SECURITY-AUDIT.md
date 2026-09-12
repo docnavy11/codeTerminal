@@ -1,5 +1,15 @@
 # Security & robustness audit
 
+> **Addendum 2026-09-12 — browser site gate.** The browser tools, ungated
+> at the time of this audit, now ask once per chat per site (allow / always /
+> deny; "always" is a standing list on disk, editable on the manage page and
+> seeded by `CODETERM_BROWSER_ALLOW`), hide not-yet-allowed tabs' titles and
+> URLs from `list_tabs`, and gate `eval` per call. The decision is made on
+> the server from the tab's URL fetched before the action (`tab_url`), so the
+> extension's `<all_urls>` capability no longer equals policy. Tests: unit
+> (matching, persistence), tools (every branch), session (the card and the
+> three answers), routes, browser (both cards, the manage tab).
+
 Full-codebase pass. Every claim below was verified against a running instance
 or a probe, not read off the source. Severity is calibrated two ways, because
 they differ sharply:

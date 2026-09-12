@@ -134,6 +134,19 @@ describe("/chats/search and export", () => {
   });
 });
 
+describe("/browser-allow", () => {
+  test("lists the seed, adds and removes, refuses junk; the setup page counts it", async () => {
+    assert.deepEqual((await s.json("/browser-allow")).body, { gated: true, hosts: ["allowed.example"] });
+    assert.equal((await s.post("/browser-allow", { host: "https://Docs.Example.com/x" })).body!.added, true);
+    assert.equal((await s.post("/browser-allow", { host: "bad host" })).status, 400);
+    assert.deepEqual((await s.json("/browser-allow")).body!.hosts, ["allowed.example", "docs.example.com"]);
+    assert.equal((await s.json("/browser-allow/docs.example.com", { method: "DELETE" })).body!.removed, true);
+    assert.equal((await s.json("/browser-allow/docs.example.com", { method: "DELETE" })).body!.removed, false);
+    assert.match(((await s.json("/setup")).body!.checks as Record<string, { text: string }>).browser.text, /1 site allowed without asking/);
+    assert.equal((await s.req("/browser-allow", { headers: { "sec-fetch-site": "cross-site" } })).status, 403);
+  });
+});
+
 describe("/usage and /prompts", () => {
   test("usage records valid control names only", async () => {
     assert.equal((await s.post("/usage", { control: "newchat" })).body!.ok, true);

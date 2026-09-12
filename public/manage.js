@@ -317,12 +317,38 @@ async function loadProjects() {
   draw();
 }
 
+/* ---------------- browser sites ----------------
+   The standing list the browser tools may use without asking. "Always" on a
+   site card adds here; this page adds and removes. */
+async function loadBrowser() {
+  const { gated, hosts } = await api("/browser-allow");
+  const host = $("browser"); host.replaceChildren();
+  host.append(el("p", "hint", gated
+    ? "Claude asks once per chat before reading or acting on a site not listed here; eval asks every time. \"Always\" on that card adds the site. Patterns: example.com or *.example.com."
+    : "The site gate is off (CODETERM_BROWSER_GATE=0): browser tools act on any site without asking."));
+  const bar = el("div", "bar");
+  const input = Object.assign(el("input"), { placeholder: "example.com or *.example.com" });
+  const add = el("button", "", "add");
+  add.onclick = async () => { try { await api("/browser-allow", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host: input.value }) }); input.value = ""; await loadBrowser(); } catch (e) { show(e.message); } };
+  input.onkeydown = (e) => { if (e.key === "Enter") add.click(); };
+  bar.append(input, add, el("span", "count", `${hosts.length} site${hosts.length === 1 ? "" : "s"}`));
+  host.append(bar);
+  if (!hosts.length) { host.append(el("div", "empty", "No sites yet — every site asks the first time a chat uses it.")); return; }
+  for (const h of hosts) {
+    const row = el("div", "row");
+    const main = el("div", "main"); main.append(el("div", "title", h)); row.append(main);
+    const rm = el("button", "danger", "remove");
+    rm.onclick = async () => { try { await api(`/browser-allow/${encodeURIComponent(h)}`, { method: "DELETE" }); await loadBrowser(); } catch (e) { show(e.message); } };
+    row.append(rm); host.append(row);
+  }
+}
+
 /* ---------------- tabs ---------------- */
-const loaders = { chats: loadChats, prompts: loadPrompts, projects: loadProjects };
+const loaders = { chats: loadChats, prompts: loadPrompts, projects: loadProjects, browser: loadBrowser };
 
 function tab(name) {
   for (const b of document.querySelectorAll("nav button")) b.classList.toggle("on", b.dataset.tab === name);
-  for (const id of ["chats", "prompts", "projects"]) $(id).hidden = id !== name;
+  for (const id of ["chats", "prompts", "projects", "browser"]) $(id).hidden = id !== name;
   show("");
   loaders[name]().catch((e) => show(e.message));
 }

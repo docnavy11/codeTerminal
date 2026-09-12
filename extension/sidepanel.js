@@ -515,7 +515,7 @@ function applyStatus(m) {
     thinking:   `thinking${m.tokens > 0 ? ` · ${m.tokens >= 1000 ? (m.tokens / 1000).toFixed(1) + "k" : m.tokens}` : ""}${rollup()}`,
     tool:       `running ${m.detail}${rollup()}`,
     compacting: "compacting",
-    awaiting:   `waiting for you — ${m.detail === "ExitPlanMode" ? "the plan" : m.detail}`,
+    awaiting:   `waiting for you — ${m.detail === "ExitPlanMode" ? "the plan" : m.detail === "browser" ? "a site" : m.detail}`,
   }[m.state] ?? m.state;
 
   setBusy(m.state !== "idle");
@@ -564,17 +564,30 @@ function renderPlan(m) {
   log.scrollTop = log.scrollHeight;
 }
 
+/* A browser-site card: the agent wants to use a site this chat has not been
+   allowed on. "Allow" is this chat; "Always" puts the site on the standing
+   list. eval asks per call: "Allow once" / "Allow on this site (this chat)". */
 function renderApproval(m) {
   if (m.tool === "ExitPlanMode") return renderPlan(m);
-  const card = el("card");
+  const site = m.tool === "browser";
+  const card = el("card" + (site ? " site" : ""));
   card.dataset.approval = m.id; card.dataset.tool = m.tool;
-  const h = document.createElement("h4"); h.textContent = `Approve ${m.tool}?`;
+  const h = document.createElement("h4");
+  h.textContent = site
+    ? (m.input?.action === "eval" ? `Run JavaScript on ${m.input.host}?` : `Let Claude use ${m.input?.host || "this site"}?`)
+    : `Approve ${m.tool}?`;
   const pre = m.diff ? renderDiff(m.diff) : document.createElement("pre");
-  if (!m.diff) pre.textContent = typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
+  if (!m.diff) pre.textContent = site
+    ? (m.input?.action === "eval" ? String(m.input.detail ?? "") : `${m.input?.action}${m.input?.detail ? ` → ${m.input.detail}` : ""} — reads or acts on the page in your logged-in browser`)
+    : typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
   const row = document.createElement("div");
   row.className = "row";
-  const choices = [["Approve", "allow", "allow"], ["Deny", "deny", "deny"]];
-  if (m.canAlways) choices.splice(1, 0, ["Always", "always", "allow"]);
+  const choices = site
+    ? (m.input?.action === "eval"
+      ? [["Allow once", "allow", "allow"], ["Allow on this site (this chat)", "always", "allow"], ["Deny", "deny", "deny"]]
+      : [["Allow (this chat)", "allow", "allow"], ["Always (this site)", "always", "allow"], ["Deny", "deny", "deny"]])
+    : [["Approve", "allow", "allow"], ["Deny", "deny", "deny"]];
+  if (!site && m.canAlways) choices.splice(1, 0, ["Always", "always", "allow"]);
   for (const [label, decision, cls] of choices) {
     const b = document.createElement("button");
     b.textContent = label; b.className = cls;

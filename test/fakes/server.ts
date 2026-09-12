@@ -31,6 +31,7 @@ export async function startTestServer(opts: { sdk?: FakeOpts; cfg?: Partial<Serv
     host: "127.0.0.1", port, workspace: join(root, "ws"), chatsDir: join(root, "chats"),
     filesRoot: join(root, "files"), projectsRoot: join(root, "projects"),
     promptsPath: join(root, "prompts.json"), usagePath: join(root, "usage.json"),
+    browserAllowPath: join(root, "browser-allow.json"), browserAllowSeed: ["allowed.example"],
     maxUpload: 64 * 1024, maxZip: 128 * 1024, extraOrigins: [], forceLocal: true,
     denyExtra: [join(root, "files", "secret")], home: join(root, "home"),
     // real: the actual SDK and Claude Code login on this machine (test/real.test.ts)

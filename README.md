@@ -642,25 +642,32 @@ server (`createSdkMcpServer`), so there is no separate process:
     list_tabs  read_page  snapshot  navigate  click
     fill       press      eval      screenshot
 
-**They are ungated by explicit choice.** Every one is in `allowedTools`, so
-none stops to ask - including `eval`, which runs arbitrary JavaScript in
-whatever tab you are logged into. Each call is still written to the
-transcript. To gate them instead, delete `BROWSER_TOOLS` from the
-`allowedTools` line in `src/session.ts` and they fall through to `canUseTool`
-like `Bash` does.
+**Gated per site, not per call.** The first time a chat touches a site —
+reads it, clicks, screenshots, navigates there — a card asks: *Let Claude
+use bank.example?* **Allow (this chat)**, **Always (this site)** or
+**Deny**. "Always" puts the host on the standing list (`browser-allow.json`,
+edited on the manage page's *Browser sites* tab; seed it with
+`CODETERM_BROWSER_ALLOW=github.com,*.atlassian.net`); "Allow" lasts for
+that chat's live session. `list_tabs` shows a not-yet-allowed tab as its
+host only, no title or URL. **`eval` asks every call** even on an allowed
+site — arbitrary JavaScript in a logged-in tab deserves a look at the code
+— with "Allow on this site (this chat)" to stop asking for that host until
+the chat ends. Once allowed, the tools do not stop again, and each call is
+still written to the transcript. `CODETERM_BROWSER_GATE=0` turns the gate
+off (the old behaviour: any site, no questions); the setup page says which
+you are running.
 
 Worth understanding before leaving it on: the agent reads untrusted web pages
 *and* holds your logged-in sessions *and* can act, with no confirmation step.
 A page can contain text addressed to the agent rather than to you. The
 extension's toggle is the off switch.
 
-**Blast radius.** The manifest requests `<all_urls>`, and `list_tabs` returns
-*every* tab in *every* window — `read_page`, `screenshot`, `eval` and the rest
-can then target any of them by id, not just the one in front of you. So a
-prompt-injected page is not limited to itself: it can steer the agent to
-enumerate and read your other tabs — mail, bank, anything open. That is the
-cost of "any tab, all sites, ungated"; the narrower alternative is to scope
-`host_permissions` to specific origins and drop `<all_urls>`.
+**Blast radius.** The manifest still requests `<all_urls>` — that is the
+*capability*; the site gate above is the *policy*. A prompt-injected page
+can steer the agent toward your other tabs, but reading or acting on a site
+this chat has not been allowed on produces a card in front of you, not an
+action; `list_tabs` does not even reveal those tabs' titles. What remains:
+a site you have allowed is open to the agent for the rest of that chat.
 
 MV3 note: service workers are evicted after ~30s idle, but since Chrome 116
 WebSocket traffic resets that timer - hence the 20s ping in `background.js`,

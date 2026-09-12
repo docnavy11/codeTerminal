@@ -393,6 +393,12 @@ async function handle(action, p) {
     case "watch_list":
       return { ids: [...watches.keys()] };
 
+    // Which site a call is about, before it happens — the server's site gate asks this first.
+    case "tab_url": {
+      const t = await resolveTab(p.tabId);
+      return { tabId: t.id, url: t.url, title: t.title };
+    }
+
     case "list_tabs": {
       const tabs = await chrome.tabs.query({});
       return tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, active: t.active, windowId: t.windowId }));

@@ -408,6 +408,57 @@ describe("Session rewind", () => {
   });
 });
 
+describe("browser site gate through the session", () => {
+  test("a new site puts a card in front of the user; allow is this chat, always is the standing list; deny fails the tool", async () => {
+    const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+    const { BrowserAllowlist } = await import("../src/browser-allow.js");
+    const { BrowserBridge } = await import("../src/browser.js");
+    const { FakeWs } = await import("./fakes/ws.js");
+    const allow = new BrowserAllowlist(join(await mkdtemp(join(tmpdir(), "ct-gate-")), "allow.json"));
+    // a fake extension answering the bridge
+    const bridge = new BrowserBridge(() => {}, 500);
+    const ext = new FakeWs();
+    const origSend = ext.send.bind(ext);
+    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result: msg.action === "tab_url" ? { tabId: 1, url: "https://bank.example/acct" } : { text: "balance" } })); };
+    bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
+    const sdk = fakeSdk(); const events: ClientEvent[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, browserAllow: allow });
+    const done = s.start();
+    type Reg = Record<string, { callback?: Function; handler?: Function }>;
+    const callTool = (reg: Reg, name: string, args: Record<string, unknown>) => (reg[name].callback ?? reg[name].handler)!(args, {}) as Promise<{ content: { text: string }[] }>;
+    const tools = (sdk.last.options.mcpServers as Record<string, { instance: { _registeredTools: Reg } }>).browser.instance._registeredTools;
+    const read = () => callTool(tools, "read_page", { tabId: 1 });
+    // 1. asks
+    let p = read(); await settle(6);
+    let card = events.filter((e) => e.kind === "approval").at(-1) as Extract<ClientEvent, { kind: "approval" }>;
+    assert.equal(card.tool, "browser"); assert.deepEqual(card.input, { host: "bank.example", action: "read_page" }); assert.equal(card.canAlways, true);
+    assert.equal(s.status().detail, "browser");
+    s.decide(card.id, "deny");
+    await assert.rejects(p, /bank\.example: the user did not allow it/);
+    // 2. allow for this chat: no card the second time, nothing on the standing list
+    p = read(); await settle(6);
+    card = events.filter((e) => e.kind === "approval").at(-1) as typeof card; s.decide(card.id, "allow");
+    assert.match((await p).content[0].text, /balance/);
+    assert.match((await read()).content[0].text, /balance/); assert.equal(events.filter((e) => e.kind === "approval").length, 2);
+    assert.deepEqual(allow.all(), []);
+    // 3. always: standing list
+    const s2 = new Session("/w", (e) => events.push(e), { chatId: "c2", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, browserAllow: allow });
+    const done2 = s2.start();
+    const tools2 = (sdk.last.options.mcpServers as Record<string, { instance: { _registeredTools: Reg } }>).browser.instance._registeredTools;
+    p = callTool(tools2, "read_page", { tabId: 1 }); await settle(6);
+    card = events.filter((e) => e.kind === "approval").at(-1) as typeof card; s2.decide(card.id, "always");
+    await p; assert.deepEqual(allow.all(), ["bank.example"]);
+    // 4. eval on an allowed site still asks; "always" grants eval for this chat only
+    p = callTool(tools2, "eval", { tabId: 1, code: "document.title" }); await settle(6);
+    card = events.filter((e) => e.kind === "approval").at(-1) as typeof card;
+    assert.deepEqual(card.input, { host: "bank.example", action: "eval", detail: "document.title" });
+    s2.decide(card.id, "always"); await p;
+    await callTool(tools2, "eval", { tabId: 1, code: "1+1" }); assert.equal(events.filter((e) => e.kind === "approval").length, 4, "no further eval card this chat");
+    assert.deepEqual(allow.all(), ["bank.example"], "eval never lands on the standing list");
+    s.close(); s2.close(); await done; await done2;
+  });
+});
+
 describe("Session.setModel", () => {
   test("the CLI's models are published at start; a switch is applied, announced and remembered; failure keeps the old one", async () => {
     const sdk = fakeSdk({ setup: (q) => { q.models = [{ value: "claude-opus-5", displayName: "Opus 5" }]; } });

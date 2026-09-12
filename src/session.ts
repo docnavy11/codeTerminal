@@ -4,6 +4,8 @@ import { browserTools, terminalTools, watchTools, promptTools } from "./tools.js
 import { composePrompt } from "./prompt.js";
 import { summariseResult } from "./results.js";
 import { previewDiff } from "./diff.js";
+import type { BrowserAllowlist } from "./browser-allow.js";
+import type { BrowserPolicy } from "./tools.js";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
 import type { WatchRegistry } from "./watches.js";
@@ -63,6 +65,8 @@ export type SessionDeps = {
   prompts: PromptStore | null;
   /** Which browser this conversation's browser tools should act in. */
   prefer: () => string | undefined;
+  /** Sites the browser tools may use without asking; "Always" on the card adds to it. Absent = allow everything (tests). */
+  browserAllow?: BrowserAllowlist | null;
   /** The SDK entry point. Tests inject a scripted one; production leaves it unset. */
   spawnQuery?: typeof query;
   /** Names a chat from its first message. Also an SDK call, also injectable. */
@@ -106,6 +110,8 @@ type Pending = {
   resolve: (r: PermissionResult) => void;
   tool: string;
   suggestions: PermissionUpdate[];
+  /** Set for a browser-site ask: which host and action; "always" adds the host to the standing list. */
+  browser?: { host: string; action: string };
   /** Set for AskUserQuestion, whose answer rides back in updatedInput. */
   question?: { input: Record<string, unknown>; questions: AskQuestion[] };
 };
@@ -169,7 +175,7 @@ export class Session {
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS],
         mcpServers: {
           terminal: terminalTools(this.#deps.getShell),
-          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget) } : {}),
+          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy) } : {}),
           // The chat id is this session's own, so a watch is always attributed
           // to the conversation that set it.
           ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
@@ -221,6 +227,23 @@ export class Session {
   #closed = false;
   /** True once the SDK stream has ended, for whatever reason. send() would be lost. */
   get dead() { return this.#dead; }
+
+  /* ---- browser sites: a card per new site per chat, eval per call ---- */
+  #hostGrants = new Set<string>();      // allowed for this chat (this live session)
+  #evalGrants = new Set<string>();      // eval allowed on this host for this chat
+  #browserPolicy: BrowserPolicy = {
+    allowed: (host) => this.#hostGrants.has(host) || (this.#deps.browserAllow?.has(host) ?? false),
+    evalAllowed: (host) => this.#evalGrants.has(host),
+    ask: (host, action, detail) => this.#askBrowser(host, action, detail),
+  };
+  #askBrowser(host: string, action: string, detail?: string): Promise<"allow" | "deny"> {
+    const id = randomUUID();
+    const { promise, resolve } = deferred<PermissionResult>();
+    this.#pending.set(id, { resolve, tool: "browser", suggestions: [], browser: { host, action } });
+    this.#emit({ kind: "approval", id, tool: "browser", input: { host, action, ...(detail ? { detail } : {}) }, canAlways: true });
+    this.#pushStatus();
+    return promise.then((r) => r.behavior);
+  }
 
   /** The approval gate. The SDK awaits this, so the turn genuinely blocks here. */
   #canUseTool = (
@@ -277,6 +300,19 @@ export class Session {
     const p = this.#pending.get(id);
     if (!p) return false;
     this.#pending.delete(id);
+
+    if (p.browser) {
+      // allow: this chat. always: this site from now on (eval: this host, this chat — never standing).
+      const { host, action } = p.browser;
+      if (decision !== "deny") {
+        if (action === "eval") { if (decision === "always") this.#evalGrants.add(host); }
+        else { this.#hostGrants.add(host); if (decision === "always") this.#deps.browserAllow?.add(host); }
+        p.resolve({ behavior: "allow" });
+      } else p.resolve({ behavior: "deny", message: "declined" });
+      this.#emit({ kind: "approval_closed", id, decision });
+      this.#pushStatus();
+      return true;
+    }
 
     const modeUpdate: PermissionUpdate[] = mode && decision !== "deny" ? [{ type: "setMode", mode, destination: "session" }] : [];
     if (decision === "deny") {

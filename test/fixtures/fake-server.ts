@@ -99,6 +99,14 @@ const sdk = fakeSdk({ setup: (q) => {
     }, 150);
     return;
   }
+  if (content.includes("site-me")) {
+    q.ask("browser", { host: "bank.example", action: "read_page" }).promise.then((r) => { q.text(`site: ${r.behavior}`); q.result(); });
+    return;
+  }
+  if (content.includes("eval-me")) {
+    q.ask("browser", { host: "bank.example", action: "eval", detail: "document.title" }).promise.then((r) => { q.text(`eval: ${r.behavior}`); q.result(); });
+    return;
+  }
   if (content.includes("ask-me")) {
     q.ask("AskUserQuestion", { questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] })
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });
@@ -118,6 +126,7 @@ const running = await boot({
   host: "127.0.0.1", port: PORT, workspace: join(ROOT, "ws"), chatsDir: join(ROOT, "chats"),
   filesRoot: ROOT, projectsRoot: join(ROOT, "projects"),
   promptsPath: join(ROOT, "prompts.json"), usagePath: join(ROOT, "usage.json"),
+  browserAllowPath: join(ROOT, "browser-allow.json"), browserAllowSeed: [],
   maxUpload: 1024 * 1024, maxZip: 4 * 1024 * 1024, extraOrigins: [], forceLocal: true, denyExtra: [], home: join(ROOT, "home"),
   spawnQuery: sdk.spawnQuery, titler: async () => null,
   // stdout carries only READY; everything else goes to stderr (the harness's log file)
