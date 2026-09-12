@@ -231,6 +231,15 @@
     .tool .chev { grid-column:2; grid-row:1; }
   }
   .err  { color:var(--bad); }
+  .think { color:var(--dim); font-size:0.792rem; border-left:2px solid var(--line); padding:3px 8px; cursor:pointer; border-radius:0 5px 5px 0; }
+  .think:hover { background:var(--btn); }
+  .think .th { display:flex; gap:6px; align-items:baseline; min-width:0; }
+  .think .th .chev { font-size:0.7rem; transition:transform 0.12s; } .think.open .th .chev { transform:rotate(90deg); }
+  .think .th .lbl { font-style:italic; flex-shrink:0; }
+  .think .th .first { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; opacity:0.85; }
+  .think.open .th .first { display:none; }
+  .think .tt { display:none; margin:4px 0 2px; white-space:pre-wrap; word-break:break-word; font-family:var(--mono); max-height:260px; overflow:auto; }
+  .think.open .tt { display:block; }
   .end  { color:var(--dim); font-size:0.792rem; border-top:1px dashed var(--line); padding-top:4px; }
   .end.stopped { color:var(--bad); border-top-color:var(--bad); }
   #status .ctx { color:var(--dim); font-size:0.75rem; margin-left:8px; font-variant-numeric:tabular-nums; }

@@ -51,6 +51,14 @@ const sdk = fakeSdk({ onUser: (m, q) => {
     q.ask("Edit", { file_path: join(ROOT, "ws", "notes.txt"), old_string: "two", new_string: "TWO\nand a half" }).promise.then((r) => { q.text(`decision: ${r.behavior}`); q.result(); });
     return;
   }
+  if (content.includes("think-me")) {
+    const note = "I've narrowed it to two candidates.\nNow verifying each against the repo.";
+    let k = 0; const step = () => {
+      if (k < note.length) { q.thinkingDelta(note.slice(k, k + 12)); k += 12; setTimeout(step, 20); }
+      else { q.thinking(note); q.text("Verified: it is the second one."); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) }); }
+    };
+    step(); return;
+  }
   if (content.includes("ask-me")) {
     q.ask("AskUserQuestion", { questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] })
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });

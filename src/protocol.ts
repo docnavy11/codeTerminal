@@ -49,6 +49,9 @@ export type ClientEvent =
   | { kind: "watch"; description: string; detail: string }
   | { kind: "conversation_reset"; newId: string }
   | { kind: "delta"; text: string }
+  /** Thinking text as it streams (live-only) and the finished block (persisted, capped). Most blocks carry no text — see README. */
+  | { kind: "thinking_delta"; text: string }
+  | { kind: "thinking"; text: string }
   | { kind: "replayed" }
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "question"; id: string; questions: AskQuestion[] }
@@ -66,7 +69,7 @@ export type ClientEvent =
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
-  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta",
+  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 

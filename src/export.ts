@@ -21,6 +21,9 @@ export function toMarkdown(rec: ChatRecord, projectName?: string): string {
       case "text":
         out.push(e.text, "");
         break;
+      case "thinking":
+        out.push(`> 💭 ${e.text.replace(/\n/g, "\n> ")}`, "");
+        break;
       case "tool":
         out.push(`- → \`${e.name}\` ${toolSummary(e.input)}`);
         break;

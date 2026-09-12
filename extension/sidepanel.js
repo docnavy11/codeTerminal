@@ -36,6 +36,38 @@ const renderMd = (t, raw) => { t.innerHTML = DOMPurify.sanitize(marked.parse(raw
 // accumulated reply per token — measured 3.2s of main-thread time for a 24KB
 // reply. One render per frame is all the eye can use; the final "text" event
 // renders the complete reply regardless.
+/* Thinking: a dim, collapsed block above the reply showing the model's own
+   progress note — "I've narrowed it to 20 candidates; now verifying each".
+   The first line is always visible; click for the rest. It streams while it
+   arrives. Measured on real transcripts: only ~1 block in 20 carries text
+   (the API omits the rest and sends token counts), so the block appears when
+   there is something to read and the counter in the status bar covers the
+   rest. Plain text, never markdown: it is not addressed to you. */
+let thinking = null, thinkRaw = "", thinkFrame = 0;
+function thinkBlock() {
+  const d = el("think");
+  const head = document.createElement("div"); head.className = "th";
+  const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = "▸";
+  const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = "thinking";
+  const first = document.createElement("span"); first.className = "first";
+  head.append(chev, lbl, first);
+  const body = document.createElement("pre"); body.className = "tt";
+  d.append(head, body);
+  d.onclick = () => d.classList.toggle("open");
+  return d;
+}
+function renderThink() {
+  if (!thinking) return;
+  const firstLine = (thinkRaw.split("\n").find((l) => l.trim()) ?? "").trim();
+  thinking.querySelector(".first").textContent = firstLine;
+  thinking.querySelector(".tt").textContent = thinkRaw;
+  log.scrollTop = log.scrollHeight;
+}
+function scheduleThinkRender() {
+  if (thinkFrame) return;
+  thinkFrame = requestAnimationFrame(() => { thinkFrame = 0; renderThink(); });
+}
+
 let streamFrame = 0;
 function scheduleStreamRender() {
   if (streamFrame) return;
@@ -166,6 +198,16 @@ function handle(m) {
       streamRaw += m.text;
       scheduleStreamRender();
       break;
+    case "thinking_delta":
+      if (!thinking) { thinking = thinkBlock(); thinkRaw = ""; }
+      thinkRaw += m.text;
+      scheduleThinkRender();
+      break;
+    case "thinking":
+      // the finished block replaces whatever streamed (or stands alone on replay)
+      if (!thinking) thinking = thinkBlock();
+      thinkRaw = m.text; renderThink(); thinking = null; thinkRaw = "";
+      break;
     case "text":
       if (streaming) { lastText = streaming; lastRaw = m.text; streaming = null; streamRaw = ""; }
       else if (lastText) lastRaw += "\n" + m.text;
@@ -209,7 +251,7 @@ function handle(m) {
         const line = el("end", `${m.stopped ? `stopped: ${m.stopped}` : "done"}${m.denials ? ` · ${m.denials} denied` : ""} · $${cost.toFixed(4)} est.`);
         if (m.stopped) line.classList.add("stopped");
       }
-      lastText = null; streaming = null; streamRaw = "";
+      lastText = null; streaming = null; streamRaw = ""; thinking = null; thinkRaw = "";
       flushQueued();
       break;
     case "error":    el("msg err", m.message); break;

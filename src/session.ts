@@ -41,6 +41,9 @@ export const MAX_SCREENSHOTS = num(process.env.CODETERM_MAX_SCREENSHOTS, 15);
 /** Cost ceiling for one session (the SDK's maxBudgetUsd); unset = none. */
 export const MAX_BUDGET_USD = process.env.CODETERM_MAX_BUDGET_USD ? num(process.env.CODETERM_MAX_BUDGET_USD, 0) || undefined : undefined;
 
+/** Thinking text kept with a chat; the median block with text is ~250 chars (measured), so this is generous. */
+export const THINKING_CAP = 4096;
+
 /** Per-turn counters the browser tools consult. */
 export type TurnBudget = { screenshots: number; maxScreenshots: number };
 
@@ -432,6 +435,12 @@ export class Session {
       case "assistant":
         for (const block of msg.message.content) {
           if (block.type === "text" && block.text) this.#emit({ kind: "text", text: block.text });
+          // Thinking arrives complete here (and as thinking_delta while it
+          // streams). Most blocks are empty — the API omits the text and
+          // sends only token counts — so only a block with words is shown.
+          else if (block.type === "thinking" && typeof (block as { thinking?: string }).thinking === "string" && (block as { thinking: string }).thinking.trim()) {
+            this.#emit({ kind: "thinking", text: (block as { thinking: string }).thinking.slice(0, THINKING_CAP) });
+          }
           else if (block.type === "tool_use") {
             this.#activeTools.set(block.id, block.name);
             this.#emit({ kind: "tool", id: block.id, name: block.name, input: block.input });
@@ -478,9 +487,11 @@ export class Session {
       // Live text as it is generated. Kept separate from the "text" event,
       // which arrives complete and is the copy that gets persisted.
       case "stream_event": {
-        const ev = msg.event as { type?: string; delta?: { type?: string; text?: string } };
+        const ev = msg.event as { type?: string; delta?: { type?: string; text?: string; thinking?: string } };
         if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
           this.#emit({ kind: "delta", text: ev.delta.text });
+        } else if (ev?.type === "content_block_delta" && ev.delta?.type === "thinking_delta" && ev.delta.thinking) {
+          this.#emit({ kind: "thinking_delta", text: ev.delta.thinking });
         }
         return;
       }

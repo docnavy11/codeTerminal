@@ -121,6 +121,20 @@ describe("Session events", () => {
     assert.equal(m.statuses().at(-1), "idle", "the finished tool left the status");
   });
 
+  test("thinking: deltas stream, the finished block is emitted capped, empty and redacted blocks are not", async () => {
+    m.q.thinkingDelta("I'll che"); m.q.thinkingDelta("ck the repo.");
+    m.q.thinking("I'll check the repo.");
+    m.q.emit({ type: "assistant", message: { content: [{ type: "thinking", thinking: "", signature: "s" }] } });
+    m.q.emit({ type: "assistant", message: { content: [{ type: "redacted_thinking", data: "opaque" }] } });
+    m.q.thinking("y".repeat(5000));
+    await settle();
+    const deltas = m.events.filter((e): e is Extract<ClientEvent, { kind: "thinking_delta" }> => e.kind === "thinking_delta").map((e) => e.text);
+    assert.deepEqual(deltas, ["I'll che", "ck the repo."]);
+    const blocks = m.events.filter((e): e is Extract<ClientEvent, { kind: "thinking" }> => e.kind === "thinking");
+    assert.equal(blocks.length, 2); assert.equal(blocks[0].text, "I'll check the repo."); assert.equal(blocks[1].text.length, 4096);
+    assert.ok(!m.events.some((e) => e.kind === "error"));
+  });
+
   test("a result without a cost reports null, an error result says so", async () => {
     m.q.result({ total_cost_usd: undefined, is_error: true }); await settle();
     const end = m.last("turn_end")!; assert.equal(end.costUsd, null); assert.equal(end.isError, true); assert.equal(end.denials, 0);

@@ -191,14 +191,16 @@ describe("LiveChat: the record", () => {
     assert.equal((a.last("tool_result") as { summary: string }).summary, "x");
   });
 
-  test("status and delta are live-only, never persisted", async () => {
+  test("status, delta and thinking_delta are live-only; the finished thinking block is kept", async () => {
     const { sdk, mgr, client } = fresh();
     const c = mgr.create();
     const a = client(); c.attach(a.emit);
     sdk.last.delta("x"); sdk.last.emit({ type: "system", subtype: "status", status: "compacting" });
+    sdk.last.thinkingDelta("hm"); sdk.last.thinking("hmm, done");
     await settle();
-    assert.ok(a.kinds().includes("delta")); assert.ok(a.kinds().includes("status"));
-    assert.ok(!c.record.events.some((e) => e.kind === "delta" || e.kind === "status"));
+    assert.ok(a.kinds().includes("delta")); assert.ok(a.kinds().includes("status")); assert.ok(a.kinds().includes("thinking_delta"));
+    assert.ok(!c.record.events.some((e) => e.kind === "delta" || e.kind === "status" || e.kind === "thinking_delta"));
+    assert.ok(c.record.events.some((e) => e.kind === "thinking"));
   });
 
   test("/clear: the reset that follows empties the transcript, snapshots it first", async () => {

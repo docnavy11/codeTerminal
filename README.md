@@ -894,6 +894,19 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## Thinking
+
+When the model's thinking carries text, it shows as a dim, collapsed block
+above the reply — the first line visible (`thinking · I've narrowed it to
+two candidates.`), the rest a click away — streaming as it arrives and kept
+with the chat. Measured on this box's transcripts (817 thinking blocks in
+one TUI session, 208 across the SDK-run chats): only ~4 % carry any text,
+typically a 200–400-character progress note; the API omits the rest and
+sends token counts, which is what `thinking · 251` in the status bar shows.
+So the block is there when there is something to read, and absent — not
+empty — when there is not. Plain text, never rendered as markdown: it is
+not addressed to you.
+
 ## The change, before you approve it
 
 An Edit or Write approval card shows the diff, not the tool's JSON: the

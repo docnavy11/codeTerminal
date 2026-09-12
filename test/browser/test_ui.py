@@ -357,3 +357,19 @@ def test_edit_approval_shows_a_diff(page, server):
     assert page.locator(".card[data-tool=Edit] pre:not(.dl)").count() == 0, "no raw JSON when there is a diff"
     page.click(".card[data-tool=Edit] button[data-decision=allow]")
     wait_reply(page, "decision: allow")
+
+
+def test_thinking_streams_collapsed_then_persists(page, server):
+    open_ui(page, server)
+    send(page, "think-me")
+    page.wait_for_selector("#log .think", timeout=10000)
+    wait(page, "() => (document.querySelector('#log .think .first')?.textContent || '').includes('narrowed')", what="first line while streaming")
+    wait_reply(page, "Verified: it is the second one.")
+    assert page.text_content("#log .think .first") == "I've narrowed it to two candidates."
+    assert not page.evaluate("() => document.querySelector('#log .think').classList.contains('open')"), "collapsed by default"
+    assert page.evaluate("() => document.querySelectorAll('#log .think').length") == 1, "the finished block replaces the streamed one"
+    page.click("#log .think")
+    assert "Now verifying each against the repo." in page.text_content("#log .think .tt")
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    assert page.evaluate("() => document.querySelectorAll('#log .think').length") == 1, "persisted and replayed"
+    assert page.errors == []

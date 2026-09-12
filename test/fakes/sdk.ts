@@ -55,6 +55,12 @@ export class FakeQuery {
   delta(text: string): void {
     this.emit({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
   }
+  thinkingDelta(text: string): void {
+    this.emit({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: text } } });
+  }
+  thinking(text: string): void {
+    this.emit({ type: "assistant", message: { content: [{ type: "thinking", thinking: text, signature: "sig" }] } });
+  }
   text(text: string): void {
     this.emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
   }
