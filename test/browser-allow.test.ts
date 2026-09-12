@@ -8,7 +8,7 @@ import { BrowserAllowlist, hostOfUrl, hostMatches, normaliseHost } from "../src/
 describe("browser allowlist", () => {
   test("hosts from urls, matching with wildcards, normalising input", () => {
     assert.equal(hostOfUrl("https://Mail.Example.com:8443/x?y"), "mail.example.com");
-    assert.equal(hostOfUrl("chrome://extensions"), "extensions");
+    assert.equal(hostOfUrl("chrome://extensions"), "", "not a web page"); assert.equal(hostOfUrl("file:///etc/hosts"), ""); assert.equal(hostOfUrl("about:blank"), "");
     assert.equal(hostOfUrl("not a url"), ""); assert.equal(hostOfUrl(undefined), "");
     assert.equal(hostMatches("a.example.com", "*.example.com"), true);
     assert.equal(hostMatches("example.com", "*.example.com"), false, "the wildcard needs a subdomain");

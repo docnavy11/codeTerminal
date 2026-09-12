@@ -7,9 +7,10 @@ import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
  * Empty by default: the extension's <all_urls> is the capability, this is
  * the policy.
  */
+/** The site a URL belongs to; "" for anything that is not a web page (chrome://, about:, file:, …). */
 export function hostOfUrl(url: string | undefined | null): string {
   if (!url) return "";
-  try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
+  try { const u = new URL(url); return u.protocol === "http:" || u.protocol === "https:" ? u.hostname.toLowerCase() : ""; } catch { return ""; }
 }
 
 export function hostMatches(host: string, pattern: string): boolean {
