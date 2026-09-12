@@ -135,6 +135,25 @@ describe("Session events", () => {
     assert.ok(!m.events.some((e) => e.kind === "error"));
   });
 
+  test("subagents: task events from the three system messages, and their steps carry the parent", async () => {
+    m.q.toolUse("a1", "Agent", { description: "dig", subagent_type: "general-purpose", prompt: "p" });
+    m.q.emit({ type: "system", subtype: "task_started", task_id: "t1", tool_use_id: "a1", description: "dig" });
+    m.q.toolUse("s1", "Grep", { pattern: "x" }, "a1"); m.q.toolResult("s1", "hit", { parent: "a1" }); m.q.subText("found it", "a1");
+    m.q.emit({ type: "system", subtype: "task_progress", task_id: "t1", tool_use_id: "a1", description: "dig", usage: { total_tokens: 5, tool_uses: 1, duration_ms: 900 }, last_tool_name: "Grep" });
+    m.q.emit({ type: "system", subtype: "task_notification", task_id: "t1", tool_use_id: "a1", status: "completed", output_file: "/o", summary: "done\nmore", usage: { total_tokens: 9, tool_uses: 2, duration_ms: 1900 } });
+    await settle();
+    const tasks = m.events.filter((e): e is Extract<ClientEvent, { kind: "task" }> => e.kind === "task");
+    assert.deepEqual(tasks.map((t) => [t.state, t.toolUseId]), [["running", "a1"], ["completed", "a1"]]);
+    assert.equal(tasks[1].summary, "done\nmore"); assert.equal(tasks[1].toolUses, 2);
+    const prog = m.last("task_progress")!; assert.equal(prog.toolUses, 1); assert.equal(prog.lastTool, "Grep");
+    const step = m.events.find((e) => e.kind === "tool" && (e as { name: string }).name === "Grep") as { parent?: string };
+    assert.equal(step.parent, "a1");
+    assert.equal((m.events.find((e) => e.kind === "text" && (e as { text: string }).text === "found it") as { parent?: string }).parent, "a1");
+    assert.equal((m.last("tool_result") as { parent?: string }).parent, "a1");
+    const main = m.events.find((e) => e.kind === "tool" && (e as { name: string }).name === "Agent") as { parent?: string };
+    assert.equal(main.parent, undefined, "the main thread's own calls carry no parent");
+  });
+
   test("a result without a cost reports null, an error result says so", async () => {
     m.q.result({ total_cost_usd: undefined, is_error: true }); await settle();
     const end = m.last("turn_end")!; assert.equal(end.costUsd, null); assert.equal(end.isError, true); assert.equal(end.denials, 0);

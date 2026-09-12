@@ -126,7 +126,7 @@ async function connect() {
     // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
     // was already on screen — measured: the transcript doubled each time.
     log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = ""; lastContext = null; paintContext();
-    startReplay(); toolRows.clear(); turnTools = 0; turnShots = 0;
+    startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0;
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
     try {
@@ -177,7 +177,7 @@ function handle(m) {
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
-    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); toolRows.clear(); turnTools = 0; turnShots = 0; break;
+    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0; break;
     case "replayed":
       lastText = null;
       if (!log.querySelector(".msg")) welcome();
@@ -214,6 +214,7 @@ function handle(m) {
       thinkRaw = m.text; renderThink(); thinking = null; thinkRaw = "";
       break;
     case "text":
+      if (m.parent) { subText(m); break; }
       if (streaming) { lastText = streaming; lastRaw = m.text; streaming = null; streamRaw = ""; }
       else if (lastText) lastRaw += "\n" + m.text;
       else { lastText = el("msg md"); lastRaw = m.text; }
@@ -222,12 +223,15 @@ function handle(m) {
       break;
     case "tool": {
       if (m.name === "AskUserQuestion") { lastText = null; break; }
-      toolRow(m.id, m.name, m.input);
+      if (m.name === "TodoWrite") { todoList(m); turnTools++; lastText = null; break; }
+      toolRow(m.id, m.name, m.input, m.parent);
       turnTools++; if (m.name === "mcp__browser__screenshot") turnShots++;
       lastText = null;
       break;
     }
     case "tool_result": toolResult(m); break;
+    case "task": taskEvent(m); break;
+    case "task_progress": taskProgress(m); break;
     case "approval":        renderApproval(m); break;
     case "question":        renderQuestion(m); break;
     case "approval_closed": {
@@ -293,8 +297,98 @@ function welcome() {
 const toolRows = new Map();          // tool_use_id -> row
 let turnTools = 0, turnShots = 0;    // this turn's roll-up, shown in the status bar
 
-function toolRow(id, name, input) {
-  const d = el("tool");
+/* Where a row goes: the log, or — for a subagent's activity — the group
+   under the Agent call it belongs to. Groups are collapsed with a count. */
+function place(cls, parent) {
+  const d = document.createElement("div"); d.className = cls;
+  if (curIndex >= 0) d.dataset.i = String(curIndex);
+  const g = parent ? subGroup(parent) : null;
+  (g ?? log).append(d);
+  if (g) g.parentElement.querySelector(".gh .n").textContent = `${g.children.length} step${g.children.length === 1 ? "" : "s"}`;
+  else log.scrollTop = log.scrollHeight;
+  return d;
+}
+function subGroup(parent) {
+  const row = toolRows.get(parent);
+  if (!row) return null;
+  let g = row.querySelector(":scope > .grp > .gb");
+  if (g) return g;
+  const grp = document.createElement("div"); grp.className = "grp";
+  const gh = document.createElement("div"); gh.className = "gh";
+  const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = "▸";
+  const n = document.createElement("span"); n.className = "n"; n.textContent = "0 steps";
+  gh.append(chev, n);
+  gh.onclick = (e) => { e.stopPropagation(); grp.classList.toggle("open"); };
+  g = document.createElement("div"); g.className = "gb";
+  grp.append(gh, g); row.append(grp);
+  return g;
+}
+function subText(m) {
+  const d = place("msg md sub", m.parent);
+  renderMd(d, m.text);
+}
+
+/* ---------------- subagents ----------------
+   An Agent call gets a task line under its row: "⧉ running · 3 tool uses ·
+   42s · Grep" while it works, then "completed · <first line of its report>"
+   (or failed / stopped). Its own steps are the collapsed group above. */
+const tasks = new Map();   // task_id -> line element
+function taskLine(m) {
+  let line = tasks.get(m.id);
+  if (line) return line;
+  line = document.createElement("div"); line.className = "task";
+  const st = document.createElement("span"); st.className = "ts";
+  const tx = document.createElement("span"); tx.className = "tx";
+  line.append("⧉ ", st, " ", tx);
+  const row = m.toolUseId ? toolRows.get(m.toolUseId) : null;
+  if (row) row.append(line); else { if (curIndex >= 0) line.dataset.i = String(curIndex); log.append(line); }
+  tasks.set(m.id, line);
+  return line;
+}
+function taskEvent(m) {
+  const line = taskLine(m);
+  const st = line.querySelector(".ts"), tx = line.querySelector(".tx");
+  line.className = "task " + m.state;
+  if (m.state === "running") { st.textContent = "running"; tx.textContent = m.description; return; }
+  const stats = [m.toolUses ? `${m.toolUses} tool uses` : null, m.durationMs ? `${Math.round(m.durationMs / 1000)}s` : null].filter(Boolean).join(" · ");
+  st.textContent = m.state + (stats ? ` · ${stats}` : "");
+  tx.textContent = (m.summary ?? "").split("\n").find((l) => l.trim()) ?? "";
+  if (m.summary && m.summary.includes("\n")) {
+    const body = document.createElement("pre"); body.className = "tsum"; body.textContent = m.summary;
+    line.append(body); line.onclick = (e) => { e.stopPropagation(); line.classList.toggle("open"); }; line.classList.add("has");
+  }
+}
+function taskProgress(m) {
+  const line = tasks.get(m.id); if (!line || !line.classList.contains("running")) return;
+  line.querySelector(".ts").textContent = `running · ${m.toolUses} tool uses · ${Math.round(m.durationMs / 1000)}s${m.lastTool ? ` · ${m.lastTool}` : ""}`;
+}
+
+/* ---------------- the todo list ----------------
+   TodoWrite carries the whole list each time (per Claude Code's tool shape:
+   todos[{content, status, activeForm}] — not seen on this box, so the render
+   is defensive). One checklist per chat, updated in place; the row it sits
+   in says "2/5 done". */
+let todoBox = null;
+function todoList(m) {
+  const items = Array.isArray(m.input?.todos) ? m.input.todos : [];
+  if (!todoBox || !todoBox.isConnected) { todoBox = el("todos"); }
+  todoBox.replaceChildren();
+  const done = items.filter((t) => t?.status === "completed").length;
+  const h = document.createElement("div"); h.className = "th";
+  h.textContent = `tasks · ${done}/${items.length} done`;
+  todoBox.append(h);
+  for (const t of items) {
+    const li = document.createElement("div"); li.className = "ti " + (t?.status ?? "pending");
+    const mark = t?.status === "completed" ? "✓" : t?.status === "in_progress" ? "▸" : "○";
+    li.textContent = `${mark} ${t?.status === "in_progress" && t?.activeForm ? t.activeForm : (t?.content ?? "")}`;
+    todoBox.append(li);
+  }
+  log.append(todoBox);   // the latest list sits at the bottom, where the eye is
+  log.scrollTop = log.scrollHeight;
+}
+
+function toolRow(id, name, input, parent) {
+  const d = place("tool", parent);
   const line = document.createElement("div"); line.className = "tl";
   const b = document.createElement("b"); b.textContent = name;
   line.append("→ ", b, " ", summarize(input));
@@ -307,9 +401,9 @@ function toolRow(id, name, input) {
 }
 
 function toolResult(m) {
+  if (m.name === "TodoWrite") return;                                     // the list itself is the result
   let d = toolRows.get(m.id);
-  if (!d) { d = toolRow(null, m.name, {}); d.classList.add("orphan"); }   // its call is gone (truncated, or a mid-turn attach)
-  if (m.parent) d.classList.add("sub");
+  if (!d) { d = toolRow(null, m.name, {}, m.parent); d.classList.add("orphan"); }   // its call is gone (truncated, or a mid-turn attach)
   const res = d.querySelector(".tr");
   res.textContent = m.summary; res.className = "tr " + (m.ok ? "ok" : "err");
   res.title = m.bytes ? `${m.bytes.toLocaleString()} bytes${m.truncated ? ", truncated" : ""}` : "";
@@ -367,7 +461,7 @@ function applyStatus(m) {
     thinking:   `thinking${m.tokens > 0 ? ` · ${m.tokens >= 1000 ? (m.tokens / 1000).toFixed(1) + "k" : m.tokens}` : ""}${rollup()}`,
     tool:       `running ${m.detail}${rollup()}`,
     compacting: "compacting",
-    awaiting:   `waiting for you — ${m.detail}`,
+    awaiting:   `waiting for you — ${m.detail === "ExitPlanMode" ? "the plan" : m.detail}`,
   }[m.state] ?? m.state;
 
   setBusy(m.state !== "idle");

@@ -64,8 +64,11 @@ export class FakeQuery {
   text(text: string): void {
     this.emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
   }
-  toolUse(id: string, name: string, input: Record<string, unknown> = {}): void {
-    this.emit({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] } });
+  toolUse(id: string, name: string, input: Record<string, unknown> = {}, parent: string | null = null): void {
+    this.emit({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] }, parent_tool_use_id: parent });
+  }
+  subText(text: string, parent: string): void {
+    this.emit({ type: "assistant", message: { content: [{ type: "text", text }] }, parent_tool_use_id: parent });
   }
   toolResult(id: string, content: unknown = "", extra: { is_error?: boolean; structured?: unknown; parent?: string | null } = {}): void {
     this.emit({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, ...(extra.is_error ? { is_error: true } : {}) }] },

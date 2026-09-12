@@ -66,6 +66,32 @@ const sdk = fakeSdk({ onUser: (m, q) => {
       .promise.then((r) => { q.text(`decision: ${r.behavior}${(r as { updatedPermissions?: { mode?: string }[] }).updatedPermissions?.[0]?.mode ? ` · mode ${(r as { updatedPermissions: { mode: string }[] }).updatedPermissions[0].mode}` : ""}`); q.result(); });
     return;
   }
+  if (content.includes("agent-me")) {
+    q.text("Delegating the search.");
+    q.toolUse("a1", "Agent", { description: "Collect invoice links", subagent_type: "general-purpose", prompt: "find them" });
+    q.emit({ type: "system", subtype: "task_started", task_id: "task-1", tool_use_id: "a1", description: "Collect invoice links" });
+    let n = 0; const step = () => {
+      n++;
+      q.toolUse(`s${n}`, "Grep", { pattern: "invoice" }, "a1"); q.toolResult(`s${n}`, `hit ${n}`, { parent: "a1" });
+      q.emit({ type: "system", subtype: "task_progress", task_id: "task-1", tool_use_id: "a1", description: "Collect invoice links", usage: { total_tokens: 1000 * n, tool_uses: n, duration_ms: 1400 * n }, last_tool_name: "Grep" });
+      if (n < 3) { setTimeout(step, 60); return; }
+      q.subText("Found three links.", "a1");
+      q.emit({ type: "system", subtype: "task_notification", task_id: "task-1", tool_use_id: "a1", status: "completed", output_file: "/tmp/x", summary: "Three invoice links found.\n- a\n- b\n- c", usage: { total_tokens: 3000, tool_uses: 3, duration_ms: 4200 } });
+      q.toolResult("a1", "Three invoice links found.");
+      q.text("The subagent found three links."); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) });
+    };
+    setTimeout(step, 60); return;
+  }
+  if (content.includes("todo-me")) {
+    q.toolUse("td1", "TodoWrite", { todos: [{ content: "Read the config", status: "completed", activeForm: "Reading the config" }, { content: "Patch the loader", status: "in_progress", activeForm: "Patching the loader" }, { content: "Run tests", status: "pending", activeForm: "Running tests" }] });
+    q.toolResult("td1", "Todos have been modified successfully.");
+    setTimeout(() => {
+      q.toolUse("td2", "TodoWrite", { todos: [{ content: "Read the config", status: "completed", activeForm: "Reading the config" }, { content: "Patch the loader", status: "completed", activeForm: "Patching the loader" }, { content: "Run tests", status: "in_progress", activeForm: "Running tests" }] });
+      q.toolResult("td2", "Todos have been modified successfully.");
+      q.text("Two of three done."); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) });
+    }, 150);
+    return;
+  }
   if (content.includes("ask-me")) {
     q.ask("AskUserQuestion", { questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] })
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });

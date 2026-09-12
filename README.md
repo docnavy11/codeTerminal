@@ -894,6 +894,25 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## Subagents and the task list
+
+When the agent delegates to a subagent (the `Agent` tool), the call gets a
+task line beneath it — `⧉ running · 3 tool uses · 42s · Grep` while it
+works, then `completed · 3 tool uses · 4s · <first line of its report>`
+(or failed / stopped), the full report a click away. The subagent's own
+tool calls and words are nested under that row, collapsed with a count
+(`4 steps ▸`), so a delegated search does not flood the transcript with
+someone else's grep. Start and end are kept with the chat; the heartbeat in
+between is live-only. Measured basis: 187 of this box's transcripts contain
+`Agent` calls; the `task_started / task_progress / task_notification`
+messages are what the SDK sends for them.
+
+`TodoWrite` renders as one checklist per chat — `tasks · 2/3 done`, ✓ / ▸ /
+○ per item, the in-progress item in its active wording — updated in place
+each time the agent revises it, sitting at the bottom where the eye is.
+(Not observed on this box; rendered per Claude Code's documented shape and
+defensively.)
+
 ## Plan mode
 
 Pick **Plan** in the mode menu (or the agent enters it itself) and it only

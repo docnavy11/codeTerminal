@@ -68,6 +68,8 @@ function describe(name: string, text: string, s: Record<string, unknown>, images
       return m ? firstLine(text) : `${lines} lines`;
     }
     case "Glob": return text.trim() === "" || /^no files/i.test(text) ? "no files" : `${lines} files`;
+    case "TodoWrite": return "list updated";
+    case "Agent": case "Task": return /launched successfully/i.test(text) ? "running in the background" : firstLine(text);
     case "mcp__terminal__read": { const m = text.match(/^Last (\d+) lines/); return m ? `${m[1]} lines` : firstLine(text); }
     case "mcp__browser__read_page": { const j = json(text) as { title?: string; text?: string } | null; return j ? `${clip(j.title || "(untitled)", 60)} · ${(j.text ?? "").length.toLocaleString()} chars` : firstLine(text); }
     case "mcp__browser__screenshot": { const j = json(text) as { width?: number; height?: number; bytes?: number } | null; return j ? `image${j.width ? ` · ${j.width}×${j.height}` : ""}${j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""}` : firstLine(text); }

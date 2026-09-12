@@ -9,7 +9,7 @@ Ranked by how often it would matter in a day's use. Status: ☐ open, ◐ design
 | 3 | **Thinking text**, streamed. | A collapsed "thinking" block with the first line visible, streaming as it arrives, kept with the chat. Measured: only ~1 block in 20 carries text (the API omits the rest and sends token counts), so the counter stays and the block appears when there is something to read. | ☑ |
 | 4 | **Images in the prompt.** | Paste, drop or attach up to four; downscaled in the browser, sent as image blocks, thumbnails kept with the chat. | ☑ |
 | 5 | **Plan-mode presentation** — `ExitPlanMode` shows the plan and asks. | The card is the rendered plan with three answers: build it (ask before changes), build auto-accepting edits, keep planning; approval switches the mode. `EnterPlanMode` is mirrored in the mode menu. | ☑ |
-| 6 | **Todo list / subagent progress** as a live list. | Ordinary tool lines. | ☐ |
+| 6 | **Todo list / subagent progress** as a live list. | Subagents: a task line under the Agent call — running · N tool uses · Ns · last tool, then completed/failed with the report — and their own steps nested and collapsed with a count. Todos: one checklist per chat, updated in place (`tasks · 2/3 done`). | ☑ |
 | 7 | `@file` completion, `!` bash prefix. | A real shell pane instead; no `@` completion. | ☐ |
 | 8 | `/model` (the SDK has `setModel`), `/cost`. | Not exposed; `/context` works. | ☐ |
 | 9 | `/rewind`, file-history checkpoints. | TUI-only. | ☐ |

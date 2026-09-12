@@ -19,6 +19,8 @@ describe("toMarkdown", () => {
       { kind: "tool", id: "t2", name: "Read", input: { file_path: "/x/y.ts" } },
       { kind: "tool", id: "t3", name: "mcp__browser__eval", input: { code: "a`b`" } },
       { kind: "tool_result", id: "t3", name: "mcp__browser__eval", ok: false, summary: "✗ ReferenceError", text: "ReferenceError: x", bytes: 17, truncated: false },
+      { kind: "task", id: "tk", toolUseId: "t3", description: "dig", state: "running" },
+      { kind: "task", id: "tk", toolUseId: "t3", description: "", state: "completed", toolUses: 4, summary: "All found.\ndetails" },
       { kind: "thinking", text: "first thought\nsecond thought" },
       { kind: "text", text: "Here **you** go." },
       { kind: "local", text: "Working directory is now /w" },
@@ -29,7 +31,7 @@ describe("toMarkdown", () => {
     ]), "Project One");
     assert.match(md, /^# My chat\n\n_2023-11-14 22:13 · Project One · \/w_\n/);
     assert.ok(md.includes("**You**\n\nhello\nthere\n\n> ⌁ active tab: T — https://t\n"));
-    assert.ok(md.includes("- → `Bash` `ls -la`\n- → `Read` `/x/y.ts`\n- → `mcp__browser__eval` `{\"code\":\"a'b'\"}`\n  - ✗ ReferenceError"));
+    assert.ok(md.includes("- → `Bash` `ls -la`\n- → `Read` `/x/y.ts`\n- → `mcp__browser__eval` `{\"code\":\"a'b'\"}`\n  - ✗ ReferenceError\n  - ⧉ completed · 4 tool uses — All found."));
     assert.ok(md.includes("> 💭 first thought\n> second thought\n\nHere **you** go."));
     assert.ok(md.includes("> Working directory is now /w"));
     assert.ok(md.includes("> ⚠ boom"));

@@ -51,6 +51,12 @@ describe("summariseResult", () => {
     assert.equal(r("mcp__browser__read_page", "not json at all").summary, "not json at all", "falls back to the first line");
   });
 
+  test("TodoWrite and Agent", () => {
+    assert.equal(r("TodoWrite", "Todos have been modified successfully.").summary, "list updated");
+    assert.equal(r("Agent", "Async agent launched successfully. (internal…)").summary, "running in the background");
+    assert.equal(r("Agent", "Three links found.\nmore").summary, "Three links found.");
+  });
+
   test("unknown tools, empties, long lines, the cap", () => {
     assert.equal(r("WebFetch", "Title: X\nbody").summary, "Title: X");
     assert.equal(r("Whatever", "   \n\n").summary, "(empty)");

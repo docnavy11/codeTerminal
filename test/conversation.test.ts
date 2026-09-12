@@ -199,7 +199,11 @@ describe("LiveChat: the record", () => {
     sdk.last.thinkingDelta("hm"); sdk.last.thinking("hmm, done");
     await settle();
     assert.ok(a.kinds().includes("delta")); assert.ok(a.kinds().includes("status")); assert.ok(a.kinds().includes("thinking_delta"));
-    assert.ok(!c.record.events.some((e) => e.kind === "delta" || e.kind === "status" || e.kind === "thinking_delta"));
+    sdk.last.emit({ type: "system", subtype: "task_progress", task_id: "t", usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 } });
+    sdk.last.emit({ type: "system", subtype: "task_started", task_id: "t", description: "d" });
+    await settle();
+    assert.ok(!c.record.events.some((e) => e.kind === "delta" || e.kind === "status" || e.kind === "thinking_delta" || e.kind === "task_progress"));
+    assert.ok(c.record.events.some((e) => e.kind === "task"), "task start/end are kept");
     assert.ok(c.record.events.some((e) => e.kind === "thinking"));
   });
 

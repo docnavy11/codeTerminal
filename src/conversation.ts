@@ -92,7 +92,7 @@ export class LiveChat {
   #record = (e: ClientEvent): void => {
     // Live-only: status and deltas are the same words the completed events
     // carry, so persisting them would duplicate every reply.
-    if (e.kind === "status" || e.kind === "delta" || e.kind === "thinking_delta") { this.#emitAll(e); return; }
+    if (e.kind === "status" || e.kind === "delta" || e.kind === "thinking_delta" || e.kind === "task_progress") { this.#emitAll(e); return; }
 
     if (e.kind === "conversation_reset") {
       // The SDK emits this for /clear AND for fresh-session flows, and the

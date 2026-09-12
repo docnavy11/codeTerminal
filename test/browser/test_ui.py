@@ -422,3 +422,36 @@ def test_plan_card_renders_the_plan_and_switches_mode(page, server):
     wait_reply(page, "decision: allow · mode acceptEdits")
     wait(page, "() => document.querySelector('#mode').value === 'acceptEdits'", what="mode menu follows")
     page.select_option("#mode", "default"); time.sleep(0.3)
+
+
+def test_subagent_progress_nests_under_the_agent_call(page, server):
+    open_ui(page, server)
+    send(page, "agent-me")
+    wait(page, "() => !!document.querySelector('#log .tool .task.running')", what="task line while running")
+    wait(page, "() => (document.querySelector('#log .task .ts')?.textContent || '').includes('tool uses')", what="progress on the line")
+    wait_reply(page, "The subagent found three links.")
+    t = page.evaluate("""() => { const row = [...document.querySelectorAll('#log .tool')].find(r => r.querySelector('b').textContent === 'Agent');
+        return { status: row.querySelector('.task .ts').textContent, text: row.querySelector('.task .tx').textContent, cls: row.querySelector('.task').className,
+                 steps: row.querySelector('.grp .gh .n').textContent, open: row.querySelector('.grp').classList.contains('open'),
+                 nested: row.querySelectorAll('.grp .gb .tool').length, subText: row.querySelectorAll('.grp .gb .msg.sub').length,
+                 topLevelTools: [...document.querySelectorAll('#log > .tool')].map(r => r.querySelector('b').textContent) }; }""")
+    assert t["cls"] == "task completed has" and t["status"] == "completed · 3 tool uses · 4s" and t["text"] == "Three invoice links found.", t
+    assert t["steps"] == "4 steps" and not t["open"] and t["nested"] == 3 and t["subText"] == 1, t
+    assert t["topLevelTools"] == ["Agent"], "the subagent's steps are not top-level rows"
+    page.click("#log .tool .grp .gh")
+    assert page.evaluate("() => document.querySelector('#log .tool .grp').classList.contains('open')")
+    page.click("#log .task.has")
+    assert "- c" in page.text_content("#log .task .tsum")
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    assert page.evaluate("() => document.querySelector('#log .task')?.className") == "task completed has", "replayed from start+end events"
+
+
+def test_todo_list_updates_in_place(page, server):
+    open_ui(page, server)
+    send(page, "todo-me"); wait_reply(page, "Two of three done.")
+    t = page.evaluate("""() => ({ boxes: document.querySelectorAll('#log .todos').length, head: document.querySelector('#log .todos .th').textContent,
+        items: [...document.querySelectorAll('#log .todos .ti')].map(i => i.className.replace('ti ', '') + ':' + i.textContent),
+        toolRows: [...document.querySelectorAll('#log .tool b')].map(b => b.textContent) })""")
+    assert t["boxes"] == 1 and t["head"] == "tasks · 2/3 done", t
+    assert t["items"] == ["completed:✓ Read the config", "completed:✓ Patch the loader", "in_progress:▸ Running tests"], t
+    assert "TodoWrite" not in t["toolRows"], "the list replaces the tool rows"

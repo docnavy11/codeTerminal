@@ -437,6 +437,16 @@ export class Session {
         } else if (msg.subtype === "notification") {
           const r = msg as unknown as { text: string; priority: "low" | "medium" | "high" | "immediate" };
           if (r.priority !== "low") this.#emit({ kind: "local", text: r.text });
+        } else if (msg.subtype === "task_started") {
+          const r = msg as unknown as { task_id: string; tool_use_id?: string; description: string };
+          this.#emit({ kind: "task", id: r.task_id, toolUseId: r.tool_use_id ?? null, description: r.description, state: "running" });
+        } else if (msg.subtype === "task_progress") {
+          const r = msg as unknown as { task_id: string; tool_use_id?: string; usage: { tool_uses: number; duration_ms: number }; last_tool_name?: string };
+          this.#emit({ kind: "task_progress", id: r.task_id, toolUseId: r.tool_use_id ?? null, toolUses: r.usage?.tool_uses ?? 0, durationMs: r.usage?.duration_ms ?? 0, ...(r.last_tool_name ? { lastTool: r.last_tool_name } : {}) });
+        } else if (msg.subtype === "task_notification") {
+          const r = msg as unknown as { task_id: string; tool_use_id?: string; status: "completed" | "failed" | "stopped"; summary: string; usage?: { tool_uses: number; duration_ms: number } };
+          this.#emit({ kind: "task", id: r.task_id, toolUseId: r.tool_use_id ?? null, description: "", state: r.status, summary: r.summary.slice(0, 4096),
+            ...(r.usage ? { toolUses: r.usage.tool_uses, durationMs: r.usage.duration_ms } : {}) });
         }
         return;
 
@@ -446,9 +456,12 @@ export class Session {
         this.#pushStatus();
         return;
 
-      case "assistant":
+      case "assistant": {
+        // A subagent's own words and tool calls arrive on the same stream,
+        // marked with the Agent call they belong to; the client nests them.
+        const parent = (msg as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null;
         for (const block of msg.message.content) {
-          if (block.type === "text" && block.text) this.#emit({ kind: "text", text: block.text });
+          if (block.type === "text" && block.text) this.#emit({ kind: "text", text: block.text, ...(parent ? { parent } : {}) });
           // Thinking arrives complete here (and as thinking_delta while it
           // streams). Most blocks are empty — the API omits the text and
           // sends only token counts — so only a block with words is shown.
@@ -457,7 +470,7 @@ export class Session {
           }
           else if (block.type === "tool_use") {
             this.#activeTools.set(block.id, block.name);
-            this.#emit({ kind: "tool", id: block.id, name: block.name, input: block.input });
+            this.#emit({ kind: "tool", id: block.id, name: block.name, input: block.input, ...(parent ? { parent } : {}) });
             // The circuit breaker: a turn that keeps calling tools is stopped
             // and told so, instead of running until the model gives up.
             if (++this.#turnToolCalls > MAX_TOOL_CALLS && !this.#turnStopped) {
@@ -469,6 +482,7 @@ export class Session {
         }
         this.#pushStatus();
         return;
+      }
 
       // tool_result blocks tell us a tool finished.
       case "user": {

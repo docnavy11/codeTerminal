@@ -31,8 +31,14 @@ export type ClientEvent =
   | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
   /** images: what the user attached — thumbnails only, for the transcript; the full images went to the model. */
   | { kind: "user"; text: string; context?: string; images?: { media_type: string; thumb: string }[] }
-  | { kind: "text"; text: string }
-  | { kind: "tool"; id: string; name: string; input: unknown }
+  /** parent: set when a subagent (the Agent tool) said/did it — rendered nested under that call. */
+  | { kind: "text"; text: string; parent?: string | null }
+  | { kind: "tool"; id: string; name: string; input: unknown; parent?: string | null }
+  /** A subagent's life: started / completed / failed / stopped (persisted) … */
+  | { kind: "task"; id: string; toolUseId: string | null; description: string; state: "running" | "completed" | "failed" | "stopped";
+      toolUses?: number; durationMs?: number; summary?: string }
+  /** … and its heartbeat while running (live-only). */
+  | { kind: "task_progress"; id: string; toolUseId: string | null; toolUses: number; durationMs: number; lastTool?: string }
   /** What a tool returned: one line for the row, the body behind it (capped). Joined to "tool" by id. */
   | { kind: "tool_result"; id: string; name: string; ok: boolean; summary: string; text: string; bytes: number; truncated: boolean;
       interrupted?: boolean; parent?: string | null }
@@ -93,7 +99,7 @@ function parseImages(v: unknown): PromptImage[] | false {
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
-  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking",
+  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 
