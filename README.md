@@ -894,6 +894,18 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## @file
+
+Type `@` and a name anywhere in the composer and a menu lists matching
+paths under the chat's working directory — name prefix first, then
+substring, then subsequence (`@sll` finds `src/lib/loader.ts`); `.git`,
+`node_modules` and the like are skipped and the denylist holds. Enter or
+Tab inserts `@path`; a directory keeps the menu open to go deeper. The
+directory is walked once and cached for ten seconds, so typing does not
+re-walk a project per keystroke. `x@example.com` is not a mention. The
+SDK has a `file_suggestions` control request but no public method for it,
+so this is `GET /files/suggest`.
+
 ## Subagents and the task list
 
 When the agent delegates to a subagent (the `Agent` tool), the call gets a

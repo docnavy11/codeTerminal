@@ -10,7 +10,7 @@ Ranked by how often it would matter in a day's use. Status: ☐ open, ◐ design
 | 4 | **Images in the prompt.** | Paste, drop or attach up to four; downscaled in the browser, sent as image blocks, thumbnails kept with the chat. | ☑ |
 | 5 | **Plan-mode presentation** — `ExitPlanMode` shows the plan and asks. | The card is the rendered plan with three answers: build it (ask before changes), build auto-accepting edits, keep planning; approval switches the mode. `EnterPlanMode` is mirrored in the mode menu. | ☑ |
 | 6 | **Todo list / subagent progress** as a live list. | Subagents: a task line under the Agent call — running · N tool uses · Ns · last tool, then completed/failed with the report — and their own steps nested and collapsed with a count. Todos: one checklist per chat, updated in place (`tasks · 2/3 done`). | ☑ |
-| 7 | `@file` completion, `!` bash prefix. | A real shell pane instead; no `@` completion. | ☐ |
+| 7 | `@file` completion, `!` bash prefix. | `@` in the composer lists files under the chat's cwd (ranked: name prefix, substring, subsequence; build dirs and the denylist skipped); Enter inserts the path, a directory keeps the menu open to go deeper. A real shell pane stands in for `!`. | ☑ |
 | 8 | `/model` (the SDK has `setModel`), `/cost`. | Not exposed; `/context` works. | ☐ |
 | 9 | `/rewind`, file-history checkpoints. | TUI-only. | ☐ |
 | 10 | Esc-to-interrupt, `Ctrl+O` verbose, keyboard-driven everything. | Stop button, Enter. | ☐ |

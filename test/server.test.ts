@@ -169,6 +169,14 @@ describe("/files", () => {
     assert.equal((await s.json("/files/list?path=nope")).status, 400);
     assert.equal((await s.json("/files/list?path=hello.txt")).status, 400, "not a directory");
   });
+  test("suggest: matches under a directory; refusals for escapes and the denylist", async () => {
+    const r = await s.json("/files/suggest?path=&q=nest");
+    assert.equal(r.status, 200); assert.deepEqual(r.body!.files, [{ path: "sub/nested.txt", dir: false }]);
+    assert.equal((await s.json("/files/suggest?path=..&q=x")).status, 400);
+    assert.equal((await s.json("/files/suggest?path=secret&q=k")).status, 400);
+    assert.ok(!((await s.json("/files/suggest?path=&q=key")).body!.files as { path: string }[]).some((f) => f.path.startsWith("secret")), "denied subtree not walked");
+  });
+
   test("read: preview, binary, download headers, and the refusals", async () => {
     const t = await s.json("/files/read?path=hello.txt&preview=1");
     assert.equal(t.body!.kind, "text"); assert.equal(t.body!.text, "hello world\n"); assert.equal(t.body!.truncated, false);

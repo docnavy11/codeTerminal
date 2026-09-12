@@ -12,11 +12,15 @@ import { fakeSdk, type FakeQuery } from "../fakes/sdk.js";
 
 const ROOT = process.env.ROOT!; const PORT = Number(process.env.PORT);
 for (const d of ["ws", "chats", "files", "projects/p1", "home"]) mkdirSync(join(ROOT, d), { recursive: true });
-writeFileSync(join(ROOT, "files", "hello.txt"), "hello from the fixture\n");
-writeFileSync(join(ROOT, "files", "note.txt"), "note\n");
+for (const d of ["ws", "files"]) {
+  writeFileSync(join(ROOT, d, "hello.txt"), "hello from the fixture\n");
+  writeFileSync(join(ROOT, d, "note.txt"), "note\n");
+  writeFileSync(join(ROOT, d, "blob.txt"), "x".repeat(300_000));
+  writeFileSync(join(ROOT, d, "huge.bin"), Buffer.alloc(5 * 1024 * 1024));
+}
 writeFileSync(join(ROOT, "ws", "notes.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
-writeFileSync(join(ROOT, "files", "blob.txt"), "x".repeat(300_000));
-writeFileSync(join(ROOT, "files", "huge.bin"), Buffer.alloc(5 * 1024 * 1024));   // over the fixture's 4 MB zip cap
+mkdirSync(join(ROOT, "ws", "src", "lib"), { recursive: true }); mkdirSync(join(ROOT, "ws", "node_modules", "x"), { recursive: true });
+writeFileSync(join(ROOT, "ws", "src", "index.ts"), ""); writeFileSync(join(ROOT, "ws", "src", "lib", "loader.ts"), ""); writeFileSync(join(ROOT, "ws", "node_modules", "x", "index.js"), "");
 
 const inited = new WeakSet<FakeQuery>();
 const turns = new WeakMap<FakeQuery, { n: number }>();
@@ -109,7 +113,7 @@ const sdk = fakeSdk({ onUser: (m, q) => {
 
 const running = await boot({
   host: "127.0.0.1", port: PORT, workspace: join(ROOT, "ws"), chatsDir: join(ROOT, "chats"),
-  filesRoot: join(ROOT, "files"), projectsRoot: join(ROOT, "projects"),
+  filesRoot: ROOT, projectsRoot: join(ROOT, "projects"),
   promptsPath: join(ROOT, "prompts.json"), usagePath: join(ROOT, "usage.json"),
   maxUpload: 1024 * 1024, maxZip: 4 * 1024 * 1024, extraOrigins: [], forceLocal: true, denyExtra: [], home: join(ROOT, "home"),
   spawnQuery: sdk.spawnQuery, titler: async () => null,

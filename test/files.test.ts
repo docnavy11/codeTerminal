@@ -375,3 +375,32 @@ describe("makeDirectory", () => {
     } finally { await setDeniedPaths([]); await rm(base, { recursive: true, force: true }); }
   });
 });
+
+describe("suggest (@file completion)", () => {
+  test("walks the directory once, skips build dirs and the denylist, ranks basename prefix > substring > subsequence", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { suggest, clearSuggestCache, setDeniedPaths } = await import("../src/files.js");
+    const root = await mkdtemp(join(tmpdir(), "ct-suggest-"));
+    for (const d of ["src/lib", "node_modules/x", ".git", "secret"]) await mkdir(join(root, d), { recursive: true });
+    for (const f of ["src/index.ts", "src/lib/loader.ts", "src/lib/preloader.ts", "node_modules/x/loader.js", ".git/config", "secret/key", "README.md", "load.txt"]) await writeFile(join(root, f), "");
+    await setDeniedPaths([join(root, "secret")]);
+    try {
+      clearSuggestCache();
+      const paths = (await suggest(root, "", "load")).map((e) => e.path);
+      assert.deepEqual(paths.slice(0, 3), ["load.txt", "src/lib/loader.ts", "src/lib/preloader.ts"], paths);
+      assert.ok(!paths.some((p) => p.includes("node_modules") || p.startsWith(".git") || p.startsWith("secret")), paths);
+      assert.deepEqual((await suggest(root, "src", "")).map((e) => e.path + (e.dir ? "/" : "")).sort(), ["index.ts", "lib/", "lib/loader.ts", "lib/preloader.ts"]);
+      assert.deepEqual((await suggest(root, "", "sll")).map((e) => e.path), ["src/lib/loader.ts", "src/lib/preloader.ts"], "subsequence");
+      assert.equal((await suggest(root, "", "zzz")).length, 0);
+      assert.equal((await suggest(root, "", "", 2)).length, 2, "limit");
+      await writeFile(join(root, "loadnew.ts"), "");
+      assert.ok(!(await suggest(root, "", "loadnew")).length, "cached for a few seconds");
+      clearSuggestCache();
+      assert.equal((await suggest(root, "", "loadnew")).length, 1);
+      await assert.rejects(suggest(root, "..", "x"), /outside/);
+      await assert.rejects(suggest(root, "secret", "k"), /blocked/);
+    } finally { await setDeniedPaths([]); await rm(root, { recursive: true, force: true }); }
+  });
+});

@@ -146,7 +146,7 @@ def test_new_folder_inline(page, server):
     page.fill("#flist .row.newdir input", "made here")
     page.press("#flist .row.newdir input", "Enter")
     wait(page, "() => document.querySelector('#fpath').textContent.includes('made here')", what="navigated into the new folder")
-    assert os.path.isdir(os.path.join(server.root, "files", "made here"))
+    assert os.path.isdir(os.path.join(server.root, "ws", "made here"))
     page.click("#fup")
     page.wait_for_selector("#flist .row.dir:has(.n:text-is('made here/'))", timeout=5000)
     # a duplicate is refused and the row stays editable
@@ -455,3 +455,26 @@ def test_todo_list_updates_in_place(page, server):
     assert t["boxes"] == 1 and t["head"] == "tasks · 2/3 done", t
     assert t["items"] == ["completed:✓ Read the config", "completed:✓ Patch the loader", "in_progress:▸ Running tests"], t
     assert "TodoWrite" not in t["toolRows"], "the list replaces the tool rows"
+
+
+def test_at_file_completion_inserts_a_path(page, server):
+    open_ui(page, server)
+    page.fill("#box", "explain @load")
+    page.wait_for_selector("#menu.open .item", timeout=5000)
+    names = page.evaluate("() => [...document.querySelectorAll('#menu .item .n')].map(n => n.textContent)")
+    assert names[0] == "@src/lib/loader.ts", names
+    assert not any("node_modules" in n for n in names)
+    page.press("#box", "Enter")
+    assert page.input_value("#box") == "explain @src/lib/loader.ts "
+    assert not page.evaluate("() => document.getElementById('menu').classList.contains('open')")
+    # a directory keeps the menu open to go deeper
+    page.fill("#box", "look at @sr"); page.wait_for_selector("#menu.open .item", timeout=5000)
+    page.press("#box", "Enter")
+    assert page.input_value("#box") == "look at @src/"
+    page.wait_for_selector("#menu.open .item", timeout=5000)
+    deeper = page.evaluate("() => [...document.querySelectorAll('#menu .item .n')].map(n => n.textContent)")
+    assert "@src/index.ts" in deeper and "@src/lib/" in deeper, deeper
+    page.press("#box", "Escape")
+    page.fill("#box", "mail me at x@example.com")
+    time.sleep(0.4)
+    assert not page.evaluate("() => document.getElementById('menu').classList.contains('open')"), "an email address is not a mention"

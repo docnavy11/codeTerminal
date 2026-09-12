@@ -637,18 +637,46 @@ function currentQuery() {
   return v.slice(1).toLowerCase();
 }
 
-function refreshMenu() {
-  const q = currentQuery();
-  if (q === null) { menu.classList.remove("open"); matches = []; return; }
-  matches = COMMANDS.filter(c =>
-    c.name.toLowerCase().startsWith(q) ||
-    (c.aliases ?? []).some(a => a.toLowerCase().startsWith(q))).slice(0, 60);
+/* @file: the "@fragment" the caret is in, anywhere in the text. */
+function atQuery() {
+  const before = box.value.slice(0, box.selectionStart ?? box.value.length);
+  const m = before.match(/(?:^|\s)@([^\s@]*)$/);
+  return m ? { frag: m[1], start: before.length - m[1].length - 1 } : null;
+}
+
+/* The chat's cwd relative to the files root, for /files/suggest. Both are
+   absolute on the server; the root arrives with /files/info. */
+let filesRootAbs = null;
+async function cwdRel() {
+  if (filesRootAbs === null) { try { filesRootAbs = (await fjson("/files/info")).root ?? ""; } catch { filesRootAbs = ""; } }
+  if (!cwdShown || !filesRootAbs) return null;
+  if (cwdShown === filesRootAbs) return "";
+  if (cwdShown.startsWith(filesRootAbs + "/")) return cwdShown.slice(filesRootAbs.length + 1);
+  return null;   // outside the browsable root: nothing to offer
+}
+
+let atTimer = null, atSeq = 0;
+function refreshAtMenu(at) {
+  clearTimeout(atTimer);
+  atTimer = setTimeout(async () => {
+    const seq = ++atSeq;
+    const rel = await cwdRel();
+    if (rel === null) { matches = []; menu.classList.remove("open"); return; }
+    let files = [];
+    try { files = (await fjson(`/files/suggest?path=${encodeURIComponent(rel)}&q=${encodeURIComponent(at.frag)}`)).files; } catch { return; }
+    if (seq !== atSeq || !atQuery()) return;
+    matches = files.map((f) => ({ name: f.path + (f.dir ? "/" : ""), description: f.dir ? "directory" : "", file: true, start: at.start }));
+    paintMenu("@");
+  }, 120);
+}
+
+function paintMenu(prefix) {
   if (!matches.length) { menu.classList.remove("open"); return; }
   sel = Math.min(sel, matches.length - 1);
   menu.replaceChildren(...matches.map((c, i) => {
     const d = document.createElement("div");
     d.className = "item" + (i === sel ? " sel" : "");
-    const n = document.createElement("span"); n.className = "n"; n.textContent = "/" + c.name;
+    const n = document.createElement("span"); n.className = "n"; n.textContent = prefix + c.name;
     d.appendChild(n);
     if (c.argumentHint) {
       const h = document.createElement("span"); h.className = "h"; h.textContent = c.argumentHint; d.appendChild(h);
@@ -662,9 +690,32 @@ function refreshMenu() {
   menu.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
 }
 
+function refreshMenu() {
+  const at = atQuery();
+  if (at) { refreshAtMenu(at); return; }
+  const q = currentQuery();
+  if (q === null) { menu.classList.remove("open"); matches = []; return; }
+  matches = COMMANDS.filter(c =>
+    c.name.toLowerCase().startsWith(q) ||
+    (c.aliases ?? []).some(a => a.toLowerCase().startsWith(q))).slice(0, 60);
+  paintMenu("/");
+}
+
 function pick(i) {
   const c = matches[i];
   if (!c) return;
+  if (c.file) {
+    // replace the "@fragment" under the caret with "@path" (a directory keeps the menu open to go deeper)
+    const caret = box.selectionStart ?? box.value.length;
+    const tail = c.name.endsWith("/") ? "" : " ";
+    box.value = box.value.slice(0, c.start) + "@" + c.name + tail + box.value.slice(caret);
+    const pos = c.start + 1 + c.name.length + tail.length;
+    box.setSelectionRange(pos, pos);
+    menu.classList.remove("open"); matches = [];
+    box.focus();
+    if (!tail) refreshMenu();
+    return;
+  }
   box.value = "/" + c.name + (c.argumentHint ? " " : "");
   menu.classList.remove("open");
   matches = [];

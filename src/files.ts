@@ -257,6 +257,58 @@ export async function collectForZip(
  * 400 MB into RSS (measured) before returning a 256 KB slice, and a few at once
  * could OOM the process and take every live session down with it.
  */
+/* ---------------- @file suggestions ----------------
+   What the composer offers after "@": paths under a directory, matched by
+   the typed fragment. The directory is walked once and cached briefly, so
+   typing does not re-walk a project per keystroke; .git and node_modules are
+   skipped and the denylist holds. The SDK has a file_suggestions control
+   request but no public method for it, so this is ours. */
+const SUGGEST_TTL_MS = 10_000;
+const SUGGEST_MAX_ENTRIES = 20_000;
+const SKIP_DIRS = new Set([".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", ".cache", "target"]);
+const suggestCache = new Map<string, { at: number; entries: { path: string; dir: boolean }[] }>();
+
+async function walk(abs: string): Promise<{ path: string; dir: boolean }[]> {
+  const out: { path: string; dir: boolean }[] = [];
+  const stack: string[] = [""];
+  while (stack.length && out.length < SUGGEST_MAX_ENTRIES) {
+    const rel = stack.pop()!;
+    let names: import("node:fs").Dirent[];
+    try { names = await readdir(join(abs, rel), { withFileTypes: true }); } catch { continue; }
+    for (const d of names) {
+      const p = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) {
+        if (SKIP_DIRS.has(d.name) || isDenied(join(abs, p))) continue;
+        out.push({ path: p, dir: true }); stack.push(p);
+      } else if (d.isFile() || d.isSymbolicLink()) out.push({ path: p, dir: false });
+      if (out.length >= SUGGEST_MAX_ENTRIES) break;
+    }
+  }
+  return out;
+}
+
+/** Score a path against the fragment: exact basename prefix best, then substring, then subsequence. */
+function score(path: string, q: string): number {
+  if (!q) return 1;
+  const p = path.toLowerCase(), base = p.slice(p.lastIndexOf("/") + 1);
+  if (base.startsWith(q)) return 100 - base.length / 100;
+  if (base.includes(q)) return 80 - base.length / 100;
+  if (p.includes(q)) return 60 - p.length / 1000;
+  let i = 0; for (const ch of p) { if (ch === q[i]) i++; if (i === q.length) return 30 - p.length / 1000; }
+  return 0;
+}
+
+export async function suggest(root: string, dir: string | undefined, q: string, limit = 12): Promise<{ path: string; dir: boolean }[]> {
+  const abs = await safePath(root, dir);
+  const now = Date.now();
+  let c = suggestCache.get(abs);
+  if (!c || now - c.at > SUGGEST_TTL_MS) { c = { at: now, entries: await walk(abs) }; suggestCache.set(abs, c); }
+  const needle = q.trim().toLowerCase();
+  return c.entries.map((e) => ({ e, s: score(e.path, needle) })).filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s || a.e.path.length - b.e.path.length).slice(0, limit).map((x) => x.e);
+}
+export function clearSuggestCache(): void { suggestCache.clear(); }
+
 /** Bytes at the end of `b` that begin a UTF-8 sequence the buffer does not finish. */
 export function partialUtf8Tail(b: Uint8Array): number {
   for (let back = 1; back <= 3 && back <= b.length; back++) {

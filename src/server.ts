@@ -412,6 +412,16 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     res.json({ root: FILES_ROOT, start, maxUpload: MAX_UPLOAD, cwd: lastChatCwd() });
   });
 
+  /** @file completion: paths under `path` (the chat's cwd, relative to the files root) matching `q`. */
+  app.get("/files/suggest", guard, async (req, res) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      res.json({ files: await files.suggest(FILES_ROOT, typeof req.query.path === "string" ? req.query.path : undefined, q) });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   app.get("/files/list", guard, async (req, res) => {
     try {
       res.json(await files.list(FILES_ROOT, typeof req.query.path === "string" ? req.query.path : undefined));
