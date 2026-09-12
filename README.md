@@ -894,6 +894,18 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## Rewind
+
+Hover one of your messages and press **⟲** to put the files back to how
+they were before it. First a preview — `Restore 2 files to how they were
+before this message (−3 +10 lines): src/a.ts, src/b.ts` — then **Restore**,
+and a note in the transcript says what happened. The CLI keeps a checkpoint
+per user message (`enableFileCheckpointing`); every message we send carries
+a uuid so the CLI can name it, and `rewindFiles` does the work, refusing
+symlinks and paths that moved. Files only: the SDK offers no conversation
+rewind, so the transcript stays as it is — say what you want done
+differently in your next message.
+
 ## Model
 
 A **model** menu sits beside the mode menu, filled from the CLI's own list

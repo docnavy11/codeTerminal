@@ -92,7 +92,8 @@ export class LiveChat {
   #record = (e: ClientEvent): void => {
     // Live-only: status and deltas are the same words the completed events
     // carry, so persisting them would duplicate every reply.
-    if (e.kind === "status" || e.kind === "delta" || e.kind === "thinking_delta" || e.kind === "task_progress") { this.#emitAll(e); return; }
+    if (e.kind === "rewind") this.#lastRewind = { uuid: e.uuid, ok: e.canRewind, files: e.files.length };
+    if (e.kind === "status" || e.kind === "delta" || e.kind === "thinking_delta" || e.kind === "task_progress" || e.kind === "rewind") { this.#emitAll(e); return; }
 
     if (e.kind === "conversation_reset") {
       // The SDK emits this for /clear AND for fresh-session flows, and the
@@ -158,16 +159,16 @@ export class LiveChat {
       const ctx = await context();
       if (this.#session.dead) this.#restart();
       // The record keeps thumbnails only; the full images are for the model.
-      this.recordUser(text, ctx, images.map((i) => ({ media_type: i.media_type, thumb: i.thumb })));
-      this.#session.send(text, ctx, images);
+      const uuid = this.#session.send(text, ctx, images);
+      this.recordUser(text, ctx, images.map((i) => ({ media_type: i.media_type, thumb: i.thumb })), uuid);
     } finally {
       this.#sending = false;
     }
   }
 
-  recordUser(text: string, context?: string, images?: { media_type: string; thumb: string }[]): void {
+  recordUser(text: string, context?: string, images?: { media_type: string; thumb: string }[], uuid?: string): void {
     if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
-    this.#record({ kind: "user", text, context, ...(images?.length ? { images } : {}) });
+    this.#record({ kind: "user", text, context, ...(images?.length ? { images } : {}), ...(uuid ? { uuid } : {}) });
     if (this.#rec.title === "New chat") {
       this.#rec.title = titleFrom(this.#rec.events);
       this.#rec.titleProvisional = true;
@@ -242,6 +243,20 @@ export class LiveChat {
     this.#session.send(prompt, `watch report: ${detail}`);
     return "woken";
   }
+
+  /** Rewind files to before a user message; a real rewind leaves a note in the transcript. */
+  async rewind(uuid: string, dryRun: boolean): Promise<void> {
+    if (this.busy) throw new Error("Finish or stop the current turn first.");
+    if (this.#session.dead) throw new Error("The session has ended; send a message first, then rewind.");
+    const target = this.#rec.events.find((e) => e.kind === "user" && (e as { uuid?: string }).uuid === uuid) as { text: string } | undefined;
+    if (!target) throw new Error("That message is not in this chat.");
+    await this.#session.rewindFiles(uuid, dryRun);
+    if (!dryRun && this.#lastRewind?.uuid === uuid && this.#lastRewind.ok) {
+      const n = this.#lastRewind.files;
+      this.#record({ kind: "local", text: `Rewound ${n} file${n === 1 ? "" : "s"} to before “${target.text.split("\n")[0].slice(0, 60)}”` });
+    }
+  }
+  #lastRewind: { uuid: string; ok: boolean; files: number } | null = null;
 
   /** Make this the most recently used chat, so a fresh attach lands on it. */
   touch(): void {

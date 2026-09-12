@@ -200,6 +200,14 @@ function handle(m) {
       log.querySelector(".welcome")?.remove();
       turnTools = 0; turnShots = 0;
       const u = el("msg user", m.text);
+      if (m.uuid) {
+        // Files the agent changed after this message can be put back to how
+        // they were here — the CLI keeps a checkpoint per message.
+        u.dataset.uuid = m.uuid;
+        const rw = document.createElement("button"); rw.className = "rw"; rw.title = "Rewind files to before this message"; rw.textContent = "⟲";
+        rw.onclick = (e) => { e.stopPropagation(); if (!busy) ws?.send(JSON.stringify({ type: "rewind", uuid: m.uuid, dryRun: true })); };
+        u.append(rw);
+      }
       if (m.images?.length) {
         const strip = document.createElement("div"); strip.className = "imgs";
         for (const im of m.images) { const img = document.createElement("img"); img.src = `data:${im.media_type};base64,${im.thumb}`; img.alt = "attached image"; strip.append(img); }
@@ -244,6 +252,7 @@ function handle(m) {
     }
     case "tool_result": toolResult(m); break;
     case "task": taskEvent(m); break;
+    case "rewind": rewindCard(m); break;
     case "task_progress": taskProgress(m); break;
     case "approval":        renderApproval(m); break;
     case "question":        renderQuestion(m); break;
@@ -374,6 +383,35 @@ function taskEvent(m) {
 function taskProgress(m) {
   const line = tasks.get(m.id); if (!line || !line.classList.contains("running")) return;
   line.querySelector(".ts").textContent = `running · ${m.toolUses} tool uses · ${Math.round(m.durationMs / 1000)}s${m.lastTool ? ` · ${m.lastTool}` : ""}`;
+}
+
+/* ---------------- rewind ----------------
+   ⟲ on a user message asks for a dry run; the answer is a card under that
+   message — what would be restored, or why it cannot be — with Restore /
+   Cancel. Restore sends the real rewind; its answer closes the card and
+   the server leaves a note in the transcript. */
+function rewindCard(m) {
+  const u = log.querySelector(`.msg.user[data-uuid="${CSS.escape(m.uuid)}"]`);
+  if (!u) return;
+  u.querySelector(":scope > .rwcard")?.remove();
+  if (!m.dryRun) { if (!m.canRewind) { const n = document.createElement("div"); n.className = "rwcard err"; n.textContent = `Could not rewind: ${m.error ?? "unknown error"}`; u.append(n); } return; }
+  const card = document.createElement("div"); card.className = "rwcard" + (m.canRewind ? "" : " err");
+  if (!m.canRewind) { card.textContent = `Cannot rewind here: ${m.error ?? "no checkpoint for this message"}`; u.append(card); return; }
+  const what = document.createElement("div"); what.className = "what";
+  what.textContent = m.files.length
+    ? `Restore ${m.files.length} file${m.files.length === 1 ? "" : "s"} to how they were before this message (−${m.insertions} +${m.deletions} lines): ${m.files.join(", ")}`
+    : "Nothing has changed since this message.";
+  card.append(what);
+  const row = document.createElement("div"); row.className = "row";
+  if (m.files.length) {
+    const ok = document.createElement("button"); ok.className = "allow"; ok.textContent = "Restore";
+    ok.onclick = (e) => { e.stopPropagation(); ws?.send(JSON.stringify({ type: "rewind", uuid: m.uuid, dryRun: false })); card.querySelectorAll("button").forEach((b) => (b.disabled = true)); };
+    row.append(ok);
+  }
+  const no = document.createElement("button"); no.textContent = m.files.length ? "Cancel" : "OK";
+  no.onclick = (e) => { e.stopPropagation(); card.remove(); };
+  row.append(no); card.append(row); u.append(card);
+  card.onclick = (e) => e.stopPropagation();
 }
 
 /* ---------------- the todo list ----------------

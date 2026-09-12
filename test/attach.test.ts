@@ -256,6 +256,19 @@ describe("attachAgent: mode, cwd, project", () => {
     assert.equal(a.last("mode")!.mode, "acceptEdits");
   });
 
+  test("rewind: routed to the session with the message's uuid; a bad uuid is refused before it", async () => {
+    const w = world();
+    const ws = w.agent();
+    ws.frame({ type: "prompt", text: "edit", withTab: false }); await settle(6);
+    const uuid = (ws.last("user") as { uuid: string }).uuid;
+    w.sdk.last.result(); await settle(4);
+    ws.frame({ type: "rewind", uuid, dryRun: true }); await settle(4);
+    assert.deepEqual(w.sdk.last.rewinds, [{ uuid, dryRun: true }]);
+    assert.equal(ws.last("rewind")!.uuid, uuid);
+    ws.frame({ type: "rewind", uuid: "aaaaaaaa-0000-0000-0000-00000000dead", dryRun: true }); await settle(4);
+    assert.match(ws.last("error")!.message as string, /not in this chat/);
+  });
+
   test("model: switches this chat and is announced on attach", async () => {
     const w = world();
     const ws = w.agent();

@@ -21,6 +21,9 @@ export class FakeQuery {
   commands: SlashCommand[] = [];
   models: { value: string; displayName: string }[] = [];
   readonly modelCalls: (string | undefined)[] = [];
+  readonly rewinds: { uuid: string; dryRun: boolean }[] = [];
+  rewindResult: { canRewind: boolean; error?: string; filesChanged?: string[]; insertions?: number; deletions?: number } = { canRewind: true, filesChanged: [], insertions: 0, deletions: 0 };
+  rewindError: Error | null = null;
   setModelError: Error | null = null;
   /** Make setPermissionMode reject with this. */
   setModeError: Error | null = null;
@@ -97,6 +100,7 @@ export class FakeQuery {
   }
   async interrupt(): Promise<undefined> { this.interrupts++; return undefined; }
   async setModel(model?: string): Promise<void> { if (this.setModelError) throw this.setModelError; this.modelCalls.push(model); }
+  async rewindFiles(uuid: string, opts?: { dryRun?: boolean }) { if (this.rewindError) throw this.rewindError; this.rewinds.push({ uuid, dryRun: opts?.dryRun === true }); return this.rewindResult; }
   async supportedModels(): Promise<{ value: string; displayName: string }[]> { return this.models; }
   async supportedCommands(): Promise<SlashCommand[]> {
     if (this.commandsError) throw this.commandsError;

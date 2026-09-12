@@ -27,7 +27,10 @@ const turns = new WeakMap<FakeQuery, { n: number }>();
 const turnsOf = (q: FakeQuery) => { let t = turns.get(q); if (!t) { t = { n: 0 }; turns.set(q, t); } return t; };
 // Each turn re-sends a little more; 40k per turn against a 200k window → 20%, 40%, …
 const usageFor = (q: FakeQuery) => ({ usage: { input_tokens: 100, cache_read_input_tokens: 40_000 * turnsOf(q).n - 100, output_tokens: 0 }, modelUsage: { "fake-model": { contextWindow: 200_000 } } });
-const sdk = fakeSdk({ setup: (q) => { q.models = [{ value: "claude-opus-5", displayName: "Opus 5" }, { value: "claude-sonnet-5", displayName: "Sonnet 5" }]; }, onUser: (m, q) => {
+const sdk = fakeSdk({ setup: (q) => {
+  q.models = [{ value: "claude-opus-5", displayName: "Opus 5" }, { value: "claude-sonnet-5", displayName: "Sonnet 5" }];
+  q.rewindResult = { canRewind: true, filesChanged: ["src/a.ts", "src/b.ts"], insertions: 3, deletions: 10 };
+}, onUser: (m, q) => {
   if (!inited.has(q)) { inited.add(q); q.init(`fake-${Date.now()}`); }
   const raw = m.message.content;
   const images = Array.isArray(raw) ? raw.filter((b) => (b as { type: string }).type === "image").length : 0;

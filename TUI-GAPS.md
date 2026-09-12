@@ -12,7 +12,7 @@ Ranked by how often it would matter in a day's use. Status: ☐ open, ◐ design
 | 6 | **Todo list / subagent progress** as a live list. | Subagents: a task line under the Agent call — running · N tool uses · Ns · last tool, then completed/failed with the report — and their own steps nested and collapsed with a count. Todos: one checklist per chat, updated in place (`tasks · 2/3 done`). | ☑ |
 | 7 | `@file` completion, `!` bash prefix. | `@` in the composer lists files under the chat's cwd (ranked: name prefix, substring, subsequence; build dirs and the denylist skipped); Enter inserts the path, a directory keeps the menu open to go deeper. A real shell pane stands in for `!`. | ☑ |
 | 8 | `/model` (the SDK has `setModel`), `/cost`. | A model picker beside the mode menu, filled from the CLI's own list; per chat, remembered, inherited by a new chat; a failed switch snaps back and says why. Cost is on every turn-end line. | ☑ |
-| 9 | `/rewind`, file-history checkpoints. | TUI-only. | ☐ |
+| 9 | `/rewind`, file-history checkpoints. | ⟲ on any of your messages previews what a rewind would restore (files, ±lines), then restores it; the CLI's per-message checkpoints (`enableFileCheckpointing`, `rewindFiles`). Files only — the conversation is not rewound (the SDK offers no way). | ☑ |
 | 10 | Esc-to-interrupt, `Ctrl+O` verbose, keyboard-driven everything. | Stop button, Enter. | ☐ |
 
 Not gaps: the gate, permission modes, resume, `/clear`, slash commands, skills,

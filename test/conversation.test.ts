@@ -268,6 +268,32 @@ describe("LiveChat: the record", () => {
   });
 });
 
+describe("LiveChat.rewind", () => {
+  test("the user event carries the uuid; a real rewind leaves a note; refusals for busy, dead and unknown", async () => {
+    const { sdk, mgr, client } = fresh();
+    const c = mgr.create();
+    const a = client(); c.attach(a.emit);
+    await c.prompt("touch the loader", async () => undefined); await settle();
+    const ev = c.record.events.find((e) => e.kind === "user") as { uuid?: string };
+    assert.match(ev.uuid!, /^[0-9a-f-]{36}$/);
+    await assert.rejects(c.rewind(ev.uuid!, true), /Finish or stop/);
+    sdk.last.result(); await settle();
+    await assert.rejects(c.rewind("aaaaaaaa-0000-0000-0000-00000000dead", true), /not in this chat/);
+    sdk.last.rewindResult = { canRewind: true, filesChanged: ["x.ts", "y.ts"], insertions: 1, deletions: 1 };
+    await c.rewind(ev.uuid!, true);
+    assert.ok(!c.record.events.some((e) => e.kind === "rewind"), "the answer is live-only");
+    assert.ok(a.kinds().includes("rewind"));
+    await c.rewind(ev.uuid!, false);
+    const note = c.record.events.at(-1) as { kind: string; text: string };
+    assert.equal(note.kind, "local"); assert.match(note.text, /Rewound 2 files to before “touch the loader”/);
+    sdk.last.rewindResult = { canRewind: false, error: "nope" };
+    await c.rewind(ev.uuid!, false);
+    assert.equal((c.record.events.at(-1) as { kind: string }).kind, "local", "a failed real rewind adds no note");
+    sdk.last.end(); await settle();
+    await assert.rejects(c.rewind(ev.uuid!, true), /session has ended/);
+  });
+});
+
 describe("LiveChat.setModel", () => {
   test("is saved with the chat and used when the session is rebuilt", async () => {
     const { sdk, mgr } = fresh();

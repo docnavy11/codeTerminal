@@ -126,6 +126,9 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
       case "model":
         chat.setModel(msg.model).catch((e: unknown) => send({ kind: "error", message: String(e) }));
         return;
+      case "rewind":
+        chat.rewind(msg.uuid, msg.dryRun).catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
+        return;
       case "interrupt":
         chat.session.interrupt().catch(() => {}); return;
       case "new":

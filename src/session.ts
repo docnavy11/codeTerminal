@@ -177,6 +177,9 @@ export class Session {
         },
         permissionMode: this.#mode,
         ...(model ? { model } : {}),
+        // Snapshots files before edits, so a user message is a point to
+        // rewind the working tree to (rewindFiles below).
+        enableFileCheckpointing: true,
         allowDangerouslySkipPermissions: ALLOW_BYPASS,
         ...(MAX_BUDGET_USD ? { maxBudgetUsd: MAX_BUDGET_USD } : {}),
         canUseTool: this.#canUseTool,
@@ -325,7 +328,8 @@ export class Session {
    * model can tell it from what the user actually typed. It is page-derived,
    * therefore untrusted — hence the explicit note rather than a bare paste.
    */
-  send(text: string, context?: string, images: { media_type: string; data: string }[] = []): void {
+  send(text: string, context?: string, images: { media_type: string; data: string }[] = []): string {
+    const uuid = randomUUID();   // the id the CLI keeps for this message; rewinds name it
     this.#busy = true;
     this.#thinkingTokens = 0;
     this.#turnToolCalls = 0; this.#budget.screenshots = 0; this.#turnStopped = false;
@@ -337,9 +341,25 @@ export class Session {
       : prompt;
     this.#input.push({
       type: "user",
+      uuid,
       message: { role: "user", content },
       parent_tool_use_id: null,
     });
+    return uuid;
+  }
+
+  /**
+   * Restore the files the agent changed since the user message `uuid` (the
+   * CLI keeps checkpoints per message). A dry run reports what would change.
+   */
+  async rewindFiles(uuid: string, dryRun: boolean): Promise<void> {
+    try {
+      const r = await this.#query?.rewindFiles(uuid, { dryRun });
+      this.#emit({ kind: "rewind", uuid, dryRun, canRewind: r?.canRewind ?? false, ...(r?.error ? { error: r.error } : {}),
+        files: r?.filesChanged ?? [], insertions: r?.insertions ?? 0, deletions: r?.deletions ?? 0 });
+    } catch (err) {
+      this.#emit({ kind: "rewind", uuid, dryRun, canRewind: false, error: err instanceof Error ? err.message : String(err), files: [], insertions: 0, deletions: 0 });
+    }
   }
 
   async interrupt(): Promise<void> { await this.#query?.interrupt(); }

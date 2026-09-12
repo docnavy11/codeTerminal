@@ -493,3 +493,19 @@ def test_model_picker_lists_the_clis_models_and_sticks_per_chat(page, server):
     wait(page, "() => document.querySelector('#model').value === 'claude-sonnet-5'", what="a new chat inherits the model, like cwd and mode")
     page.select_option("#model", ""); time.sleep(0.3)
     assert page.errors == []
+
+
+def test_rewind_previews_then_restores(page, server):
+    open_ui(page, server)
+    send(page, "touch the loader"); wait_reply(page, "You said: touch the loader")
+    page.hover("#log .msg.user"); page.click("#log .msg.user .rw")
+    page.wait_for_selector("#log .msg.user .rwcard", timeout=5000)
+    assert "Restore 2 files" in page.text_content("#log .msg.user .rwcard .what") and "src/a.ts, src/b.ts" in page.text_content("#log .msg.user .rwcard .what")
+    page.click("#log .msg.user .rwcard button:has-text('Cancel')")
+    assert page.locator("#log .msg.user .rwcard").count() == 0
+    page.hover("#log .msg.user"); page.click("#log .msg.user .rw")
+    page.wait_for_selector("#log .msg.user .rwcard", timeout=5000)
+    page.click("#log .msg.user .rwcard button:has-text('Restore')")
+    wait(page, "() => [...document.querySelectorAll('#log .local')].some(l => l.textContent.includes('Rewound 2 files to before'))", what="the note")
+    assert page.locator("#log .msg.user .rwcard").count() == 0
+    assert page.errors == []

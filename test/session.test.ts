@@ -388,6 +388,26 @@ describe("the approval gate", () => {
   });
 });
 
+describe("Session rewind", () => {
+  test("every sent message carries a uuid the CLI can rewind to; checkpointing is on; dry run, real, and failure", async () => {
+    const m = make();
+    assert.equal(m.q.options.enableFileCheckpointing, true);
+    const uuid = m.s.send("change things"); await settle();
+    assert.match(uuid, /^[0-9a-f-]{36}$/); assert.equal((m.q.received[0] as { uuid?: string }).uuid, uuid);
+    m.q.rewindResult = { canRewind: true, filesChanged: ["a.ts"], insertions: 2, deletions: 5 };
+    await m.s.rewindFiles(uuid, true);
+    let r = m.last("rewind")!; assert.deepEqual([r.dryRun, r.canRewind, r.files, r.insertions, r.deletions], [true, true, ["a.ts"], 2, 5]);
+    await m.s.rewindFiles(uuid, false);
+    r = m.last("rewind")!; assert.equal(r.dryRun, false); assert.deepEqual(m.q.rewinds, [{ uuid, dryRun: true }, { uuid, dryRun: false }]);
+    m.q.rewindResult = { canRewind: false, error: "no checkpoint" };
+    await m.s.rewindFiles(uuid, true);
+    r = m.last("rewind")!; assert.equal(r.canRewind, false); assert.equal(r.error, "no checkpoint"); assert.deepEqual(r.files, []);
+    m.q.rewindError = new Error("cli too old");
+    await m.s.rewindFiles(uuid, true);
+    assert.equal(m.last("rewind")!.error, "cli too old");
+  });
+});
+
 describe("Session.setModel", () => {
   test("the CLI's models are published at start; a switch is applied, announced and remembered; failure keeps the old one", async () => {
     const sdk = fakeSdk({ setup: (q) => { q.models = [{ value: "claude-opus-5", displayName: "Opus 5" }]; } });

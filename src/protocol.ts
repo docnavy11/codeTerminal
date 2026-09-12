@@ -30,7 +30,10 @@ export type AskQuestion = {
 export type ClientEvent =
   | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
   /** images: what the user attached — thumbnails only, for the transcript; the full images went to the model. */
-  | { kind: "user"; text: string; context?: string; images?: { media_type: string; thumb: string }[] }
+  /** uuid: the id the SDK knows this message by — the rewind target for the files changed after it. */
+  | { kind: "user"; text: string; context?: string; images?: { media_type: string; thumb: string }[]; uuid?: string }
+  /** Answer to a rewind request (live-only): a dry run previews, a real one restores. */
+  | { kind: "rewind"; uuid: string; dryRun: boolean; canRewind: boolean; error?: string; files: string[]; insertions: number; deletions: number }
   /** parent: set when a subagent (the Agent tool) said/did it — rendered nested under that call. */
   | { kind: "text"; text: string; parent?: string | null }
   | { kind: "tool"; id: string; name: string; input: unknown; parent?: string | null }
@@ -102,7 +105,7 @@ function parseImages(v: unknown): PromptImage[] | false {
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
-  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model",
+  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model", "rewind",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 
@@ -124,6 +127,8 @@ export type AgentMessage =
   | { type: "mode"; mode: PermissionMode }
   /** Switch this chat's model; "" means back to the CLI's default. */
   | { type: "model"; model: string }
+  /** Restore tracked files to their state before the user message `uuid`; dryRun previews. */
+  | { type: "rewind"; uuid: string; dryRun: boolean }
   | { type: "interrupt" }
   | { type: "new" }
   | { type: "open"; id: string }
@@ -137,7 +142,7 @@ export type ShellMessage =
   | { type: "resize"; cols?: number; rows?: number };
 
 export const AGENT_MESSAGE_TYPES = [
-  "prompt", "browser", "answer", "decision", "cwd", "project", "mode", "model",
+  "prompt", "browser", "answer", "decision", "cwd", "project", "mode", "model", "rewind",
   "interrupt", "new", "open", "rename", "delete",
 ] as const satisfies readonly AgentMessage["type"][];
 
@@ -179,6 +184,10 @@ export function parseAgentMessage(raw: unknown): AgentMessage | null {
     case "model": {
       const model = str("model");
       return model !== null && /^[A-Za-z0-9._:-]{0,64}$/.test(model) ? { type: "model", model } : null;
+    }
+    case "rewind": {
+      const uuid = str("uuid");
+      return uuid !== null && /^[0-9a-f-]{36}$/i.test(uuid) ? { type: "rewind", uuid, dryRun: m.dryRun === true } : null;
     }
     case "interrupt": return { type: "interrupt" };
     case "new": return { type: "new" };

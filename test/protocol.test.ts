@@ -93,3 +93,12 @@ describe("model message", () => {
     assert.equal(parseAgentMessage({ type: "model" }), null);
   });
 });
+
+describe("rewind message", () => {
+  test("needs a uuid; dryRun defaults to false", () => {
+    assert.deepEqual(parseAgentMessage({ type: "rewind", uuid: "aaaaaaaa-0000-0000-0000-000000000001", dryRun: true }), { type: "rewind", uuid: "aaaaaaaa-0000-0000-0000-000000000001", dryRun: true });
+    assert.deepEqual(parseAgentMessage({ type: "rewind", uuid: "aaaaaaaa-0000-0000-0000-000000000001" }), { type: "rewind", uuid: "aaaaaaaa-0000-0000-0000-000000000001", dryRun: false });
+    assert.equal(parseAgentMessage({ type: "rewind", uuid: "../x" }), null);
+    assert.equal(parseAgentMessage({ type: "rewind" }), null);
+  });
+});
