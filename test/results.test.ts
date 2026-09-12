@@ -1,0 +1,72 @@
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
+import { summariseResult, RESULT_TEXT_CAP } from "../src/results.js";
+
+/** One line per tool, from the design's table — and the edge cases listed there. */
+const r = (name: string, content: unknown, structured?: unknown, is_error = false) =>
+  summariseResult(name, { tool_use_id: "t", content, is_error }, structured);
+
+describe("summariseResult", () => {
+  test("Bash: first stdout line, no output, interrupted, error", () => {
+    assert.equal(r("Bash", "3\n", { stdout: "3\n", stderr: "" }).summary, "3");
+    assert.equal(r("Bash", "", { stdout: "", stderr: "" }).summary, "(no output)");
+    assert.equal(r("Bash", "", { stdout: "", noOutputExpected: true }).summary, "(no output expected)");
+    assert.equal(r("Bash", "", { stdout: "", interrupted: true }).summary, "interrupted");
+    assert.equal(r("Bash", "", { stdout: "", interrupted: true }).interrupted, true);
+    const e = r("Bash", "grep: x: No such file or directory\nExit code 2", { stdout: "", stderr: "grep: x: No such file" }, true);
+    assert.equal(e.ok, false); assert.equal(e.summary, "✗ grep: x: No such file or directory");
+    assert.equal(r("Bash", "\x1b[31mred\x1b[0m line\n", { stdout: "\x1b[31mred\x1b[0m line\n" }).summary, "red line", "ANSI stripped");
+    assert.equal(r("Bash", "\x1b[31mred\x1b[0m\n").text, "red\n", "body stripped too");
+  });
+
+  test("Read: lines, partial reads, images", () => {
+    assert.equal(r("Read", "a\nb\nc", { type: "text", file: { numLines: 3, totalLines: 3 } }).summary, "3 lines");
+    assert.equal(r("Read", "a\nb", { type: "text", file: { numLines: 120, totalLines: 900, startLine: 1 } }).summary, "120 lines (of 900)");
+    assert.equal(r("Read", [{ type: "image", source: {} }], { type: "image" }).summary, "image");
+    assert.equal(r("Read", "a\nb\nc\nd").summary, "4 lines", "no structured output: count the text");
+  });
+
+  test("Write and Edit", () => {
+    assert.equal(r("Write", "ok", { type: "create", filePath: "/x/y/z.ts", content: "a\nb\nc\n" }).summary, "wrote z.ts · 3 lines");
+    assert.equal(r("Edit", "ok", { type: "update", filePath: "/x/y/z.ts", structuredPatch: [{ lines: ["-old", "+new", "+more", " same"] }] }).summary, "edited z.ts · +2 −1");
+    assert.equal(r("Edit", "ok", {}).summary, "edited file");
+  });
+
+  test("Grep and Glob", () => {
+    assert.equal(r("Grep", "No matches found").summary, "no matches");
+    assert.equal(r("Grep", "").summary, "no matches");
+    assert.equal(r("Grep", "Found 8 files\na\nb").summary, "Found 8 files");
+    assert.equal(r("Grep", "a.ts:1:x\nb.ts:2:y\n").summary, "2 lines");
+    assert.equal(r("Glob", "/a\n/b\n/c").summary, "3 files");
+    assert.equal(r("Glob", "No files found").summary, "no files");
+  });
+
+  test("browser and terminal tools read their own JSON", () => {
+    assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "Invoices · upbudget", url: "u", text: "x".repeat(4100) })).summary, "Invoices · upbudget · 4,100 chars");
+    assert.equal(r("mcp__browser__screenshot", JSON.stringify({ path: "/p.png", width: 1280, height: 720, bytes: 1_300_000 })).summary, "image · 1280×720 · 1.2 MB");
+    assert.equal(r("mcp__browser__list_tabs", JSON.stringify([{ id: 1 }, { id: 2 }])).summary, "2 tabs");
+    assert.equal(r("mcp__browser__snapshot", JSON.stringify({ elements: [1, 2, 3] })).summary, "3 elements");
+    assert.equal(r("mcp__browser__eval", "null").summary, "null");
+    assert.equal(r("mcp__terminal__read", "Last 200 lines of the user's terminal:\n\n$ ls").summary, "200 lines");
+    assert.equal(r("mcp__browser__read_page", "not json at all").summary, "not json at all", "falls back to the first line");
+  });
+
+  test("unknown tools, empties, long lines, the cap", () => {
+    assert.equal(r("WebFetch", "Title: X\nbody").summary, "Title: X");
+    assert.equal(r("Whatever", "   \n\n").summary, "(empty)");
+    assert.equal(r("Whatever", [{ type: "image" }]).summary, "image");
+    const long = r("Whatever", "y".repeat(500));
+    assert.equal(long.summary.length, 120); assert.ok(long.summary.endsWith("…"));
+    const big = r("Bash", "z".repeat(RESULT_TEXT_CAP + 10), { stdout: "z" });
+    assert.equal(big.truncated, true); assert.equal(big.text.length, RESULT_TEXT_CAP); assert.equal(big.bytes, RESULT_TEXT_CAP + 10);
+    assert.equal(r("Bash", "short", { stdout: "short" }).truncated, false);
+    assert.equal(r("Whatever", undefined).summary, "(empty)");
+    assert.equal(r("Whatever", 42).summary, "(empty)");
+  });
+
+  test("an error wins over everything else and keeps its first line", () => {
+    const e = r("Read", "File does not exist.\nmore", { type: "text", file: { numLines: 0 } }, true);
+    assert.equal(e.summary, "✗ File does not exist."); assert.equal(e.ok, false);
+    assert.equal(r("Bash", "", undefined, true).summary, "✗ failed");
+  });
+});

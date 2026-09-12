@@ -4,7 +4,7 @@ Ranked by how often it would matter in a day's use. Status: ☐ open, ◐ design
 
 | # | gap | today | status |
 |---|-----|-------|--------|
-| 1 | **Tool results.** The TUI shows what each tool returned (Bash output, the file read, grep hits). | `→ Bash grep …` and nothing after it; results are consumed only to clear the status. A 56-call turn was unreadable. | ◐ [docs/design-tool-results.md](docs/design-tool-results.md) |
+| 1 | **Tool results.** The TUI shows what each tool returned (Bash output, the file read, grep hits). | Every tool row ends with what it returned; click to open the body; errors open themselves; the status bar counts the turn's tools. | ☑ [docs/design-tool-results.md](docs/design-tool-results.md) |
 | 2 | **Diffs for Edit/Write**, shown before approval. | The approval card prints the raw JSON input (`old_string`/`new_string`). | ☐ |
 | 3 | **Thinking text**, streamed. | `thinking · 251` — a token count. The SDK's `thinking_delta` events are dropped. | ☐ |
 | 4 | **Images in the prompt** (paste a screenshot). | Text only. The SDK accepts image blocks on the user message. | ☐ |

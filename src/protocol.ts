@@ -32,6 +32,9 @@ export type ClientEvent =
   | { kind: "user"; text: string; context?: string }
   | { kind: "text"; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown }
+  /** What a tool returned: one line for the row, the body behind it (capped). Joined to "tool" by id. */
+  | { kind: "tool_result"; id: string; name: string; ok: boolean; summary: string; text: string; bytes: number; truncated: boolean;
+      interrupted?: boolean; parent?: string | null }
   | { kind: "approval"; id: string; tool: string; input: unknown; canAlways: boolean }
   | { kind: "approval_closed"; id: string; decision: "allow" | "always" | "deny" | "gone" }
   | { kind: "mode"; mode: PermissionMode }
@@ -60,7 +63,7 @@ export type ClientEvent =
 
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
-  "ready", "user", "text", "tool", "approval", "approval_closed", "mode", "commands",
+  "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
   "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];

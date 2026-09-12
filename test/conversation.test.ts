@@ -181,6 +181,16 @@ describe("LiveChat: the record", () => {
     assert.equal(ev.filter((e) => e.kind === "ready").length, 0, "the oldest went, ready among them");
   });
 
+  test("tool results are persisted and replayed with their calls", async () => {
+    const { sdk, mgr, client } = fresh();
+    const c = mgr.create();
+    sdk.last.toolUse("t1", "Bash", { command: "ls" }); sdk.last.toolResult("t1", "x", { structured: { stdout: "x" } });
+    await settle();
+    assert.deepEqual(c.record.events.filter((e) => e.kind === "tool" || e.kind === "tool_result").map((e) => e.kind), ["tool", "tool_result"]);
+    const a = client(); c.attach(a.emit, true);
+    assert.equal((a.last("tool_result") as { summary: string }).summary, "x");
+  });
+
   test("status and delta are live-only, never persisted", async () => {
     const { sdk, mgr, client } = fresh();
     const c = mgr.create();

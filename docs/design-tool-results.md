@@ -1,7 +1,10 @@
 # Tool results: seeing what the agent found, not just what it did
 
 Gap #1 in [TUI-GAPS.md](../TUI-GAPS.md). This is the feature as the person
-using it experiences it. The engineering notes are in the appendix.
+using it experiences it; the engineering notes are in the appendix. **Built**
+(`src/results.ts`, the `tool_result` event, the rows in `sidepanel.js`) with
+the two open decisions resolved as proposed: closed by default except errors,
+8 KB kept per result.
 
 ## Who this is for, and when
 

@@ -894,6 +894,23 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## What each tool returned
+
+Every tool call is one row — `→ Bash  grep -c purchase "$f"` — and the row
+ends with what came back: `3`, `120 lines (of 900)`, `edited x.ts · +4 −1`,
+`Invoices · 4,100 chars`, `image · 1280×720`, `null`. The line is chosen
+per tool (`src/results.ts`) so the collapsed transcript already answers
+"and?". Click a row to open the output as the agent saw it, in a box that
+scrolls after ~12 lines, with a copy button; **errors open themselves**, in
+red. `…` means the result has not arrived yet. While a turn runs the status
+bar counts it — `thinking · 31 tools · 12 screenshots` — which is how a
+spiral becomes visible in two seconds.
+
+The result rides on the SDK's user message (`tool_result` block plus the
+per-tool structured `tool_use_result`); 8 KB of each is kept with the chat,
+the rest is summarised as `…truncated (N KB in full)`. Measured on this
+box's transcripts: median result 254 chars, max 42 KB, 1.6 % errors.
+
 ## Limits
 
 Three ceilings, all in `.env`, all chosen as "a legitimate turn should never

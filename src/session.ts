@@ -2,6 +2,7 @@ import { query, type Query, type SDKMessage, type SDKUserMessage, type Permissio
 import { Pushable, deferred } from "./pushable.js";
 import { browserTools, terminalTools, watchTools, promptTools } from "./tools.js";
 import { composePrompt } from "./prompt.js";
+import { summariseResult } from "./results.js";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
 import type { WatchRegistry } from "./watches.js";
@@ -437,8 +438,16 @@ export class Session {
       case "user": {
         const content = msg.message.content;
         if (Array.isArray(content)) {
+          // The structured output rides beside the block (SDK: tool_use_result;
+          // the CLI's own transcripts spell it toolUseResult).
+          const m = msg as unknown as { tool_use_result?: unknown; toolUseResult?: unknown; parent_tool_use_id?: string | null };
+          const structured = m.tool_use_result ?? m.toolUseResult;
           for (const b of content) {
-            if (b.type === "tool_result") this.#activeTools.delete(b.tool_use_id);
+            if (b.type !== "tool_result") continue;
+            const name = this.#activeTools.get(b.tool_use_id) ?? "tool";
+            this.#activeTools.delete(b.tool_use_id);
+            const r = summariseResult(name, b as { tool_use_id: string; content?: unknown; is_error?: boolean }, structured);
+            this.#emit({ kind: "tool_result", id: b.tool_use_id, name, ...r, parent: m.parent_tool_use_id ?? null });
           }
           this.#pushStatus();
         }

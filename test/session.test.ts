@@ -109,6 +109,18 @@ describe("Session events", () => {
     assert.deepEqual(ends.map((e) => e.sessionCostUsd), [1.0, 1.5, 1.5]);
   });
 
+  test("tool results carry the tool's name, a summary, the body and the subagent parent; orphans still emit", async () => {
+    m.q.toolUse("t1", "Bash", { command: "ls" });
+    m.q.toolResult("t1", "a.ts\nb.ts\n", { structured: { stdout: "a.ts\nb.ts\n", stderr: "" } });
+    m.q.toolResult("never-called", "late", { is_error: true, parent: "agent-7" });
+    await settle();
+    const rs = m.events.filter((e): e is Extract<ClientEvent, { kind: "tool_result" }> => e.kind === "tool_result");
+    assert.equal(rs.length, 2);
+    assert.equal(rs[0].name, "Bash"); assert.equal(rs[0].summary, "a.ts"); assert.equal(rs[0].text, "a.ts\nb.ts\n"); assert.equal(rs[0].ok, true); assert.equal(rs[0].parent, null);
+    assert.equal(rs[1].name, "tool"); assert.equal(rs[1].ok, false); assert.equal(rs[1].parent, "agent-7");
+    assert.equal(m.statuses().at(-1), "idle", "the finished tool left the status");
+  });
+
   test("a result without a cost reports null, an error result says so", async () => {
     m.q.result({ total_cost_usd: undefined, is_error: true }); await settle();
     const end = m.last("turn_end")!; assert.equal(end.costUsd, null); assert.equal(end.isError, true); assert.equal(end.denials, 0);

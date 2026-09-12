@@ -309,3 +309,37 @@ def test_export_downloads_markdown(page, server):
     md = open(path).read()
     assert d.suggested_filename == "export-me-please.md"
     assert md.startswith("# export me please") and "You said: export me please" in md
+
+
+def test_tool_results_in_the_transcript(page, server):
+    open_ui(page, server)
+    send(page, "tools-me"); wait_reply(page, "Two files changed")
+    rows = page.evaluate("""() => [...document.querySelectorAll('#log .tool')].map(t => ({
+        name: t.querySelector('b').textContent, res: t.querySelector('.tr').textContent, cls: t.querySelector('.tr').className,
+        open: t.classList.contains('open'), body: !!t.querySelector('.tb pre') }))""")
+    assert [r["name"] for r in rows] == ["Bash", "Read", "Bash"], rows
+    assert rows[0]["res"] == "M src/a.ts" and rows[0]["cls"] == "tr ok" and not rows[0]["open"]
+    assert rows[1]["res"] == "3 lines" and not rows[1]["open"]
+    assert rows[2]["res"].startswith("✗ grep: missing.txt") and rows[2]["cls"] == "tr err" and rows[2]["open"], "errors open themselves"
+    assert all(r["body"] for r in rows)
+    page.click("#log .tool >> nth=0 >> .tl")
+    assert page.evaluate("() => document.querySelectorAll('#log .tool')[0].classList.contains('open')")
+    assert "notes.txt" in page.text_content("#log .tool >> nth=0 >> .tb pre")
+    assert page.locator("#log .tool >> nth=0 >> .tb .copy").count() == 1
+    page.click("#log .tool >> nth=0 >> .tl")   # the body swallows clicks (so text can be selected); the line toggles
+    assert not page.evaluate("() => document.querySelectorAll('#log .tool')[0].classList.contains('open')")
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    again = page.evaluate("() => [...document.querySelectorAll('#log .tool .tr')].map(t => t.textContent)")
+    assert again[:2] == ["M src/a.ts", "3 lines"], "results survive the replay"
+    assert page.errors == []
+
+
+def test_turn_rollup_in_the_status_bar(page, server):
+    open_ui(page, server)
+    page.evaluate("""() => { handle({kind:'user', text:'x'}); applyStatus({kind:'status', state:'thinking', detail:'', tokens:0});
+        for (let i = 0; i < 4; i++) handle({kind:'tool', id:'s'+i, name:'mcp__browser__screenshot', input:{}});
+        handle({kind:'tool', id:'r', name:'Read', input:{file_path:'/x'}});
+        applyStatus({kind:'status', state:'thinking', detail:'', tokens:0}); }""")
+    assert page.text_content("#statustext") == "thinking · 5 tools · 4 screenshots"
+    page.evaluate("() => applyStatus({kind:'status', state:'tool', detail:'Read', tokens:0})")
+    assert page.text_content("#statustext") == "running Read · 5 tools · 4 screenshots"

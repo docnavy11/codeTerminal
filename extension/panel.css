@@ -208,9 +208,28 @@
   button.off { opacity:.5; }
   /* A tool line is a one-line summary; a long JSON arg must not force the
      whole transcript to scroll sideways. */
-  .tool { color:var(--dim); font-size:0.833rem;
-          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* fit-content(45%): the badge gets what it needs up to 45%, the command the rest —
+     an `auto` column let the 1fr command squeeze the badge to nothing. */
+  .tool { color:var(--dim); font-size:0.833rem; display:grid; grid-template-columns:minmax(0,1fr) fit-content(45%) 12px;
+          gap:0 8px; align-items:baseline; cursor:default; border-radius:5px; padding:1px 3px; margin:0 -3px; }
+  .tool[data-body] { cursor:pointer; } .tool[data-body]:hover { background:var(--btn); }
+  .tool .tl { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tool b { color:var(--warn); font-weight:600; }
+  .tool .tr { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; font-variant-numeric:tabular-nums; text-align:right; }
+  .tool .tr.pending { color:var(--dim); opacity:0.6; } .tool .tr.ok { color:var(--dim); } .tool .tr.err { color:var(--bad); }
+  .tool .chev { font-size:0.7rem; color:var(--dim); transition:transform 0.12s; }
+  .tool.open .chev { transform:rotate(90deg); }
+  .tool .tb { grid-column:1 / -1; display:none; position:relative; margin:4px 0 2px; }
+  .tool.open .tb { display:block; }
+  .tool .tb pre { margin:0; padding:7px 9px; background:var(--code); border:1px solid var(--line); border-radius:6px;
+                  max-height:240px; overflow:auto; white-space:pre-wrap; word-break:break-all; font-size:0.792rem; color:var(--fg); }
+  .tool .tb .copy { position:absolute; top:4px; right:4px; font-size:0.7rem; padding:0 6px; opacity:0.8; }
+  .tool.sub .tl::before { content:"↳ "; }
+  @media (max-width: 480px) {
+    .tool { grid-template-columns:minmax(0,1fr) 12px; }
+    .tool .tr { grid-column:1; text-align:left; }
+    .tool .chev { grid-column:2; grid-row:1; }
+  }
   .err  { color:var(--bad); }
   .end  { color:var(--dim); font-size:0.792rem; border-top:1px dashed var(--line); padding-top:4px; }
   .end.stopped { color:var(--bad); border-top-color:var(--bad); }

@@ -94,7 +94,7 @@ async function connect() {
     // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
     // was already on screen — measured: the transcript doubled each time.
     log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = ""; lastContext = null; paintContext();
-    startReplay();
+    startReplay(); toolRows.clear(); turnTools = 0; turnShots = 0;
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
     try {
@@ -145,7 +145,7 @@ function handle(m) {
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
-    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); break;
+    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); toolRows.clear(); turnTools = 0; turnShots = 0; break;
     case "replayed":
       lastText = null;
       if (!log.querySelector(".msg")) welcome();
@@ -153,6 +153,7 @@ function handle(m) {
       break;
     case "user": {
       log.querySelector(".welcome")?.remove();
+      turnTools = 0; turnShots = 0;
       el("msg user", m.text);
       if (m.context) { const c = el("ctx", "⌁ " + m.context.split("\n")[0]); c.title = m.context; }
       lastText = null;
@@ -174,13 +175,12 @@ function handle(m) {
       break;
     case "tool": {
       if (m.name === "AskUserQuestion") { lastText = null; break; }
-      const d = el("tool");
-      d.innerHTML = "→ <b></b> ";
-      d.querySelector("b").textContent = m.name;
-      d.append(summarize(m.input));
+      toolRow(m.id, m.name, m.input);
+      turnTools++; if (m.name === "mcp__browser__screenshot") turnShots++;
       lastText = null;
       break;
     }
+    case "tool_result": toolResult(m); break;
     case "approval":        renderApproval(m); break;
     case "question":        renderQuestion(m); break;
     case "approval_closed": {
@@ -238,6 +238,49 @@ function welcome() {
   w.append(x, document.createTextNode(" "), s);
 }
 
+/* ---------------- tool rows ----------------
+   A call is one row: "→ name  what-it-was-asked" and, at the end of the line,
+   what it returned — a number, a size, the first line of output — so the
+   collapsed transcript already tells the story. Click to open the body.
+   Errors open themselves. "…" means the result has not arrived. */
+const toolRows = new Map();          // tool_use_id -> row
+let turnTools = 0, turnShots = 0;    // this turn's roll-up, shown in the status bar
+
+function toolRow(id, name, input) {
+  const d = el("tool");
+  const line = document.createElement("div"); line.className = "tl";
+  const b = document.createElement("b"); b.textContent = name;
+  line.append("→ ", b, " ", summarize(input));
+  const res = document.createElement("span"); res.className = "tr pending"; res.textContent = "…";
+  const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = "▸";
+  d.append(line, res, chev);
+  d.onclick = () => { if (d.dataset.body) d.classList.toggle("open"); };
+  if (id) toolRows.set(id, d);
+  return d;
+}
+
+function toolResult(m) {
+  let d = toolRows.get(m.id);
+  if (!d) { d = toolRow(null, m.name, {}); d.classList.add("orphan"); }   // its call is gone (truncated, or a mid-turn attach)
+  if (m.parent) d.classList.add("sub");
+  const res = d.querySelector(".tr");
+  res.textContent = m.summary; res.className = "tr " + (m.ok ? "ok" : "err");
+  res.title = m.bytes ? `${m.bytes.toLocaleString()} bytes${m.truncated ? ", truncated" : ""}` : "";
+  const body = m.text || (m.ok ? "" : m.summary);
+  if (body) {
+    d.dataset.body = "1";
+    const box = document.createElement("div"); box.className = "tb";
+    const pre = document.createElement("pre"); pre.textContent = body + (m.truncated ? `\n…truncated (${(m.bytes / 1024).toFixed(0)} KB in full)` : "");
+    const copy = document.createElement("button"); copy.className = "copy"; copy.textContent = "copy";
+    copy.onclick = (e) => { e.stopPropagation(); navigator.clipboard?.writeText(body).then(() => { copy.textContent = "copied"; setTimeout(() => (copy.textContent = "copy"), 1200); }); };
+    box.append(copy, pre); d.append(box);
+    box.onclick = (e) => e.stopPropagation();
+  } else {
+    d.querySelector(".chev").textContent = "";
+  }
+  if (!m.ok) d.classList.add("open");
+}
+
 function summarize(input) {
   if (!input || typeof input !== "object") return "";
   if (typeof input.command === "string") return input.command;
@@ -259,6 +302,12 @@ function paintContext() {
   c.className = "ctx" + (pct >= 90 ? " bad" : pct >= 70 ? " warn" : "");
 }
 
+/* "· 12 tools · 4 screenshots" — the counts that make a spiral visible at a glance. */
+function rollup() {
+  if (!turnTools) return "";
+  return ` · ${turnTools} tool${turnTools === 1 ? "" : "s"}${turnShots ? ` · ${turnShots} screenshot${turnShots === 1 ? "" : "s"}` : ""}`;
+}
+
 function applyStatus(m) {
   if (m.state !== statusState || m.detail !== (statusEl.dataset.detail ?? "")) statusSince = Date.now();
   statusState = m.state;
@@ -268,8 +317,8 @@ function applyStatus(m) {
   statusEl.classList.toggle("await", m.state === "awaiting");
   statusText.textContent = {
     idle:       "ready",
-    thinking:   m.tokens > 0 ? `thinking · ${m.tokens >= 1000 ? (m.tokens / 1000).toFixed(1) + "k" : m.tokens}` : "thinking",
-    tool:       `running ${m.detail}`,
+    thinking:   `thinking${m.tokens > 0 ? ` · ${m.tokens >= 1000 ? (m.tokens / 1000).toFixed(1) + "k" : m.tokens}` : ""}${rollup()}`,
+    tool:       `running ${m.detail}${rollup()}`,
     compacting: "compacting",
     awaiting:   `waiting for you — ${m.detail}`,
   }[m.state] ?? m.state;

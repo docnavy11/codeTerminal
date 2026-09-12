@@ -34,6 +34,18 @@ const sdk = fakeSdk({ onUser: (m, q) => {
     q.text("Working…"); q.result({ subtype: "error_max_turns", is_error: true, num_turns: 40, total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) });
     return;
   }
+  if (content.includes("tools-me")) {
+    // three tool calls with results, one of them failing, then a reply
+    q.text("Let me look.");
+    q.toolUse("t1", "Bash", { command: "git status --short" });
+    q.toolResult("t1", " M src/a.ts\n?? notes.txt\n", { structured: { stdout: " M src/a.ts\n?? notes.txt\n", stderr: "", interrupted: false } });
+    q.toolUse("t2", "Read", { file_path: "/repo/src/a.ts" });
+    q.toolResult("t2", "line1\nline2\nline3", { structured: { type: "text", file: { filePath: "/repo/src/a.ts", numLines: 3, totalLines: 3 } } });
+    q.toolUse("t3", "Bash", { command: "grep -c purchase missing.txt" });
+    q.toolResult("t3", "grep: missing.txt: No such file or directory\nExit code 2", { is_error: true, structured: { stdout: "", stderr: "grep: missing.txt: No such file or directory", interrupted: false } });
+    q.text("Two files changed; the grep target is missing."); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) });
+    return;
+  }
   if (content.includes("ask-me")) {
     q.ask("AskUserQuestion", { questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] })
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });
