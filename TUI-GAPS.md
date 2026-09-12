@@ -15,6 +15,11 @@ Ranked by how often it would matter in a day's use. Status: ☐ open, ◐ design
 | 9 | `/rewind`, file-history checkpoints. | ⟲ on any of your messages previews what a rewind would restore (files, ±lines), then restores it; the CLI's per-message checkpoints (`enableFileCheckpointing`, `rewindFiles`). Files only — the conversation is not rewound (the SDK offers no way). | ☑ |
 | 10 | Esc-to-interrupt, `Ctrl+O` verbose, keyboard-driven everything. | Stop button, Enter. | ☐ |
 
+Verified against the real CLI on 2026-09-12 (one scratch session, $0.30):
+model switch, rewind (file restored byte-for-byte), plan card + mode switch,
+image ("Red"), subagent task events and nesting, tool-result summaries;
+`@path` is not expanded by the CLI in SDK mode (the model reads the file).
+
 Not gaps: the gate, permission modes, resume, `/clear`, slash commands, skills,
 CLAUDE.md, streaming, cost estimate, compaction status — and, beyond the TUI,
 concurrent chats, browser tools, page watches, a phone UI.

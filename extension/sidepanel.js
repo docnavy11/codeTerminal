@@ -398,8 +398,10 @@ function rewindCard(m) {
   const card = document.createElement("div"); card.className = "rwcard" + (m.canRewind ? "" : " err");
   if (!m.canRewind) { card.textContent = `Cannot rewind here: ${m.error ?? "no checkpoint for this message"}`; u.append(card); return; }
   const what = document.createElement("div"); what.className = "what";
+  // paths come back absolute; show them relative to the chat's directory.
+  const rel = (p) => (cwdShown && p.startsWith(cwdShown + "/")) ? p.slice(cwdShown.length + 1) : p;
   what.textContent = m.files.length
-    ? `Restore ${m.files.length} file${m.files.length === 1 ? "" : "s"} to how they were before this message (−${m.insertions} +${m.deletions} lines): ${m.files.join(", ")}`
+    ? `Restore ${m.files.length} file${m.files.length === 1 ? "" : "s"} to how they were before this message (+${m.insertions} −${m.deletions} lines): ${m.files.map(rel).join(", ")}`
     : "Nothing has changed since this message.";
   card.append(what);
   const row = document.createElement("div"); row.className = "row";

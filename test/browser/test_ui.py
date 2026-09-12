@@ -500,7 +500,8 @@ def test_rewind_previews_then_restores(page, server):
     send(page, "touch the loader"); wait_reply(page, "You said: touch the loader")
     page.hover("#log .msg.user"); page.click("#log .msg.user .rw")
     page.wait_for_selector("#log .msg.user .rwcard", timeout=5000)
-    assert "Restore 2 files" in page.text_content("#log .msg.user .rwcard .what") and "src/a.ts, src/b.ts" in page.text_content("#log .msg.user .rwcard .what")
+    what = page.text_content("#log .msg.user .rwcard .what")
+    assert "Restore 2 files" in what and "src/a.ts, src/b.ts" in what and "(+3 −10 lines)" in what, what
     page.click("#log .msg.user .rwcard button:has-text('Cancel')")
     assert page.locator("#log .msg.user .rwcard").count() == 0
     page.hover("#log .msg.user"); page.click("#log .msg.user .rw")

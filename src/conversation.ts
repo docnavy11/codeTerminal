@@ -251,12 +251,17 @@ export class LiveChat {
     const target = this.#rec.events.find((e) => e.kind === "user" && (e as { uuid?: string }).uuid === uuid) as { text: string } | undefined;
     if (!target) throw new Error("That message is not in this chat.");
     await this.#session.rewindFiles(uuid, dryRun);
+    // Measured against the real CLI: the dry run lists the files, the real
+    // rewind answers canRewind with an empty list — so the note counts from
+    // the preview that preceded it.
+    if (dryRun && this.#lastRewind?.uuid === uuid) this.#previewed.set(uuid, this.#lastRewind.files);
     if (!dryRun && this.#lastRewind?.uuid === uuid && this.#lastRewind.ok) {
-      const n = this.#lastRewind.files;
-      this.#record({ kind: "local", text: `Rewound ${n} file${n === 1 ? "" : "s"} to before “${target.text.split("\n")[0].slice(0, 60)}”` });
+      const n = this.#lastRewind.files || this.#previewed.get(uuid) || 0;
+      this.#record({ kind: "local", text: `Rewound ${n ? `${n} file${n === 1 ? "" : "s"}` : "files"} to before “${target.text.split("\n")[0].slice(0, 60)}”` });
     }
   }
   #lastRewind: { uuid: string; ok: boolean; files: number } | null = null;
+  #previewed = new Map<string, number>();
 
   /** Make this the most recently used chat, so a fresh attach lands on it. */
   touch(): void {

@@ -904,7 +904,10 @@ per user message (`enableFileCheckpointing`); every message we send carries
 a uuid so the CLI can name it, and `rewindFiles` does the work, refusing
 symlinks and paths that moved. Files only: the SDK offers no conversation
 rewind, so the transcript stays as it is — say what you want done
-differently in your next message.
+differently in your next message. Verified against the real CLI: an
+agent-made edit was previewed (`1 file, −1 line`) and restored
+byte-for-byte; the real rewind's answer lists no files, so the note counts
+from the preview.
 
 ## Model
 
@@ -915,7 +918,9 @@ model it was on, and a new chat inherits the model of the one you started
 it from, like the working directory and the permission mode. Switching
 mid-conversation uses the SDK's `setModel`; if the CLI refuses, the menu
 snaps back and the transcript says why. The header shows the model the
-session actually reported at start.
+session actually reported at start. Measured: this CLI lists `default`,
+`opus[1m]`, `claude-fable-5-1[1m]`, `sonnet`, `haiku` (aliases, not ids);
+choosing `sonnet` made the next session report `claude-sonnet-5`.
 
 ## @file
 
@@ -927,7 +932,9 @@ Tab inserts `@path`; a directory keeps the menu open to go deeper. The
 directory is walked once and cached for ten seconds, so typing does not
 re-walk a project per keystroke. `x@example.com` is not a mention. The
 SDK has a `file_suggestions` control request but no public method for it,
-so this is `GET /files/suggest`.
+so this is `GET /files/suggest`. Measured: in SDK mode the CLI does **not**
+expand `@path` into the file's content the way the TUI does — the model
+sees the path and reads it with its Read tool (one extra, cheap call).
 
 ## Subagents and the task list
 
@@ -958,7 +965,9 @@ or **Keep planning**, which sends the model back for a revision ("ask what
 should change, then present the plan again"). Approving carries the chosen
 mode to the CLI as a `setMode` permission update and switches the session,
 so the mode menu follows. The plan is kept with the chat and exported under
-`## Plan`.
+`## Plan`. Measured against the real CLI: the card arrived with a real
+plan, approving with auto-accept switched the mode; the agent then ended
+its turn without acting — say "go" if you want it to start at once.
 
 ## Images in the prompt
 

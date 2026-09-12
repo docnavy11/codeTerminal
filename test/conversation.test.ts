@@ -283,9 +283,10 @@ describe("LiveChat.rewind", () => {
     await c.rewind(ev.uuid!, true);
     assert.ok(!c.record.events.some((e) => e.kind === "rewind"), "the answer is live-only");
     assert.ok(a.kinds().includes("rewind"));
+    sdk.last.rewindResult = { canRewind: true, filesChanged: [] };   // as the real CLI answers a real rewind
     await c.rewind(ev.uuid!, false);
     const note = c.record.events.at(-1) as { kind: string; text: string };
-    assert.equal(note.kind, "local"); assert.match(note.text, /Rewound 2 files to before “touch the loader”/);
+    assert.equal(note.kind, "local"); assert.match(note.text, /Rewound 2 files to before “touch the loader”/, "counted from the preview");
     sdk.last.rewindResult = { canRewind: false, error: "nope" };
     await c.rewind(ev.uuid!, false);
     assert.equal((c.record.events.at(-1) as { kind: string }).kind, "local", "a failed real rewind adds no note");
