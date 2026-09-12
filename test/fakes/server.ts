@@ -17,7 +17,7 @@ export async function freePort(): Promise<number> {
 
 export type TestServer = Awaited<ReturnType<typeof startTestServer>>;
 
-export async function startTestServer(opts: { sdk?: FakeOpts; cfg?: Partial<ServerConfig> } = {}) {
+export async function startTestServer(opts: { sdk?: FakeOpts; cfg?: Partial<ServerConfig>; real?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "ct-srv-"));
   for (const d of ["ws", "files/sub", "files/secret", "projects/p1", "projects/p2", "home"]) await mkdir(join(root, d), { recursive: true });
   await writeFile(join(root, "files", "hello.txt"), "hello world\n");
@@ -33,7 +33,8 @@ export async function startTestServer(opts: { sdk?: FakeOpts; cfg?: Partial<Serv
     promptsPath: join(root, "prompts.json"), usagePath: join(root, "usage.json"),
     maxUpload: 64 * 1024, maxZip: 128 * 1024, extraOrigins: [], forceLocal: true,
     denyExtra: [join(root, "files", "secret")], home: join(root, "home"),
-    spawnQuery: sdk.spawnQuery, titler: async () => null, systemd: false,
+    // real: the actual SDK and Claude Code login on this machine (test/real.test.ts)
+    ...(opts.real ? {} : { spawnQuery: sdk.spawnQuery }), titler: async () => null, systemd: false,
     log: (l) => logs.push(l), warn: (l) => warns.push(l),
     ...opts.cfg,
   };

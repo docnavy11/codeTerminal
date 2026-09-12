@@ -494,6 +494,14 @@ hello/replace/timeout/late-reply/disconnect paths; the MCP tools with a fake
 extension; graceful shutdown flushing a debounced save and closing sockets
 with 1001.
 
+`npm run test:real` runs the same features against the **real** SDK and
+your Claude Code login — model list and switch, checkpoint rewind restoring
+a file byte-for-byte, a real plan card and the mode switch, an image, a
+subagent with its task events, and what the CLI does with `@path`. Opt-in
+(`CODETERM_REAL=1`), one scratch session, cost-capped; measured at 7 turns
+and $0.30. This is the regression test for the fake in `test/fakes/sdk.ts`:
+run it after upgrading the SDK or the CLI.
+
 `npm run test:browser` (Playwright, Python) drives the real client against
 a fixture server whose scripted SDK answers prompts, asks for approvals and
 asks questions: reconnect without duplicating the transcript, the pty pane
