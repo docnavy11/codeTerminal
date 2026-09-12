@@ -26,6 +26,23 @@ const READ_ONLY = ["Read", "Glob", "Grep", "NotebookRead", "TodoWrite"];
 export const ALLOW_BYPASS = process.env.CODETERM_ALLOW_BYPASS === "1";
 
 /**
+ * Runaway protection. None of these are measured optima; they are ceilings a
+ * legitimate turn should not reach, chosen so that a spiral (56 tool calls
+ * and 20 screenshots in one turn, 2026-09-11) is stopped and reported rather
+ * than left to run. All overridable in .env.
+ */
+const num = (v: string | undefined, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
+/** Tool calls in one turn before the session is interrupted. */
+export const MAX_TOOL_CALLS = num(process.env.CODETERM_MAX_TOOL_CALLS, 100);
+/** Screenshots in one turn before the tool refuses and asks the model to report. */
+export const MAX_SCREENSHOTS = num(process.env.CODETERM_MAX_SCREENSHOTS, 15);
+/** Cost ceiling for one session (the SDK's maxBudgetUsd); unset = none. */
+export const MAX_BUDGET_USD = process.env.CODETERM_MAX_BUDGET_USD ? num(process.env.CODETERM_MAX_BUDGET_USD, 0) || undefined : undefined;
+
+/** Per-turn counters the browser tools consult. */
+export type TurnBudget = { screenshots: number; maxScreenshots: number };
+
+/**
  * What a session needs from the rest of the server.
  *
  * Passed in rather than read from module globals: with several sessions live
@@ -143,7 +160,7 @@ export class Session {
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS],
         mcpServers: {
           terminal: terminalTools(this.#deps.getShell),
-          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer) } : {}),
+          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget) } : {}),
           // The chat id is this session's own, so a watch is always attributed
           // to the conversation that set it.
           ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
@@ -151,6 +168,7 @@ export class Session {
         },
         permissionMode: this.#mode,
         allowDangerouslySkipPermissions: ALLOW_BYPASS,
+        ...(MAX_BUDGET_USD ? { maxBudgetUsd: MAX_BUDGET_USD } : {}),
         canUseTool: this.#canUseTool,
         ...(resumeId ? { resume: resumeId } : {}),
       },
@@ -278,6 +296,7 @@ export class Session {
   send(text: string, context?: string): void {
     this.#busy = true;
     this.#thinkingTokens = 0;
+    this.#turnToolCalls = 0; this.#budget.screenshots = 0; this.#turnStopped = false;
     this.#pushStatus();
     this.#input.push({
       type: "user",
@@ -374,6 +393,19 @@ export class Session {
         } else if (msg.subtype === "thinking_tokens") {
           this.#thinkingTokens = msg.estimated_tokens;
           this.#pushStatus();
+        } else if (msg.subtype === "api_retry") {
+          // Without this an API outage looked like "thinking" with nothing behind it.
+          const r = msg as unknown as { attempt: number; max_retries: number; retry_delay_ms: number; error_status: number | null };
+          this.#emit({ kind: "local", text: `API retry ${r.attempt} of ${r.max_retries} in ${Math.round(r.retry_delay_ms / 1000)}s${r.error_status ? ` (HTTP ${r.error_status})` : ""}` });
+        } else if (msg.subtype === "model_refusal_no_fallback" || msg.subtype === "model_refusal_fallback") {
+          const r = msg as unknown as { content?: string; api_refusal_explanation?: string | null; original_model?: string };
+          this.#emit({ kind: "error", message: `The model refused this request${r.api_refusal_explanation ? `: ${r.api_refusal_explanation}` : ""}${r.content ? ` — ${r.content}` : ""}` });
+        } else if (msg.subtype === "permission_denied") {
+          const r = msg as unknown as { tool_name: string };
+          this.#emit({ kind: "local", text: `${r.tool_name} was denied by policy (settings), not by you` });
+        } else if (msg.subtype === "notification") {
+          const r = msg as unknown as { text: string; priority: "low" | "medium" | "high" | "immediate" };
+          if (r.priority !== "low") this.#emit({ kind: "local", text: r.text });
         }
         return;
 
@@ -389,6 +421,13 @@ export class Session {
           else if (block.type === "tool_use") {
             this.#activeTools.set(block.id, block.name);
             this.#emit({ kind: "tool", id: block.id, name: block.name, input: block.input });
+            // The circuit breaker: a turn that keeps calling tools is stopped
+            // and told so, instead of running until the model gives up.
+            if (++this.#turnToolCalls > MAX_TOOL_CALLS && !this.#turnStopped) {
+              this.#turnStopped = true;
+              this.#emit({ kind: "error", message: `Stopped: ${MAX_TOOL_CALLS} tool calls in one turn (CODETERM_MAX_TOOL_CALLS). Send a narrower request, or raise the limit.` });
+              void this.#query?.interrupt().catch(() => {});
+            }
           }
         }
         this.#pushStatus();
@@ -438,6 +477,8 @@ export class Session {
           kind: "turn_end",
           costUsd: turnCost,
           sessionCostUsd: total,
+          stopped: stoppedReason(msg as unknown as ResultLike),
+          context: contextOf(msg as unknown as ResultLike),
           isError: msg.is_error === true,
           denials: msg.permission_denials?.length ?? 0,
         });
@@ -448,4 +489,36 @@ export class Session {
   }
   /** The SDK's running total at the last result, so a turn's cost is the difference. */
   #costTotal = 0;
+  #turnToolCalls = 0;
+  #turnStopped = false;
+  #budget: TurnBudget = { screenshots: 0, maxScreenshots: MAX_SCREENSHOTS };
+}
+
+type ResultLike = {
+  subtype?: string; errors?: string[]; num_turns?: number;
+  usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; output_tokens?: number };
+  modelUsage?: Record<string, { contextWindow?: number }>;
+};
+
+/** Why a turn ended early, in words — or null for a normal end. */
+export function stoppedReason(r: ResultLike): string | null {
+  switch (r.subtype) {
+    case undefined: case "success": return null;
+    case "error_max_turns": return `reached the turn limit${r.num_turns ? ` (${r.num_turns} turns)` : ""}`;
+    case "error_max_budget_usd": return `reached the cost ceiling${MAX_BUDGET_USD ? ` ($${MAX_BUDGET_USD})` : ""}`;
+    case "error_max_structured_output_retries": return "could not produce the requested output format";
+    case "error_during_execution": return r.errors?.length ? r.errors.join("; ") : "an error during execution";
+    default: return r.errors?.length ? r.errors.join("; ") : r.subtype;
+  }
+}
+
+/**
+ * What the next request re-sends (the SDK: last response's input + cache read
+ * + cache creation + output) against the largest context window in play.
+ */
+export function contextOf(r: ResultLike): { tokens: number; window: number } | null {
+  const u = r.usage; if (!u) return null;
+  const tokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
+  const window = Math.max(0, ...Object.values(r.modelUsage ?? {}).map((m) => m.contextWindow ?? 0));
+  return window > 0 ? { tokens, window } : null;
 }

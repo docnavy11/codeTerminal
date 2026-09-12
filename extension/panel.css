@@ -213,6 +213,9 @@
   .tool b { color:var(--warn); font-weight:600; }
   .err  { color:var(--bad); }
   .end  { color:var(--dim); font-size:0.792rem; border-top:1px dashed var(--line); padding-top:4px; }
+  .end.stopped { color:var(--bad); border-top-color:var(--bad); }
+  #status .ctx { color:var(--dim); font-size:0.75rem; margin-left:8px; font-variant-numeric:tabular-nums; }
+  #status .ctx.warn { color:var(--warn); } #status .ctx.bad { color:var(--bad); font-weight:600; }
   .local { color:var(--dim); background:var(--panel); border-left:2px solid var(--dim);
            padding:5px 7px; white-space:pre-wrap; font-size:0.833rem; }
   .local.welcome { border-left-color:var(--accent); color:var(--fg); white-space:normal; }

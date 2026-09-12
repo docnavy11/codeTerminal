@@ -92,7 +92,7 @@ async function connect() {
     // The server replays the whole transcript on every attach. Without this
     // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
     // was already on screen — measured: the transcript doubled each time.
-    log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = "";
+    log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = ""; lastContext = null; paintContext();
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
     try {
@@ -135,7 +135,7 @@ function handle(m) {
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
-    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; break;
+    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); break;
     case "replayed": lastText = null; if (!log.querySelector(".msg")) welcome(); break;
     case "user": {
       log.querySelector(".welcome")?.remove();
@@ -190,7 +190,11 @@ function handle(m) {
       // records from before that carried the running total in costUsd, which
       // must not be summed — the last one is the figure.
       if (typeof m.costUsd === "number") cost = "sessionCostUsd" in m ? cost + m.costUsd : Math.max(cost, m.costUsd);
-      el("end", `done${m.denials ? ` · ${m.denials} denied` : ""} · $${cost.toFixed(4)} est.`);
+      if (m.context) { lastContext = m.context; paintContext(); }
+      {
+        const line = el("end", `${m.stopped ? `stopped: ${m.stopped}` : "done"}${m.denials ? ` · ${m.denials} denied` : ""} · $${cost.toFixed(4)} est.`);
+        if (m.stopped) line.classList.add("stopped");
+      }
       lastText = null; streaming = null; streamRaw = "";
       flushQueued();
       break;
@@ -225,6 +229,20 @@ function summarize(input) {
   if (typeof input.command === "string") return input.command;
   if (typeof input.file_path === "string") return input.file_path;
   return JSON.stringify(input).slice(0, 100);
+}
+
+/* Context meter: what the next request re-sends against the model's window,
+   from the last turn's usage. Amber at 70%, red at 90% — the moment to /clear
+   or let compaction happen, which nothing used to tell you. */
+let lastContext = null;
+function paintContext() {
+  let c = document.getElementById("ctx");
+  if (!c) { c = document.createElement("span"); c.id = "ctx"; c.className = "ctx"; statusText.after(c); }
+  if (!lastContext || !lastContext.window) { c.textContent = ""; c.className = "ctx"; return; }
+  const pct = Math.min(999, Math.round(lastContext.tokens / lastContext.window * 100));
+  c.textContent = `ctx ${pct}%`;
+  c.title = `${lastContext.tokens.toLocaleString()} of ${lastContext.window.toLocaleString()} tokens will be re-sent on the next request`;
+  c.className = "ctx" + (pct >= 90 ? " bad" : pct >= 70 ? " warn" : "");
 }
 
 function applyStatus(m) {

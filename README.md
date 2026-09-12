@@ -885,6 +885,21 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## Limits
+
+Three ceilings, all in `.env`, all chosen as "a legitimate turn should never
+get here" rather than measured: **`CODETERM_MAX_TOOL_CALLS`** (100) interrupts
+a turn that keeps calling tools and says so in the transcript;
+**`CODETERM_MAX_SCREENSHOTS`** (15) makes the screenshot tool refuse past that
+many in one turn and tell the model to report what it has; **`CODETERM_MAX_BUDGET_USD`**
+(unset) is the SDK's own cost ceiling for a session. The turn that motivated
+them made 56 tool calls and 20 screenshots without a word of output.
+
+When a turn ends early — turn limit, cost ceiling, an execution error, a
+model refusal — the end line says **why**, in red, instead of `done`. API
+retries during an outage are shown as they happen (`API retry 2 of 10 in
+4s (HTTP 529)`); they used to look like thinking.
+
 ## Knowing what it is doing
 
 A status bar sits directly above the input. The state is derived on the server

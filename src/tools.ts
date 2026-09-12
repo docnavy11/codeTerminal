@@ -201,7 +201,7 @@ export function promptTools(prompts: PromptStore) {
   });
 }
 
-export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined) {
+export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined, budget?: () => { screenshots: number; maxScreenshots: number }) {
   const tabId = z.number().int().optional().describe("Target tab id; omit for the active tab");
 
   return createSdkMcpServer({
@@ -249,7 +249,16 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           activate: z.boolean().optional()
             .describe("Focus the tab before capturing (default true). Pass false to fail instead of stealing focus."),
         },
-        async (a) => text(await screenshotToFile(bridge, a, prefer()))),
+        async (a) => {
+          // Ungated by design, so the loop guard lives here: past the per-turn
+          // budget the tool refuses and tells the model to report instead.
+          const b = budget?.();
+          if (b && b.screenshots >= b.maxScreenshots) {
+            return text(`Screenshot budget for this turn (${b.maxScreenshots}) is used up. Tell the user what you have found so far and ask before continuing.`);
+          }
+          if (b) b.screenshots++;
+          return text(await screenshotToFile(bridge, a, prefer()));
+        }),
     ],
   });
 }

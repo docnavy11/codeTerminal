@@ -152,6 +152,22 @@ describe("browser tools", () => {
     assert.deepEqual(seen[1], { selector: "#q", value: "x" });
   });
 
+  test("screenshot: refuses past the per-turn budget and asks the model to report", async () => {
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 0, 0, 13]), Buffer.from("IHDR"), Buffer.from([0, 0, 0, 5, 0, 0, 0, 7]), Buffer.alloc(9)]);
+    let shots = 0;
+    const { bridge } = bridged({ screenshot: () => { shots++; return { tabId: 1, url: "u", dataUrl: "data:image/png;base64," + png.toString("base64") }; } });
+    const budget = { screenshots: 0, maxScreenshots: 2 };
+    const srv = browserTools(bridge, () => undefined, () => budget);
+    const a = JSON.parse(await call(srv, "screenshot", {})) as { path: string }; await unlink(a.path);
+    const b = JSON.parse(await call(srv, "screenshot", {})) as { path: string }; await unlink(b.path);
+    const refused = await call(srv, "screenshot", {});
+    assert.match(refused, /budget for this turn \(2\) is used up/);
+    assert.equal(shots, 2, "the browser was not asked for the third");
+    budget.screenshots = 0;                                   // a new turn
+    const c = JSON.parse(await call(srv, "screenshot", {})) as { path: string }; await unlink(c.path);
+    assert.equal(shots, 3);
+  });
+
   test("a preferred browser that is gone fails rather than acting elsewhere", async () => {
     const { bridge } = bridged({ list_tabs: () => [] }, "browser-B");
     const srv = browserTools(bridge, () => "browser-A");

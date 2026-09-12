@@ -272,3 +272,14 @@ def test_cost_line_sums_turns_not_running_totals(page, server):
     wait(page, "() => document.querySelectorAll('#log .end').length === 2", what="second end")
     ends = page.evaluate("() => [...document.querySelectorAll('#log .end')].map(e => e.textContent)")
     assert "$0.0010" in ends[0] and "$0.0020" in ends[1], ends
+
+
+def test_stop_reason_and_context_meter(page, server):
+    open_ui(page, server)
+    send(page, "one"); wait_reply(page, "You said: one")
+    wait(page, "() => (document.querySelector('#ctx')?.textContent || '') === 'ctx 20%'", what="context meter after one turn")
+    send(page, "stop-me")
+    wait(page, "() => [...document.querySelectorAll('#log .end')].some(e => e.classList.contains('stopped') && e.textContent.includes('stopped: reached the turn limit (40 turns)'))", what="stop reason on the end line")
+    assert page.text_content("#ctx") == "ctx 40%"
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect")
+    wait(page, "() => (document.querySelector('#ctx')?.textContent || '') === 'ctx 40%'", what="meter restored from the replay")

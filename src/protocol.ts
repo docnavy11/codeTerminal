@@ -47,8 +47,13 @@ export type ClientEvent =
   | { kind: "replayed" }
   | { kind: "status"; state: StatusState; detail: string; tokens: number }
   | { kind: "question"; id: string; questions: AskQuestion[] }
-  /** costUsd is this turn's cost; sessionCostUsd the SDK's running total for the live session (both estimates). */
-  | { kind: "turn_end"; costUsd: number | null; sessionCostUsd?: number | null; isError: boolean; denials: number }
+  /**
+   * costUsd is this turn's cost; sessionCostUsd the SDK's running total for the
+   * live session (both estimates). stopped says why a turn ended early, in
+   * words; context is what the next request re-sends against the model's window.
+   */
+  | { kind: "turn_end"; costUsd: number | null; sessionCostUsd?: number | null; isError: boolean; denials: number;
+      stopped?: string | null; context?: { tokens: number; window: number } | null }
   | { kind: "error"; message: string }
   /** Liveness beat from the server's heartbeat; carries nothing. */
   | { kind: "ping" };

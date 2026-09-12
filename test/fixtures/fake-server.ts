@@ -20,12 +20,18 @@ writeFileSync(join(ROOT, "files", "huge.bin"), Buffer.alloc(5 * 1024 * 1024));  
 const inited = new WeakSet<FakeQuery>();
 const turns = new WeakMap<FakeQuery, { n: number }>();
 const turnsOf = (q: FakeQuery) => { let t = turns.get(q); if (!t) { t = { n: 0 }; turns.set(q, t); } return t; };
+// Each turn re-sends a little more; 40k per turn against a 200k window → 20%, 40%, …
+const usageFor = (q: FakeQuery) => ({ usage: { input_tokens: 100, cache_read_input_tokens: 40_000 * turnsOf(q).n - 100, output_tokens: 0 }, modelUsage: { "fake-model": { contextWindow: 200_000 } } });
 const sdk = fakeSdk({ onUser: (m, q) => {
   if (!inited.has(q)) { inited.add(q); q.init(`fake-${Date.now()}`); }
   const content = String(m.message.content);
   const said = content.split("\n").filter(Boolean).at(-1) ?? "";
   if (content.includes("approve-me")) {
     q.ask("Bash", { command: "rm -rf build" }).promise.then((r) => { q.text(`decision: ${r.behavior}`); q.result(); });
+    return;
+  }
+  if (content.includes("stop-me")) {
+    q.text("Working…"); q.result({ subtype: "error_max_turns", is_error: true, num_turns: 40, total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) });
     return;
   }
   if (content.includes("ask-me")) {
@@ -38,7 +44,7 @@ const sdk = fakeSdk({ onUser: (m, q) => {
   let i = 0;
   const tick = () => {
     if (i < words.length) { q.delta((i ? " " : "") + words[i++]); setTimeout(tick, 30); }
-    else { q.text(reply); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n }); }   // a running total, like the SDK
+    else { q.text(reply); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) }); }   // a running total, like the SDK
   };
   tick();
 } });

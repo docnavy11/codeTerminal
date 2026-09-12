@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { Session, type ClientEvent, type SessionDeps } from "../src/session.js";
+import { Session, MAX_TOOL_CALLS, stoppedReason, contextOf, type ClientEvent, type SessionDeps } from "../src/session.js";
 import { fakeSdk, settle, type FakeQuery } from "./fakes/sdk.js";
 
 /**
@@ -153,6 +153,64 @@ describe("Session events", () => {
   test("an unknown SDK message type is ignored", async () => {
     m.q.emit({ type: "something_new", payload: 1 }); await settle();
     assert.ok(!m.events.some((e) => e.kind === "error"));
+  });
+});
+
+describe("why a turn stopped, and what it costs in context", () => {
+  test("stoppedReason: every result subtype gets words; success gets null", () => {
+    assert.equal(stoppedReason({ subtype: "success" }), null);
+    assert.equal(stoppedReason({}), null);
+    assert.match(stoppedReason({ subtype: "error_max_turns", num_turns: 40 })!, /turn limit \(40 turns\)/);
+    assert.match(stoppedReason({ subtype: "error_max_budget_usd" })!, /cost ceiling/);
+    assert.match(stoppedReason({ subtype: "error_during_execution", errors: ["boom", "bang"] })!, /boom; bang/);
+    assert.match(stoppedReason({ subtype: "error_during_execution" })!, /error during execution/);
+    assert.match(stoppedReason({ subtype: "error_max_structured_output_retries" })!, /output format/);
+    assert.equal(stoppedReason({ subtype: "error_new_kind" }), "error_new_kind");
+  });
+
+  test("contextOf: usage against the largest window; null without either", () => {
+    assert.deepEqual(contextOf({ usage: { input_tokens: 10, cache_read_input_tokens: 90000, cache_creation_input_tokens: 5000, output_tokens: 900 },
+      modelUsage: { "claude-haiku-4-5": { contextWindow: 200000 }, "claude-x": { contextWindow: 1000000 } } }), { tokens: 95910, window: 1000000 });
+    assert.equal(contextOf({ usage: { input_tokens: 1 } }), null);
+    assert.equal(contextOf({}), null);
+  });
+
+  test("a turn_end carries the stop reason and the context", async () => {
+    const m = make();
+    m.q.result({ subtype: "error_max_turns", is_error: true, num_turns: 3, usage: { input_tokens: 5, cache_read_input_tokens: 995, output_tokens: 100 }, modelUsage: { m: { contextWindow: 10000 } } });
+    await settle();
+    const e = m.last("turn_end")!;
+    assert.match(e.stopped!, /turn limit/); assert.deepEqual(e.context, { tokens: 1100, window: 10000 }); assert.equal(e.isError, true);
+    m.q.result(); await settle();
+    assert.equal(m.last("turn_end")!.stopped, null);
+  });
+
+  test("API retries, refusals, policy denials and notifications are shown, low-priority notices are not", async () => {
+    const m = make();
+    m.q.emit({ type: "system", subtype: "api_retry", attempt: 2, max_retries: 10, retry_delay_ms: 4000, error_status: 529 });
+    m.q.emit({ type: "system", subtype: "model_refusal_no_fallback", content: "I can't help with that", api_refusal_explanation: "policy" });
+    m.q.emit({ type: "system", subtype: "permission_denied", tool_name: "WebFetch", tool_use_id: "t" });
+    m.q.emit({ type: "system", subtype: "notification", key: "k", text: "Context is getting long", priority: "high" });
+    m.q.emit({ type: "system", subtype: "notification", key: "k2", text: "trivia", priority: "low" });
+    await settle();
+    const locals = m.events.filter((e): e is Extract<ClientEvent, { kind: "local" }> => e.kind === "local").map((e) => e.text);
+    assert.deepEqual(locals, ["API retry 2 of 10 in 4s (HTTP 529)", "WebFetch was denied by policy (settings), not by you", "Context is getting long"]);
+    assert.match(m.last("error")!.message, /refused this request: policy — I can't help with that/);
+  });
+
+  test("a turn that keeps calling tools is interrupted once and told so", async () => {
+    const m = make();
+    m.s.send("go");
+    for (let i = 0; i < MAX_TOOL_CALLS + 5; i++) m.q.toolUse(`t${i}`, "Read");
+    await settle(4);
+    assert.equal(m.q.interrupts, 1);
+    const errs = m.events.filter((e) => e.kind === "error") as { message: string }[];
+    assert.equal(errs.length, 1); assert.match(errs[0].message, /tool calls in one turn/);
+    m.q.result(); await settle();
+    m.s.send("again");
+    for (let i = 0; i < 3; i++) m.q.toolUse(`u${i}`, "Read");
+    await settle(4);
+    assert.equal(m.q.interrupts, 1, "the counter resets per turn");
   });
 });
 
