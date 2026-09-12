@@ -61,6 +61,11 @@ const sdk = fakeSdk({ onUser: (m, q) => {
     };
     step(); return;
   }
+  if (content.includes("plan-me")) {
+    q.ask("ExitPlanMode", { plan: "# Rename the widget\n\n## Steps\n1. Rename `Widget` to `Gadget` in `src/w.ts`\n2. Update the three call sites\n3. Run the tests", planFilePath: "/tmp/plan.md" })
+      .promise.then((r) => { q.text(`decision: ${r.behavior}${(r as { updatedPermissions?: { mode?: string }[] }).updatedPermissions?.[0]?.mode ? ` · mode ${(r as { updatedPermissions: { mode: string }[] }).updatedPermissions[0].mode}` : ""}`); q.result(); });
+    return;
+  }
   if (content.includes("ask-me")) {
     q.ask("AskUserQuestion", { questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] })
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });

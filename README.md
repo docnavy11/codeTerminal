@@ -894,6 +894,18 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## Plan mode
+
+Pick **Plan** in the mode menu (or the agent enters it itself) and it only
+reads. When it has a plan it asks to leave planning, and *that* card is the
+plan — rendered, scrollable — with the three answers the TUI offers:
+**Build it** (back to asking before changes), **Build, auto-accept edits**,
+or **Keep planning**, which sends the model back for a revision ("ask what
+should change, then present the plan again"). Approving carries the chosen
+mode to the CLI as a `setMode` permission update and switches the session,
+so the mode menu follows. The plan is kept with the chat and exported under
+`## Plan`.
+
 ## Images in the prompt
 
 Paste a screenshot (Ctrl/Cmd+V), drop an image on the composer or the

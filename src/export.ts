@@ -45,7 +45,10 @@ export function toMarkdown(rec: ChatRecord, projectName?: string): string {
         out.push("", `_${tail}_`, "");
         break;
       }
-      default: break;   // ready, commands, approvals, questions, cwd: session plumbing
+      case "approval":
+        if (e.tool === "ExitPlanMode" && typeof (e.input as { plan?: unknown })?.plan === "string") out.push("## Plan", "", (e.input as { plan: string }).plan, "");
+        break;
+      default: break;   // ready, commands, questions, cwd: session plumbing
     }
   }
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";

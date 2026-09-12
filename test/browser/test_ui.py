@@ -407,3 +407,18 @@ def test_images_pasted_and_picked_go_with_the_prompt(page, server):
     page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
     assert page.locator("#log .msg.user .imgs img").count() == 1, "thumbnail survives the replay"
     assert page.errors == []
+
+
+def test_plan_card_renders_the_plan_and_switches_mode(page, server):
+    open_ui(page, server)
+    send(page, "plan-me")
+    page.wait_for_selector(".card.plan", timeout=10000)
+    assert page.locator(".card.plan .planbody h1").text_content() == "Rename the widget"
+    assert page.locator(".card.plan .planbody li").count() == 3
+    assert page.locator(".card.plan pre").count() == 0, "the plan is rendered, not dumped as JSON"
+    labels = page.evaluate("() => [...document.querySelectorAll('.card.plan .row button')].map(b => b.textContent)")
+    assert labels == ["Build it", "Build, auto-accept edits", "Keep planning"], labels
+    page.click(".card.plan button[data-mode=acceptEdits]")
+    wait_reply(page, "decision: allow · mode acceptEdits")
+    wait(page, "() => document.querySelector('#mode').value === 'acceptEdits'", what="mode menu follows")
+    page.select_option("#mode", "default"); time.sleep(0.3)

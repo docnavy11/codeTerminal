@@ -8,7 +8,7 @@ Ranked by how often it would matter in a day's use. Status: ☐ open, ◐ design
 | 2 | **Diffs for Edit/Write**, shown before approval. | The card shows the change in place: path, `+a −b`, context, removed and added lines; notes when the file is missing or `old_string` is not found. | ☑ |
 | 3 | **Thinking text**, streamed. | A collapsed "thinking" block with the first line visible, streaming as it arrives, kept with the chat. Measured: only ~1 block in 20 carries text (the API omits the rest and sends token counts), so the counter stays and the block appears when there is something to read. | ☑ |
 | 4 | **Images in the prompt.** | Paste, drop or attach up to four; downscaled in the browser, sent as image blocks, thumbnails kept with the chat. | ☑ |
-| 5 | **Plan mode presentation** — `ExitPlanMode` shows the plan and asks. | A generic approval card with JSON. | ☐ |
+| 5 | **Plan-mode presentation** — `ExitPlanMode` shows the plan and asks. | The card is the rendered plan with three answers: build it (ask before changes), build auto-accepting edits, keep planning; approval switches the mode. `EnterPlanMode` is mirrored in the mode menu. | ☑ |
 | 6 | **Todo list / subagent progress** as a live list. | Ordinary tool lines. | ☐ |
 | 7 | `@file` completion, `!` bash prefix. | A real shell pane instead; no `@` completion. | ☐ |
 | 8 | `/model` (the SDK has `setModel`), `/cost`. | Not exposed; `/context` works. | ☐ |

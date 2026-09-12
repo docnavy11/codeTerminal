@@ -75,3 +75,11 @@ describe("parseAgentMessage: inbound validation", () => {
     assert.deepEqual(m, { type: "open", id: "abc" });
   });
 });
+
+describe("decision with a mode", () => {
+  test("a valid mode rides along; an invalid one refuses the message", () => {
+    assert.deepEqual(parseAgentMessage({ type: "decision", id: "x", decision: "allow", mode: "acceptEdits" }), { type: "decision", id: "x", decision: "allow", mode: "acceptEdits" });
+    assert.equal(parseAgentMessage({ type: "decision", id: "x", decision: "allow", mode: "root" }), null);
+    assert.deepEqual(parseAgentMessage({ type: "decision", id: "x", decision: "deny" }), { type: "decision", id: "x", decision: "deny" });
+  });
+});

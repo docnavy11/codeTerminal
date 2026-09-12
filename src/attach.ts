@@ -99,7 +99,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
       case "answer":
         chat.session.answer(msg.id, msg.answers); return;
       case "decision":
-        chat.session.decide(msg.id, msg.decision); return;
+        chat.session.decide(msg.id, msg.decision, msg.mode); return;
       case "cwd": {
         const target = chat;
         files.safePath(ctx.filesRoot, msg.path)

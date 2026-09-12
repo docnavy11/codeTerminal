@@ -258,20 +258,29 @@ export class Session {
     return promise;
   };
 
-  /** allow | always | deny. "always" also stops this tool asking again. */
-  decide(id: string, decision: "allow" | "always" | "deny"): boolean {
+  /**
+   * allow | always | deny. "always" also stops this tool asking again. `mode`
+   * rides with an allow on ExitPlanMode: the plan is approved *and* the
+   * session moves from planning to building in that mode — sent to the CLI as
+   * a setMode permission update and applied to the session directly.
+   */
+  decide(id: string, decision: "allow" | "always" | "deny", mode?: PermissionMode): boolean {
     const p = this.#pending.get(id);
     if (!p) return false;
     this.#pending.delete(id);
 
+    const modeUpdate: PermissionUpdate[] = mode && decision !== "deny" ? [{ type: "setMode", mode, destination: "session" }] : [];
     if (decision === "deny") {
-      p.resolve({ behavior: "deny", message: `The user denied ${p.tool}. Do not retry it; ask what to do instead.` });
+      p.resolve({ behavior: "deny", message: p.tool === "ExitPlanMode"
+        ? "The user wants the plan revised. Ask what should change, then present the plan again."
+        : `The user denied ${p.tool}. Do not retry it; ask what to do instead.` });
     } else if (decision === "always") {
       this.#granted.push(...p.suggestions);
-      p.resolve({ behavior: "allow", updatedPermissions: p.suggestions });
+      p.resolve({ behavior: "allow", updatedPermissions: [...p.suggestions, ...modeUpdate] });
     } else {
-      p.resolve({ behavior: "allow" });
+      p.resolve({ behavior: "allow", ...(modeUpdate.length ? { updatedPermissions: modeUpdate } : {}) });
     }
+    if (modeUpdate.length && mode) void this.setMode(mode);
     this.#emit({ kind: "approval_closed", id, decision });
     this.#pushStatus();
     return true;
@@ -475,6 +484,10 @@ export class Session {
             this.#activeTools.delete(b.tool_use_id);
             const r = summariseResult(name, b as { tool_use_id: string; content?: unknown; is_error?: boolean }, structured);
             this.#emit({ kind: "tool_result", id: b.tool_use_id, name, ...r, parent: m.parent_tool_use_id ?? null });
+            // The CLI switches itself into plan mode when EnterPlanMode runs
+            // (its result says "Entered plan mode"); mirror that so the mode
+            // menu shows the truth. Leaving plan mode goes through decide().
+            if (name === "EnterPlanMode" && r.ok && this.#mode !== "plan") { this.#mode = "plan"; this.#emit({ kind: "mode", mode: "plan" }); }
           }
           this.#pushStatus();
         }

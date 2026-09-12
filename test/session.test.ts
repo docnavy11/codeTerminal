@@ -339,6 +339,29 @@ describe("the approval gate", () => {
     s.close(); await done;
   });
 
+  test("approving a plan with a mode: setMode update to the CLI, the session switches, the model is told a denial means 'revise'", async () => {
+    const { promise } = m.q.ask("ExitPlanMode", { plan: "# do things" });
+    const card = m.last("approval")!;
+    assert.equal(m.s.decide(card.id, "allow", "acceptEdits"), true);
+    const r = await promise as { behavior: string; updatedPermissions?: { type: string; mode?: string; destination?: string }[] };
+    assert.deepEqual(r.updatedPermissions, [{ type: "setMode", mode: "acceptEdits", destination: "session" }]);
+    await settle();
+    assert.equal(m.s.mode, "acceptEdits"); assert.deepEqual(m.q.modes, ["acceptEdits"]); assert.equal(m.last("mode")!.mode, "acceptEdits");
+    const { promise: p2 } = m.q.ask("ExitPlanMode", { plan: "# v2" });
+    m.s.decide(m.last("approval")!.id, "deny");
+    assert.match(((await p2) as { message: string }).message, /revised/);
+    const { promise: p3 } = m.q.ask("Bash", { command: "ls" });
+    m.s.decide(m.last("approval")!.id, "allow", "default");   // a mode on an ordinary tool is passed along too, harmlessly
+    assert.deepEqual(((await p3) as { updatedPermissions: unknown[] }).updatedPermissions, [{ type: "setMode", mode: "default", destination: "session" }]);
+  });
+
+  test("EnterPlanMode's result switches the mode shown to plan", async () => {
+    m.q.toolUse("e1", "EnterPlanMode", {}); m.q.toolResult("e1", "Entered plan mode. You should now focus on exploring…"); await settle();
+    assert.equal(m.s.mode, "plan"); assert.equal(m.last("mode")!.mode, "plan");
+    m.q.toolUse("e2", "EnterPlanMode", {}); m.q.toolResult("e2", "already", { is_error: true }); await settle();
+    assert.equal(m.events.filter((e) => e.kind === "mode").length, 1, "a failed enter changes nothing");
+  });
+
   test("answer() on a plain approval, or an unknown id, is refused", () => {
     m.q.ask("Bash");
     assert.equal(m.s.answer(m.last("approval")!.id, { x: "y" }), false);

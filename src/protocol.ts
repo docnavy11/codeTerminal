@@ -108,7 +108,8 @@ export type AgentMessage =
   | { type: "prompt"; text: string; withTab?: boolean; images?: PromptImage[] }
   | { type: "browser"; instance: string }
   | { type: "answer"; id: string; answers: Record<string, string> }
-  | { type: "decision"; id: string; decision: "allow" | "always" | "deny" }
+  /** mode: with an allow on ExitPlanMode, the mode to build in (default = ask, acceptEdits = auto-accept edits). */
+  | { type: "decision"; id: string; decision: "allow" | "always" | "deny"; mode?: PermissionMode }
   | { type: "cwd"; path: string }
   | { type: "project"; id: string }
   | { type: "mode"; mode: PermissionMode }
@@ -155,7 +156,8 @@ export function parseAgentMessage(raw: unknown): AgentMessage | null {
     case "decision": {
       const id = str("id"); const d = m.decision;
       if (!id || (d !== "allow" && d !== "always" && d !== "deny")) return null;
-      return { type: "decision", id, decision: d };
+      if (m.mode !== undefined && !(PERMISSION_MODES as readonly unknown[]).includes(m.mode)) return null;
+      return { type: "decision", id, decision: d, ...(m.mode !== undefined ? { mode: m.mode as PermissionMode } : {}) };
     }
     case "cwd": { const path = str("path"); return path !== null ? { type: "cwd", path } : null; }
     case "project": { const id = str("id"); return id ? { type: "project", id } : null; }

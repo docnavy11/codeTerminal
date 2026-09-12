@@ -385,7 +385,39 @@ function applyStatus(m) {
   }
 }
 
+/* Plan mode. In "plan" the agent only reads; when it has a plan it asks to
+   leave planning through ExitPlanMode, and the plan itself is the thing to
+   approve. So that card is the plan, rendered, with the three answers the
+   TUI offers: build it (asking before changes), build it auto-accepting
+   edits, or keep planning — the last sends the model back for a revision. */
+function renderPlan(m) {
+  const card = el("card plan");
+  card.dataset.approval = m.id; card.dataset.tool = m.tool;
+  const h = document.createElement("h4"); h.textContent = "Plan — approve to start building?";
+  const body = document.createElement("div"); body.className = "planbody md";
+  renderMd(body, typeof m.input?.plan === "string" ? m.input.plan : "(no plan text)");
+  const row = document.createElement("div"); row.className = "row";
+  const choices = [
+    ["Build it", "allow", "allow", "default"],
+    ["Build, auto-accept edits", "allow", "allow", "acceptEdits"],
+    ["Keep planning", "deny", "deny", null],
+  ];
+  for (const [label, decision, cls, mode] of choices) {
+    const b = document.createElement("button");
+    b.textContent = label; b.className = cls; b.dataset.decision = decision; if (mode) b.dataset.mode = mode;
+    b.onclick = () => {
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: "decision", id: m.id, decision, ...(mode ? { mode } : {}) }));
+      card.querySelectorAll("button").forEach((x) => (x.disabled = true));
+    };
+    row.append(b);
+  }
+  card.append(h, body, row);
+  log.scrollTop = log.scrollHeight;
+}
+
 function renderApproval(m) {
+  if (m.tool === "ExitPlanMode") return renderPlan(m);
   const card = el("card");
   card.dataset.approval = m.id; card.dataset.tool = m.tool;
   const h = document.createElement("h4"); h.textContent = `Approve ${m.tool}?`;
