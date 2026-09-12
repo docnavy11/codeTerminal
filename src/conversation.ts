@@ -151,22 +151,23 @@ export class LiveChat {
    * the gap is refused rather than queued behind the first. A session whose
    * stream has ended is rebuilt first, resuming the same conversation.
    */
-  async prompt(text: string, context: () => Promise<string | undefined>): Promise<void> {
+  async prompt(text: string, context: () => Promise<string | undefined>, images: { media_type: string; data: string; thumb: string }[] = []): Promise<void> {
     if (this.busy) throw new Error("Still working — press Stop first.");
     this.#sending = true;
     try {
       const ctx = await context();
       if (this.#session.dead) this.#restart();
-      this.recordUser(text, ctx);
-      this.#session.send(text, ctx);
+      // The record keeps thumbnails only; the full images are for the model.
+      this.recordUser(text, ctx, images.map((i) => ({ media_type: i.media_type, thumb: i.thumb })));
+      this.#session.send(text, ctx, images);
     } finally {
       this.#sending = false;
     }
   }
 
-  recordUser(text: string, context?: string): void {
+  recordUser(text: string, context?: string, images?: { media_type: string; thumb: string }[]): void {
     if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
-    this.#record({ kind: "user", text, context });
+    this.#record({ kind: "user", text, context, ...(images?.length ? { images } : {}) });
     if (this.#rec.title === "New chat") {
       this.#rec.title = titleFrom(this.#rec.events);
       this.#rec.titleProvisional = true;

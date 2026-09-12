@@ -373,3 +373,37 @@ def test_thinking_streams_collapsed_then_persists(page, server):
     page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
     assert page.evaluate("() => document.querySelectorAll('#log .think').length") == 1, "persisted and replayed"
     assert page.errors == []
+
+
+def test_images_pasted_and_picked_go_with_the_prompt(page, server):
+    open_ui(page, server)
+    # paste: a synthetic clipboard event carrying a generated PNG
+    page.evaluate("""async () => { const c = document.createElement('canvas'); c.width = 300; c.height = 200;
+        const g = c.getContext('2d'); g.fillStyle = '#c33'; g.fillRect(0, 0, 300, 200);
+        const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+        const dt = new DataTransfer(); dt.items.add(new File([blob], 'shot.png', { type: 'image/png' }));
+        document.getElementById('box').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true })); }""")
+    wait(page, "() => document.querySelectorAll('#attach-strip .att').length === 1", what="pasted image in the strip")
+    # pick: the 📎 button's file input
+    big = os.path.join(server.root, "big.jpg")
+    page.evaluate("""async (path) => {}""", big)
+    import base64, io, struct, zlib
+    def png_bytes(w, h):
+        raw = b"".join(b"\x00" + b"\x10\x80\x30" * w for _ in range(h))
+        def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+    p2 = os.path.join(server.root, "wide.png"); open(p2, "wb").write(png_bytes(2000, 400))
+    page.set_input_files("#attachpick", p2)
+    wait(page, "() => document.querySelectorAll('#attach-strip .att').length === 2", what="picked image in the strip")
+    # the wide one was downscaled to the 1568px long side
+    dims = page.evaluate("""() => new Promise(r => { const a = attachments[1]; const i = new Image(); i.onload = () => r([i.width, i.height, a.media_type]); i.src = 'data:' + a.media_type + ';base64,' + a.data; })""")
+    assert dims[0] == 1568 and dims[1] == 314 and dims[2] == "image/png", dims
+    page.click("#attach-strip .att >> nth=0 >> .x")
+    assert page.evaluate("() => attachments.length") == 1
+    send(page, "what is in this picture?")
+    wait_reply(page, "You said: what is in this picture? (+1 image)")
+    assert page.evaluate("() => document.querySelectorAll('#attach-strip .att').length") == 0, "strip cleared after send"
+    assert page.locator("#log .msg.user .imgs img").count() == 1, "thumbnail under the message"
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    assert page.locator("#log .msg.user .imgs img").count() == 1, "thumbnail survives the replay"
+    assert page.errors == []

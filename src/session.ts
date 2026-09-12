@@ -310,14 +310,19 @@ export class Session {
    * model can tell it from what the user actually typed. It is page-derived,
    * therefore untrusted — hence the explicit note rather than a bare paste.
    */
-  send(text: string, context?: string): void {
+  send(text: string, context?: string, images: { media_type: string; data: string }[] = []): void {
     this.#busy = true;
     this.#thinkingTokens = 0;
     this.#turnToolCalls = 0; this.#budget.screenshots = 0; this.#turnStopped = false;
     this.#pushStatus();
+    const prompt = composePrompt(text || (images.length ? "(see the attached image)" : ""), context);
+    // Images go first, as the API recommends; the words follow.
+    const content = images.length
+      ? [...images.map((i) => ({ type: "image" as const, source: { type: "base64" as const, media_type: i.media_type as "image/png", data: i.data } })), { type: "text" as const, text: prompt }]
+      : prompt;
     this.#input.push({
       type: "user",
-      message: { role: "user", content: composePrompt(text, context) },
+      message: { role: "user", content },
       parent_tool_use_id: null,
     });
   }

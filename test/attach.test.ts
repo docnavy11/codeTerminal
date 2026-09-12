@@ -80,6 +80,20 @@ describe("attachAgent: prompts", () => {
     assert.ok(!(w.sdk.last.received[0].message.content as string).includes("untrusted-page-data"));
   });
 
+  test("a prompt with images: the model gets the image, the record keeps only the thumbnail", async () => {
+    const w = world();
+    const ws = w.agent();
+    ws.frame({ type: "prompt", text: "look", withTab: false, images: [{ media_type: "image/png", data: "QUJD", thumb: "dGh1bWI=" }] });
+    await settle(6);
+    const sent = w.sdk.last.received[0].message.content as { type: string; source?: { data: string } }[];
+    assert.equal(sent[0].type, "image"); assert.equal(sent[0].source!.data, "QUJD");
+    const rec = w.ctx.state.lastChat!.record.events.find((e) => e.kind === "user") as { images?: { thumb: string; media_type: string }[] };
+    assert.deepEqual(rec.images, [{ media_type: "image/png", thumb: "dGh1bWI=" }]);
+    assert.ok(!JSON.stringify(rec).includes("QUJD"), "the full image is not in the record");
+    const shown = ws.last("user") as { images?: unknown[] };
+    assert.equal(shown.images!.length, 1, "clients get the thumbnail");
+  });
+
   test("a prompt with tab context but no extension: no context, no error, still sent", async () => {
     const w = world();
     const ws = w.agent();

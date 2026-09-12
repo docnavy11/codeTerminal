@@ -269,6 +269,8 @@ addEventListener("DOMContentLoaded", () => {
 <footer>
   <div id="menu"></div>
   <textarea id="box" placeholder="Ask Claude…" autofocus></textarea>
+  <button id="attach" title="Attach an image (or paste / drop one)" aria-label="Attach an image"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.66 5.66l-9.2 9.2a2 2 0 0 1-2.83-2.83l8.5-8.5"/></svg></button>
+  <input type="file" id="attachpick" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
   <button id="stop" disabled>Stop</button>
 </footer>
 

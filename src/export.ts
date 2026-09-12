@@ -15,7 +15,7 @@ export function toMarkdown(rec: ChatRecord, projectName?: string): string {
   for (const e of rec.events as ClientEvent[]) {
     switch (e.kind) {
       case "user":
-        out.push("**You**", "", e.text, "");
+        out.push("**You**", "", e.text + (e.images?.length ? `\n\n_(${e.images.length} image${e.images.length === 1 ? "" : "s"} attached)_` : ""), "");
         if (e.context) out.push(`> ⌁ ${e.context.split("\n")[0]}`, "");
         break;
       case "text":

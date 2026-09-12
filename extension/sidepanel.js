@@ -186,7 +186,12 @@ function handle(m) {
     case "user": {
       log.querySelector(".welcome")?.remove();
       turnTools = 0; turnShots = 0;
-      el("msg user", m.text);
+      const u = el("msg user", m.text);
+      if (m.images?.length) {
+        const strip = document.createElement("div"); strip.className = "imgs";
+        for (const im of m.images) { const img = document.createElement("img"); img.src = `data:${im.media_type};base64,${im.thumb}`; img.alt = "attached image"; strip.append(img); }
+        u.append(strip);
+      }
       if (m.context) { const c = el("ctx", "⌁ " + m.context.split("\n")[0]); c.title = m.context; }
       lastText = null;
       break;
@@ -540,12 +545,86 @@ function pick(i) {
   if (!c.argumentHint) sendBox();
 }
 
+/* ---------------- images in the prompt ----------------
+   Paste (Ctrl/Cmd+V), drop onto the composer or the transcript, or the 📎
+   button. Each image is downscaled here — to the API's recommended 1568px
+   on the long side, as JPEG unless it has transparency — and a 160px
+   thumbnail is made for the transcript, so the chat file never holds the
+   full picture. Up to MAX_ATTACH per prompt; the strip above the box shows
+   what is attached, ✕ removes one. */
+const MAX_ATTACH = 4, LONG_SIDE = 1568, THUMB = 160;
+let attachments = [];          // [{ media_type, data, thumb }]
+const strip = document.createElement("div"); strip.id = "attach-strip"; strip.hidden = true;
+box.parentElement.insertBefore(strip, box);
+
+function paintAttachments() {
+  strip.replaceChildren();
+  strip.hidden = attachments.length === 0;
+  attachments.forEach((a, i) => {
+    const w = document.createElement("span"); w.className = "att";
+    const img = document.createElement("img"); img.src = `data:${a.media_type};base64,${a.thumb}`; img.alt = "";
+    const x = document.createElement("button"); x.className = "x"; x.textContent = "✕"; x.title = "Remove";
+    x.onclick = () => { attachments.splice(i, 1); paintAttachments(); };
+    w.append(img, x); strip.append(w);
+  });
+}
+
+async function addImages(files) {
+  for (const f of files) {
+    if (!f || !/^image\/(png|jpe?g|gif|webp)$/.test(f.type)) continue;
+    if (attachments.length >= MAX_ATTACH) { meta.textContent = `at most ${MAX_ATTACH} images`; break; }
+    try { attachments.push(await encodeImage(f)); } catch (e) { meta.textContent = `image skipped: ${e.message}`; }
+  }
+  paintAttachments();
+}
+
+async function encodeImage(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, LONG_SIDE / Math.max(bmp.width, bmp.height));
+  const keepPng = file.type === "image/png" || file.type === "image/gif" || file.type === "image/webp";
+  const full = draw(bmp, Math.round(bmp.width * scale), Math.round(bmp.height * scale), keepPng ? "image/png" : "image/jpeg", 0.85);
+  const ts = Math.min(1, THUMB / Math.max(bmp.width, bmp.height));
+  const thumb = draw(bmp, Math.max(1, Math.round(bmp.width * ts)), Math.max(1, Math.round(bmp.height * ts)), "image/jpeg", 0.7);
+  bmp.close?.();
+  // a PNG that came out huge is better as JPEG (a photo pasted as PNG)
+  const final = full.data.length > 2_500_000 && keepPng ? draw(await createImageBitmap(file), Math.round(bmp.width * scale), Math.round(bmp.height * scale), "image/jpeg", 0.85) : full;
+  return { media_type: final.type, data: final.data, thumb: thumb.data };
+}
+function draw(bmp, w, h, type, q) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  c.getContext("2d").drawImage(bmp, 0, 0, w, h);
+  const url = c.toDataURL(type, q);
+  return { type: url.slice(5, url.indexOf(";")), data: url.slice(url.indexOf(",") + 1) };
+}
+
+box.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+  if (!files.length) return;
+  e.preventDefault(); addImages(files);
+});
+for (const target of [box, log]) {
+  target.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.types ?? [])].includes("Files")) { e.preventDefault(); target.classList.add("drop"); } });
+  target.addEventListener("dragleave", () => target.classList.remove("drop"));
+  target.addEventListener("drop", (e) => {
+    target.classList.remove("drop");
+    const files = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+    if (!files.length) return;
+    e.preventDefault(); addImages(files);
+  });
+}
+const attachBtn = $("attach"), attachPick = $("attachpick");
+if (attachBtn && attachPick) {
+  attachBtn.onclick = () => attachPick.click();
+  attachPick.onchange = () => { addImages([...attachPick.files]); attachPick.value = ""; };
+}
+
 function sendBox() {
   const text = box.value.trim();
-  if (!text || busy) return;
+  if ((!text && !attachments.length) || busy) return;
   // While the socket is down the prompt is queued and goes out on reconnect.
   // It used to be dropped silently — the box kept the text, nothing happened.
-  submit(text);
+  submit(text, attachments);
+  attachments = []; paintAttachments();
   box.value = ""; box.style.height = "auto";
   menu.classList.remove("open"); matches = [];
   lastText = null;
@@ -1142,20 +1221,20 @@ document.addEventListener("click", (e) => { if (!plist.contains(e.target)) close
 
 /** Queue until the socket is up, so a cold panel or a reconnect does not drop the prompt. */
 const queued = [];
-function submit(text) {
-  if (!text) return;
+function submit(text, images = []) {
+  if (!text && !images.length) return;
   if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "prompt", text, withTab }));
+    ws.send(JSON.stringify({ type: "prompt", text, withTab, ...(images.length ? { images } : {}) }));
     lastText = null;
   } else {
-    queued.push(text);
+    queued.push({ text, images });
     meta.textContent = `reconnecting… (${queued.length} queued)`;
   }
 }
 function flushQueued() {
   // One at a time: the server refuses a prompt while the previous one runs,
   // so the rest wait for the next flush rather than being bounced.
-  if (queued.length) submit(queued.shift());
+  if (queued.length) { const q = queued.shift(); submit(q.text, q.images); }
 }
 
 async function takePending() {

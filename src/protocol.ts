@@ -29,7 +29,8 @@ export type AskQuestion = {
 /** Server → client. One flat, discriminated shape. */
 export type ClientEvent =
   | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
-  | { kind: "user"; text: string; context?: string }
+  /** images: what the user attached — thumbnails only, for the transcript; the full images went to the model. */
+  | { kind: "user"; text: string; context?: string; images?: { media_type: string; thumb: string }[] }
   | { kind: "text"; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown }
   /** What a tool returned: one line for the row, the body behind it (capped). Joined to "tool" by id. */
@@ -66,6 +67,29 @@ export type ClientEvent =
   /** Liveness beat from the server's heartbeat; carries nothing. */
   | { kind: "ping" };
 
+export type PromptImage = { media_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp"; data: string; thumb: string };
+export const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+export const MAX_IMAGES = 4;
+/** Base64 length cap per image (~3.75 MB of pixels); the client downscales well below this. */
+export const MAX_IMAGE_B64 = 5 * 1024 * 1024;
+const MAX_THUMB_B64 = 64 * 1024;
+
+/** [] when absent; false when present but malformed — the whole prompt is refused then, not silently stripped. */
+function parseImages(v: unknown): PromptImage[] | false {
+  if (v === undefined) return [];
+  if (!Array.isArray(v) || v.length > MAX_IMAGES) return false;
+  const out: PromptImage[] = [];
+  for (const i of v) {
+    if (!i || typeof i !== "object") return false;
+    const { media_type, data, thumb } = i as Record<string, unknown>;
+    if (typeof media_type !== "string" || !IMAGE_TYPES.has(media_type)) return false;
+    if (typeof data !== "string" || !data.length || data.length > MAX_IMAGE_B64 || !/^[A-Za-z0-9+/=]+$/.test(data)) return false;
+    if (typeof thumb !== "string" || thumb.length > MAX_THUMB_B64 || (thumb.length && !/^[A-Za-z0-9+/=]+$/.test(thumb))) return false;
+    out.push({ media_type: media_type as PromptImage["media_type"], data, thumb });
+  }
+  return out;
+}
+
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
@@ -80,7 +104,8 @@ export const PERMISSION_MODES = [
 
 /** Client → server on /ws. */
 export type AgentMessage =
-  | { type: "prompt"; text: string; withTab?: boolean }
+  /** images: base64 data (full size, sent to the model) and a small base64 thumb (kept with the chat). */
+  | { type: "prompt"; text: string; withTab?: boolean; images?: PromptImage[] }
   | { type: "browser"; instance: string }
   | { type: "answer"; id: string; answers: Record<string, string> }
   | { type: "decision"; id: string; decision: "allow" | "always" | "deny" }
@@ -116,8 +141,10 @@ export function parseAgentMessage(raw: unknown): AgentMessage | null {
   switch (m.type) {
     case "prompt": {
       const text = str("text");
-      if (text === null || !text.trim()) return null;
-      return { type: "prompt", text, ...(typeof m.withTab === "boolean" ? { withTab: m.withTab } : {}) };
+      const images = parseImages(m.images);
+      if (images === false) return null;
+      if ((text === null || !text.trim()) && !images.length) return null;
+      return { type: "prompt", text: text ?? "", ...(typeof m.withTab === "boolean" ? { withTab: m.withTab } : {}), ...(images.length ? { images } : {}) };
     }
     case "browser": { const instance = str("instance"); return instance ? { type: "browser", instance } : null; }
     case "answer": {

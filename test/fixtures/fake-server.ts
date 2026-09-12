@@ -25,7 +25,9 @@ const turnsOf = (q: FakeQuery) => { let t = turns.get(q); if (!t) { t = { n: 0 }
 const usageFor = (q: FakeQuery) => ({ usage: { input_tokens: 100, cache_read_input_tokens: 40_000 * turnsOf(q).n - 100, output_tokens: 0 }, modelUsage: { "fake-model": { contextWindow: 200_000 } } });
 const sdk = fakeSdk({ onUser: (m, q) => {
   if (!inited.has(q)) { inited.add(q); q.init(`fake-${Date.now()}`); }
-  const content = String(m.message.content);
+  const raw = m.message.content;
+  const images = Array.isArray(raw) ? raw.filter((b) => (b as { type: string }).type === "image").length : 0;
+  const content = Array.isArray(raw) ? raw.map((b) => (b as { type: string; text?: string }).text ?? "").join("\n") : String(raw);
   const said = content.split("\n").filter(Boolean).at(-1) ?? "";
   if (content.includes("approve-me")) {
     q.ask("Bash", { command: "rm -rf build" }).promise.then((r) => { q.text(`decision: ${r.behavior}`); q.result(); });
@@ -64,7 +66,7 @@ const sdk = fakeSdk({ onUser: (m, q) => {
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });
     return;
   }
-  const reply = `You said: ${said}`;
+  const reply = `You said: ${said}${images ? ` (+${images} image${images === 1 ? "" : "s"})` : ""}`;
   const words = reply.split(" ");
   let i = 0;
   const tick = () => {

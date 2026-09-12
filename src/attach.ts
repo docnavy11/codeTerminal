@@ -90,7 +90,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
             ? [`active tab: ${tab.title ?? "(untitled)"} — ${tab.url}`,
                tab.selection ? `selected text:\n${tab.selection}` : null].filter(Boolean).join("\n")
             : undefined;
-        }).catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
+        }, msg.images ?? []).catch((e: unknown) => send({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
         return;
       }
       // Which browser this client is in; follows the person across chats.
