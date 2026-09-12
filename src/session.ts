@@ -139,7 +139,11 @@ export class Session {
   /** Swap the sink when a browser attaches or detaches. */
   setEmit(emit: (e: ClientEvent) => void): void { this.#emit = emit; }
 
-  async start(resumeId?: string, granted: PermissionUpdate[] = [], mode: PermissionMode = "default"): Promise<void> {
+  #model: string | null = null;
+  get model() { return this.#model; }
+
+  async start(resumeId?: string, granted: PermissionUpdate[] = [], mode: PermissionMode = "default", model?: string): Promise<void> {
+    this.#model = model ?? null;
     const d = this.#deps;
     this.#granted = granted;
     // The mode has to be in place BEFORE query() reads it below. The old path
@@ -172,6 +176,7 @@ export class Session {
           ...(d.prompts ? { prompts: promptTools(d.prompts) } : {}),
         },
         permissionMode: this.#mode,
+        ...(model ? { model } : {}),
         allowDangerouslySkipPermissions: ALLOW_BYPASS,
         ...(MAX_BUDGET_USD ? { maxBudgetUsd: MAX_BUDGET_USD } : {}),
         canUseTool: this.#canUseTool,
@@ -182,6 +187,7 @@ export class Session {
     // system/init does not arrive until the first prompt, but the menu needs
     // the list before the user types — so ask straight away.
     void this.#publishCommands();
+    void this.#publishModels();
 
     let cause = "";
     try {
@@ -387,6 +393,27 @@ export class Session {
     if (key === this.#lastStatus) return;
     this.#lastStatus = key;
     this.#emit(s);
+  }
+
+  /** The models the CLI offers, for the picker; an older CLI simply has none. */
+  async #publishModels(): Promise<void> {
+    try {
+      const all = await this.#query?.supportedModels();
+      if (all) this.#emit({ kind: "models", models: all.map((m) => ({ value: m.value, label: m.displayName || m.value })) });
+    } catch { /* no picker, no harm */ }
+  }
+
+  /** Switch model mid-session; "" or undefined means the CLI's default. Reports failure and keeps the old one. */
+  async setModel(model: string | undefined): Promise<void> {
+    const next = model || null;
+    try {
+      await this.#query?.setModel(next ?? undefined);
+      this.#model = next;
+      this.#emit({ kind: "model", model: next });
+    } catch (err) {
+      this.#emit({ kind: "error", message: `Could not switch model: ${err instanceof Error ? err.message : String(err)}` });
+      this.#emit({ kind: "model", model: this.#model });
+    }
   }
 
   /** Rich command list (name, description, argument hint) for the UI menu. */

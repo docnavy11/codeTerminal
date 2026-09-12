@@ -83,3 +83,13 @@ describe("decision with a mode", () => {
     assert.deepEqual(parseAgentMessage({ type: "decision", id: "x", decision: "deny" }), { type: "decision", id: "x", decision: "deny" });
   });
 });
+
+describe("model message", () => {
+  test("a model id passes, empty means default, junk is refused", () => {
+    assert.deepEqual(parseAgentMessage({ type: "model", model: "claude-opus-5" }), { type: "model", model: "claude-opus-5" });
+    assert.deepEqual(parseAgentMessage({ type: "model", model: "" }), { type: "model", model: "" });
+    assert.equal(parseAgentMessage({ type: "model", model: "x y" }), null);
+    assert.equal(parseAgentMessage({ type: "model", model: "a".repeat(65) }), null);
+    assert.equal(parseAgentMessage({ type: "model" }), null);
+  });
+});

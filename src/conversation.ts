@@ -58,7 +58,7 @@ export class LiveChat {
     // Pass the mode into start() so the SDK launches with it. Setting it after
     // start (the old `void s.setMode(mode)`) raced the query into existence and
     // left the session running in "default".
-    s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted, mode)
+    s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted, mode, this.#rec.model)
       .catch((err) => this.#record({ kind: "error", message: String(err) }));
     return s;
   }
@@ -189,6 +189,16 @@ export class LiveChat {
   async setMode(mode: PermissionMode): Promise<void> {
     await this.#session.setMode(mode);
     this.#mode = this.#session.mode;
+  }
+
+  get model(): string | null { return this.#rec.model ?? null; }
+  /** Per chat and remembered: a resumed chat comes back on the model it was on. */
+  async setModel(model: string): Promise<void> {
+    await this.#session.setModel(model || undefined);
+    if ((this.#session.model ?? undefined) !== this.#rec.model) {
+      if (this.#session.model) this.#rec.model = this.#session.model; else delete this.#rec.model;
+      this.#save();
+    }
   }
 
   /** Point this chat at a directory. cwd is a launch option, so the session is rebuilt. */
@@ -437,6 +447,7 @@ export class Manager {
         ...spareRec, createdAt: now, updatedAt: now, sdkSessionId: null, events: [], granted: [],
         mode: "default", cwd: from?.record.cwd ?? null, project: from?.record.project,
       };
+      if (from?.record.model) rec.model = from.record.model; else delete rec.model;
       this.#store.write(rec);
       const chat = this.#admit(rec, from?.mode ?? "default");
       this.onListChanged?.();
@@ -447,6 +458,7 @@ export class Manager {
     const rec: ChatRecord = {
       id: randomUUID(), title: "New chat", createdAt: now, updatedAt: now,
       sdkSessionId: null, cwd: from?.record.cwd ?? null, project: from?.record.project,
+      ...(from?.record.model ? { model: from.record.model } : {}),
       events: [], granted: [], mode: "default",
     };
     this.#store.write(rec);

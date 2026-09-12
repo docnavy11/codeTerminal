@@ -256,6 +256,18 @@ describe("attachAgent: mode, cwd, project", () => {
     assert.equal(a.last("mode")!.mode, "acceptEdits");
   });
 
+  test("model: switches this chat and is announced on attach", async () => {
+    const w = world();
+    const ws = w.agent();
+    assert.equal(ws.last("model")!.model, null, "announced on attach");
+    ws.frame({ type: "model", model: "claude-opus-5" }); await settle(4);
+    assert.equal(ws.last("model")!.model, "claude-opus-5");
+    assert.deepEqual(w.sdk.last.modelCalls, ["claude-opus-5"]);
+    assert.equal(w.ctx.state.lastChat!.record.model, "claude-opus-5");
+    ws.frame({ type: "model", model: "bad model" }); await settle(2);
+    assert.deepEqual(w.sdk.last.modelCalls, ["claude-opus-5"], "a malformed id never reaches the SDK");
+  });
+
   test("cwd: outside the root, not a directory, and a good one", async () => {
     const w = world();
     const ws = w.agent();

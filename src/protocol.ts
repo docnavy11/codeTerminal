@@ -47,6 +47,9 @@ export type ClientEvent =
       diff?: { path: string; kind: "edit" | "write" | "create"; lines: { t: " " | "+" | "-" | "@"; s: string }[]; adds: number; dels: number; truncated: boolean; note?: string } | null }
   | { kind: "approval_closed"; id: string; decision: "allow" | "always" | "deny" | "gone" }
   | { kind: "mode"; mode: PermissionMode }
+  /** The models this CLI offers, for the picker; and the one this chat now uses (null = the CLI's default). */
+  | { kind: "models"; models: { value: string; label: string }[] }
+  | { kind: "model"; model: string | null }
   | { kind: "commands"; commands: SlashCommand[] }
   | { kind: "local"; text: string }
   | { kind: "chats"; chats: unknown[]; activeId: string }
@@ -99,7 +102,7 @@ function parseImages(v: unknown): PromptImage[] | false {
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
-  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress",
+  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 
@@ -119,6 +122,8 @@ export type AgentMessage =
   | { type: "cwd"; path: string }
   | { type: "project"; id: string }
   | { type: "mode"; mode: PermissionMode }
+  /** Switch this chat's model; "" means back to the CLI's default. */
+  | { type: "model"; model: string }
   | { type: "interrupt" }
   | { type: "new" }
   | { type: "open"; id: string }
@@ -132,7 +137,7 @@ export type ShellMessage =
   | { type: "resize"; cols?: number; rows?: number };
 
 export const AGENT_MESSAGE_TYPES = [
-  "prompt", "browser", "answer", "decision", "cwd", "project", "mode",
+  "prompt", "browser", "answer", "decision", "cwd", "project", "mode", "model",
   "interrupt", "new", "open", "rename", "delete",
 ] as const satisfies readonly AgentMessage["type"][];
 
@@ -170,6 +175,10 @@ export function parseAgentMessage(raw: unknown): AgentMessage | null {
     case "mode": {
       const mode = m.mode;
       return (PERMISSION_MODES as readonly unknown[]).includes(mode) ? { type: "mode", mode: mode as PermissionMode } : null;
+    }
+    case "model": {
+      const model = str("model");
+      return model !== null && /^[A-Za-z0-9._:-]{0,64}$/.test(model) ? { type: "model", model } : null;
     }
     case "interrupt": return { type: "interrupt" };
     case "new": return { type: "new" };

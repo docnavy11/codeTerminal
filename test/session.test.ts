@@ -388,6 +388,28 @@ describe("the approval gate", () => {
   });
 });
 
+describe("Session.setModel", () => {
+  test("the CLI's models are published at start; a switch is applied, announced and remembered; failure keeps the old one", async () => {
+    const sdk = fakeSdk({ setup: (q) => { q.models = [{ value: "claude-opus-5", displayName: "Opus 5" }]; } });
+    const events: ClientEvent[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start(undefined, [], "default", "claude-sonnet-5");
+    assert.equal(sdk.last.options.model, "claude-sonnet-5", "the launch option carries the chat's model");
+    await settle();
+    assert.deepEqual((events.find((e) => e.kind === "models") as { models: unknown }).models, [{ value: "claude-opus-5", label: "Opus 5" }]);
+    await s.setModel("claude-opus-5");
+    assert.deepEqual(sdk.last.modelCalls, ["claude-opus-5"]); assert.equal(s.model, "claude-opus-5");
+    assert.equal((events.filter((e) => e.kind === "model").at(-1) as { model: string }).model, "claude-opus-5");
+    await s.setModel("");
+    assert.deepEqual(sdk.last.modelCalls, ["claude-opus-5", undefined]); assert.equal(s.model, null);
+    sdk.last.setModelError = new Error("unknown model");
+    await s.setModel("claude-nope");
+    assert.match((events.filter((e) => e.kind === "error").at(-1) as { message: string }).message, /Could not switch model: unknown model/);
+    assert.equal((events.filter((e) => e.kind === "model").at(-1) as { model: string | null }).model, null, "snapped back");
+    s.close(); await done;
+  });
+});
+
 describe("Session.setMode", () => {
   test("a mode the SDK accepts is applied and announced", async () => {
     const m = make();

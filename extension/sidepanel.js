@@ -11,7 +11,7 @@
 
 const $ = (id) => document.getElementById(id);
 const log = $("log"), box = $("box"), dot = $("dot"), meta = $("meta");
-const stop = $("stop"), modeSel = $("mode");
+const stop = $("stop"), modeSel = $("mode"), modelSel = $("model");
 const statusEl = $("status"), statusText = $("statustext"), statusTime = $("statustime");
 
 let cwdShown = "";
@@ -176,6 +176,19 @@ function handle(m) {
     case "ready":
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
+      break;
+    case "models": {
+      // the CLI's list; keep "default" first and whatever is selected selected
+      const cur = modelSel.value;
+      modelSel.replaceChildren(new Option("default", ""));
+      for (const mo of m.models ?? []) modelSel.append(new Option(mo.label, mo.value));
+      if (cur && !modelSel.querySelector(`option[value="${CSS.escape(cur)}"]`)) modelSel.append(new Option(cur, cur));
+      modelSel.value = cur;
+      break;
+    }
+    case "model":
+      if (m.model && !modelSel.querySelector(`option[value="${CSS.escape(m.model)}"]`)) modelSel.append(new Option(m.model, m.model));
+      modelSel.value = m.model ?? "";
       break;
     case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0; break;
     case "replayed":
@@ -836,6 +849,7 @@ $("setup").onclick = async () => PLATFORM.openUrl((await base()) + "/setup.html"
 // The panel has no terminal and no split view; the full UI does.
 $("openui").onclick = async () => PLATFORM.openUrl((await base()) + "/");
 modeSel.onchange = () => ws?.send(JSON.stringify({ type: "mode", mode: modeSel.value }));
+modelSel.onchange = () => ws?.send(JSON.stringify({ type: "model", model: modelSel.value }));
 
 /* ---- appearance, remembered per browser --------------------------------- */
 const MIN_FS = 9, MAX_FS = 20;

@@ -19,6 +19,9 @@ export class FakeQuery {
   closed = false;
   ended = false;
   commands: SlashCommand[] = [];
+  models: { value: string; displayName: string }[] = [];
+  readonly modelCalls: (string | undefined)[] = [];
+  setModelError: Error | null = null;
   /** Make setPermissionMode reject with this. */
   setModeError: Error | null = null;
   /** Make supportedCommands reject (older CLI). */
@@ -93,6 +96,8 @@ export class FakeQuery {
     this.modes.push(mode);
   }
   async interrupt(): Promise<undefined> { this.interrupts++; return undefined; }
+  async setModel(model?: string): Promise<void> { if (this.setModelError) throw this.setModelError; this.modelCalls.push(model); }
+  async supportedModels(): Promise<{ value: string; displayName: string }[]> { return this.models; }
   async supportedCommands(): Promise<SlashCommand[]> {
     if (this.commandsError) throw this.commandsError;
     return this.commands;

@@ -894,6 +894,17 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## Model
+
+A **model** menu sits beside the mode menu, filled from the CLI's own list
+(`supportedModels`), with *default* meaning whatever the CLI would use. It
+is per chat and remembered: a chat opened next week comes back on the
+model it was on, and a new chat inherits the model of the one you started
+it from, like the working directory and the permission mode. Switching
+mid-conversation uses the SDK's `setModel`; if the CLI refuses, the menu
+snaps back and the transcript says why. The header shows the model the
+session actually reported at start.
+
 ## @file
 
 Type `@` and a name anywhere in the composer and a menu lists matching

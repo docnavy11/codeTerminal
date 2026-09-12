@@ -54,12 +54,14 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
     next.attach(send, true);
     listFor();
     send({ kind: "mode", mode: next.mode });
+    send({ kind: "model", model: next.model });
     sendProject(next);
   };
 
   chat.attach(send, replay);
   listFor();
   send({ kind: "mode", mode: chat.mode });
+  send({ kind: "model", model: chat.model });
   sendProject(chat);
 
   ws.on("message", (raw) => {
@@ -120,6 +122,9 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): v
       case "mode":
         chat.setMode(msg.mode)
           .catch((e: unknown) => send({ kind: "error", message: String(e) }));
+        return;
+      case "model":
+        chat.setModel(msg.model).catch((e: unknown) => send({ kind: "error", message: String(e) }));
         return;
       case "interrupt":
         chat.session.interrupt().catch(() => {}); return;

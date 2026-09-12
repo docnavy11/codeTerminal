@@ -268,6 +268,21 @@ describe("LiveChat: the record", () => {
   });
 });
 
+describe("LiveChat.setModel", () => {
+  test("is saved with the chat and used when the session is rebuilt", async () => {
+    const { sdk, mgr } = fresh();
+    const c = mgr.create();
+    await c.setModel("claude-opus-5");
+    assert.equal(c.record.model, "claude-opus-5"); assert.equal(c.model, "claude-opus-5");
+    await c.setCwd(root);                                   // rebuilds the session
+    assert.equal(sdk.last.options.model, "claude-opus-5");
+    await c.setModel("claude-opus-5"); c.recordUser("x");
+    assert.equal(mgr.create(c).record.model, "claude-opus-5", "a new chat inherits the model");
+    await c.setModel("");
+    assert.equal(c.record.model, undefined);
+  });
+});
+
 describe("LiveChat: cwd, project, watches", () => {
   test("setCwd rebuilds the session in place; same path is a no-op; busy refuses", async () => {
     const { sdk, mgr, client } = fresh();

@@ -478,3 +478,18 @@ def test_at_file_completion_inserts_a_path(page, server):
     page.fill("#box", "mail me at x@example.com")
     time.sleep(0.4)
     assert not page.evaluate("() => document.getElementById('menu').classList.contains('open')"), "an email address is not a mention"
+
+
+def test_model_picker_lists_the_clis_models_and_sticks_per_chat(page, server):
+    open_ui(page, server)
+    wait(page, "() => document.querySelectorAll('#model option').length === 3", what="models from the CLI")
+    labels = page.evaluate("() => [...document.querySelectorAll('#model option')].map(o => o.textContent + '=' + o.value)")
+    assert labels == ["default=", "Opus 5=claude-opus-5", "Sonnet 5=claude-sonnet-5"], labels
+    page.select_option("#model", "claude-sonnet-5"); time.sleep(0.4)
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect")
+    wait(page, "() => document.querySelector('#model').value === 'claude-sonnet-5'", what="model restated on attach")
+    send(page, "on sonnet"); wait_reply(page, "You said: on sonnet")
+    page.click("#newchat"); wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="new chat")
+    wait(page, "() => document.querySelector('#model').value === 'claude-sonnet-5'", what="a new chat inherits the model, like cwd and mode")
+    page.select_option("#model", ""); time.sleep(0.3)
+    assert page.errors == []

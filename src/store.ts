@@ -9,6 +9,8 @@ export type ChatRecord = {
   createdAt: number;
   updatedAt: number;
   sdkSessionId: string | null;
+  /** Model this chat runs on; absent = the CLI's default. */
+  model?: string;
   /** Absolute path this chat works in. Null means the server default. */
   cwd: string | null;
   /** True while the title is just the opening message, awaiting a real one. */
