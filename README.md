@@ -801,6 +801,15 @@ edits its record on disk without waking it. Going through the pool for that
 spawned a subprocess per rename — measured — and evicted an idle chat to make
 room.
 
+**Search** in the picker (and on the manage page) matches titles first, then
+every transcript: what you said, what it replied, notes — with a snippet, and
+a click opens the chat scrolled to that message. Substring, case-insensitive,
+indexed per chat on first use and re-read only when the chat changes.
+
+**Export this chat as Markdown** (⋯ menu, and on the manage page) downloads
+the transcript — your messages, the replies, one line per tool call, the
+turn costs — as `<title>.md` (`GET /chats/:id/export.md`).
+
 **New chat** reuses an abandoned empty one rather than minting another: every
 click used to write a "New chat" record before a word was said, and the
 empties piled up in the picker. Clicking it while already on an unused chat

@@ -23,6 +23,7 @@ let retry = null;
 function el(cls, text) {
   const d = document.createElement("div");
   d.className = cls;
+  if (curIndex >= 0) d.dataset.i = String(curIndex);
   if (text !== undefined) d.textContent = text;
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
@@ -93,6 +94,7 @@ async function connect() {
     // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
     // was already on screen — measured: the transcript doubled each time.
     log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = ""; lastContext = null; paintContext();
+    startReplay();
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
     try {
@@ -114,7 +116,15 @@ async function connect() {
   };
 }
 
+/* Every replayed event is numbered as the server sends it, which is its index
+   in the chat record — the same index search results point at. `el()` stamps
+   the number on whatever the event renders, so a hit can be scrolled to. */
+let replaying = false, eventIndex = 0, curIndex = -1, pendingJump = null;
+function startReplay() { replaying = true; eventIndex = 0; curIndex = -1; }
+
 function handle(m) {
+  if (replaying) { curIndex = eventIndex++; if (m.kind === "replayed") replaying = false; }
+  else curIndex = -1;
   switch (m.kind) {
     case "ping":     break;                              // liveness only; lastSeen was stamped above
     case "commands": COMMANDS = m.commands ?? []; break;
@@ -135,8 +145,12 @@ function handle(m) {
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
-    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); break;
-    case "replayed": lastText = null; if (!log.querySelector(".msg")) welcome(); break;
+    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); break;
+    case "replayed":
+      lastText = null;
+      if (!log.querySelector(".msg")) welcome();
+      if (pendingJump) { jumpTo(pendingJump.i); pendingJump = null; }
+      break;
     case "user": {
       log.querySelector(".welcome")?.remove();
       el("msg user", m.text);
@@ -536,10 +550,11 @@ function renderChatList() {
 
   const shown = CHATS.filter((c) => !chatFilter ||
     c.title.toLowerCase().includes(chatFilter.toLowerCase()));
-  if (!shown.length) {
+  if (!shown.length && chatFilter.trim().length < 2) {
     clist.append(Object.assign(document.createElement("div"),
       { className: "empty", textContent: "Nothing matches." }));
   }
+  if (chatFilter.trim().length >= 2) scheduleSearch(chatFilter);
 
   for (const c of shown) {
     const row = document.createElement("div");
@@ -575,7 +590,62 @@ function renderChatList() {
   clist.classList.add("open");
 }
 
-const closeChats = () => { clist.classList.remove("open"); chatFilter = ""; };
+/* Full-text search of every transcript, under the title matches. Debounced;
+   a hit opens the chat and scrolls to the matching message. */
+let searchTimer = null, searchSeq = 0;
+function scheduleSearch(q) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    let hits = [];
+    try { hits = (await fjson(`/chats/search?q=${encodeURIComponent(q)}`)).hits; } catch { return; }
+    if (seq !== searchSeq || chatFilter !== q || !clist.classList.contains("open")) return;   // stale
+    clist.querySelector(".csearch")?.remove();
+    const box = document.createElement("div"); box.className = "csearch";
+    const withText = hits.filter((h) => h.matches.length);
+    const head = document.createElement("div"); head.className = "cshead";
+    head.textContent = withText.length ? `in transcripts — ${withText.length} chat${withText.length === 1 ? "" : "s"}` : "nothing in transcripts";
+    box.append(head);
+    for (const h of withText) {
+      for (const mt of h.matches) {
+        const row = document.createElement("div"); row.className = "c hit";
+        const t = document.createElement("span"); t.className = "ct"; t.textContent = h.title; t.title = h.title;
+        const s = document.createElement("span"); s.className = "cs"; s.textContent = mt.snippet;
+        row.append(t, s);
+        row.onclick = () => {
+          closeChats();
+          pendingJump = { id: h.id, i: mt.i };
+          if (h.id === ACTIVE) { jumpTo(mt.i); pendingJump = null; }
+          else ws?.send(JSON.stringify({ type: "open", id: h.id }));
+        };
+        box.append(row);
+      }
+    }
+    clist.append(box);
+  }, 250);
+}
+function jumpTo(i) {
+  const t = log.querySelector(`[data-i="${i}"]`);
+  if (!t) return;
+  t.scrollIntoView({ block: "center" });
+  t.classList.add("flash");
+  setTimeout(() => t.classList.remove("flash"), 2500);
+}
+
+/* Export the current chat as Markdown. Same-origin pages stream it as a
+   download; the extension fetches it into a blob like any other file. */
+async function exportChat() {
+  if (!ACTIVE) return;
+  const url = (await base()) + `/chats/${ACTIVE}/export.md`;
+  if (sameOrigin()) { const a = document.createElement("a"); a.href = url; a.download = ""; document.body.appendChild(a); a.click(); a.remove(); return; }
+  const r = await fetch(url);
+  if (!r.ok) return;
+  const name = (r.headers.get("content-disposition") ?? "").match(/filename="([^"]+)"/)?.[1] ?? "chat.md";
+  saveBlob(await r.blob(), name);
+}
+$("export").onclick = exportChat;
+
+const closeChats = () => { clist.classList.remove("open"); chatFilter = ""; clearTimeout(searchTimer); };
 
 $("chatsbtn").onclick = (e) => {
   e.stopPropagation();

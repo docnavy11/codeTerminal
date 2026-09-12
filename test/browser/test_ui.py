@@ -283,3 +283,29 @@ def test_stop_reason_and_context_meter(page, server):
     assert page.text_content("#ctx") == "ctx 40%"
     page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect")
     wait(page, "() => (document.querySelector('#ctx')?.textContent || '') === 'ctx 40%'", what="meter restored from the replay")
+
+
+def test_search_jumps_to_the_message_in_another_chat(page, server):
+    open_ui(page, server)
+    for i in range(3): send(page, f"filler message {i}"); wait_reply(page, f"You said: filler message {i}")
+    send(page, "the platypus is a monotreme"); wait_reply(page, "You said: the platypus")
+    page.click("#newchat"); wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="new chat")
+    page.click("#chatsbtn"); page.wait_for_selector("#clist .cfind input", timeout=5000)
+    page.fill("#clist .cfind input", "platypus")
+    page.wait_for_selector("#clist .c.hit", timeout=5000)
+    assert "platypus" in page.text_content("#clist .c.hit .cs")
+    page.click("#clist .c.hit")
+    wait(page, "() => !!document.querySelector('#log .flash') && document.querySelector('#log .flash').textContent.includes('platypus')", what="jumped and flashed the hit")
+    assert page.evaluate("() => document.querySelector('#log .flash').dataset.i") is not None
+
+
+def test_export_downloads_markdown(page, server):
+    open_ui(page, server)
+    send(page, "export me please"); wait_reply(page, "You said: export me please")
+    page.click("#more")
+    with page.expect_download(timeout=10000) as dl:
+        page.click("#export")
+    d = dl.value; path = os.path.join(server.root, "export.md"); d.save_as(path)
+    md = open(path).read()
+    assert d.suggested_filename == "export-me-please.md"
+    assert md.startswith("# export me please") and "You said: export me please" in md

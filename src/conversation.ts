@@ -5,6 +5,7 @@ import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { Session, type ClientEvent, type SessionDeps } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
 import { generateTitle } from "./titles.js";
+import { ChatSearch } from "./search.js";
 import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project } from "./projects.js";
 
 const MAX_EVENTS = 3000;
@@ -324,6 +325,13 @@ export class Manager {
   }
 
   list(): ChatSummary[] { return this.#store.list(); }
+
+  #search: ChatSearch | null = null;
+  /** Full-text search across chats; live chats are searched from memory. */
+  search(query: string): ReturnType<ChatSearch["search"]> {
+    this.#search ??= new ChatSearch(this.#store);
+    return this.#search.search(query, { live: (id) => this.#chats.get(id)?.record });
+  }
   read(id: string): ChatRecord | null {
     return this.#chats.get(id)?.record ?? this.#read(id);
   }
@@ -479,6 +487,7 @@ export class Manager {
     const live = this.#chats.get(id);
     if (live) { live.close(); this.#chats.delete(id); }
     try { this.#store.remove(id); } catch { return; }   // not a uuid: nothing to remove
+    this.#search?.forget(id);
     this.onChatRemoved?.(id);
     this.onListChanged?.();
   }

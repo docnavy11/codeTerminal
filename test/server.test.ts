@@ -113,6 +113,27 @@ describe("/setup", () => {
   });
 });
 
+describe("/chats/search and export", () => {
+  test("search finds text across chats; short queries are 400; export is a Markdown attachment", async () => {
+    const c = s.running.convo.create(); c.recordUser("where is the kraken hiding?");
+    const r = await s.json("/chats/search?q=KRAKEN");
+    assert.equal(r.status, 200);
+    const hits = r.body!.hits as { id: string; matches: { kind: string; i: number }[] }[];
+    assert.ok(hits.some((h) => h.id === c.id && h.matches[0].kind === "user"), "a live, unsaved message is found");
+    assert.equal((await s.json("/chats/search?q=k")).status, 400);
+    assert.equal((await s.json("/chats/search")).status, 400);
+    const e = await s.req(`/chats/${c.id}/export.md`);
+    assert.equal(e.status, 200);
+    assert.match(e.headers.get("content-type") ?? "", /text\/markdown/);
+    assert.match(e.headers.get("content-disposition") ?? "", /attachment; filename="where-is-the-kraken-hiding\.md"/);
+    const md = await e.text();
+    assert.ok(md.startsWith("# where is the kraken hiding?\n"));
+    assert.ok(md.includes("**You**\n\nwhere is the kraken hiding?"));
+    assert.equal((await s.req("/chats/aaaaaaaa-0000-0000-0000-00000000dead/export.md")).status, 404);
+    assert.equal((await s.req("/chats/search", { headers: { "sec-fetch-site": "cross-site" } })).status, 403);
+  });
+});
+
 describe("/usage and /prompts", () => {
   test("usage records valid control names only", async () => {
     assert.equal((await s.post("/usage", { control: "newchat" })).body!.ok, true);

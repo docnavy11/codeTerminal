@@ -44,8 +44,8 @@ function renderChats() {
   host.replaceChildren();
 
   const bar = el("div", "bar");
-  const q = Object.assign(el("input"), { type: "search", placeholder: "Search titles…", value: chatState.q });
-  q.oninput = () => { chatState.q = q.value; renderChats(); q.focus(); };
+  const q = Object.assign(el("input"), { type: "search", placeholder: "Search titles and transcripts…", value: chatState.q });
+  q.oninput = () => { chatState.q = q.value; renderChats(); q.focus(); scheduleTranscriptSearch(); };
   const proj = el("select");
   proj.append(new Option("All projects", ""));
   for (const p of chatState.projects) proj.append(new Option(p.name, p.id));
@@ -62,7 +62,8 @@ function renderChats() {
   bar.append(el("span", "count", `${shown.length} of ${chatState.chats.length}`));
   host.append(bar);
 
-  if (!shown.length) { host.append(el("div", "empty", "Nothing matches.")); return; }
+  const found = el("div", "found"); found.id = "found"; host.append(found);
+  if (!shown.length) { host.append(el("div", "empty", chatState.q.trim().length >= 2 ? "No titles match." : "Nothing matches.")); return; }
 
   for (const c of shown) {
     const row = el("div", "row" + (c.id === chatState.active ? " active" : ""));
@@ -122,6 +123,31 @@ const summarise = (input) => {
   return JSON.stringify(input).slice(0, 100);
 };
 
+/* Transcript hits, under the title list, from /chats/search (debounced). */
+let tsTimer = null;
+function scheduleTranscriptSearch() {
+  clearTimeout(tsTimer);
+  const q = chatState.q.trim();
+  if (q.length < 2) return;
+  tsTimer = setTimeout(async () => {
+    let hits;
+    try { hits = (await api(`/chats/search?q=${encodeURIComponent(q)}`)).hits.filter((h) => h.matches.length); } catch { return; }
+    const found = $("found"); if (!found || chatState.q.trim() !== q) return;
+    found.replaceChildren();
+    if (!hits.length) return;
+    found.append(el("div", "hint", `in transcripts — ${hits.length} chat${hits.length === 1 ? "" : "s"}`));
+    for (const h of hits) {
+      const row = el("div", "row");
+      const main = el("div", "main");
+      main.append(el("div", "title", h.title));
+      for (const m of h.matches) main.append(el("div", "meta", `${m.kind === "user" ? "you" : m.kind === "text" ? "claude" : "note"}: ${m.snippet}`));
+      row.append(main);
+      const view = el("button", "", "view"); view.onclick = () => showChat(h.id);
+      row.append(view); found.append(row);
+    }
+  }, 250);
+}
+
 async function showChat(id) {
   const host = $("chats");
   host.replaceChildren();
@@ -141,7 +167,9 @@ async function showChat(id) {
       location.href = "/";
     } catch (e) { show(e.message); }
   };
-  hd.append(back, open, el("span", "who",
+  const exp = el("button", "", "export .md");
+  exp.onclick = () => { const a = document.createElement("a"); a.href = `/chats/${id}/export.md`; a.download = ""; document.body.appendChild(a); a.click(); a.remove(); };
+  hd.append(back, open, exp, el("span", "who",
     `${rec.events.filter((e) => e.kind === "user").length} turns · ${rec.project ?? "general"}${rec.cwd ? ` · ${rec.cwd}` : ""}`));
   wrap.append(hd, el("h2", "", rec.title));
 

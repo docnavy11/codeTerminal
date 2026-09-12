@@ -298,6 +298,12 @@
                         padding:3px 6px; font:inherit; font-size:0.75rem; }
   #clist .c { padding:5px 8px; cursor:pointer; display:flex; gap:6px; align-items:baseline; }
   #clist .c:hover { background:var(--btn); }
+  #clist .csearch { border-top:1px solid var(--line); }
+  #clist .cshead { color:var(--dim); font-size:0.75rem; padding:5px 8px 2px; text-transform:uppercase; letter-spacing:0.04em; }
+  #clist .c.hit { flex-direction:column; align-items:stretch; gap:1px; }
+  #clist .c.hit .cs { color:var(--dim); font-size:0.792rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #log .flash { animation: ct-flash 2.5s ease-out; }
+  @keyframes ct-flash { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
   #clist .c.on { border-left:2px solid var(--accent); }
   #clist .c .ct { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #clist .c .cw { color:var(--dim); font-size:0.667rem; flex-shrink:0; }

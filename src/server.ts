@@ -20,6 +20,7 @@ import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
 import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
 import { buildSetup } from "./setup.js";
+import { toMarkdown, exportFilename } from "./export.js";
 import { readFileSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -286,6 +287,23 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
    */
   app.get("/chats", guard, (_req, res) => {
     res.json({ projects: convo.projects(), chats: convo.list() });
+  });
+
+  /** Full-text search. Declared before /chats/:id so "search" is not an id. */
+  app.get("/chats/search", guard, (req, res) => {
+    const q = typeof req.query.q === "string" ? req.query.q : "";
+    if (q.trim().length < 2) { res.status(400).json({ error: "q must be at least 2 characters" }); return; }
+    res.json({ q, hits: convo.search(q) });
+  });
+
+  /** The transcript as Markdown, for pasting elsewhere or keeping. */
+  app.get("/chats/:id/export.md", guard, (req, res) => {
+    const rec = convo.read(String(req.params.id));
+    if (!rec) { res.status(404).json({ error: "no such chat" }); return; }
+    const project = rec.project ? convo.projects().find((p) => p.id === rec.project)?.name : undefined;
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${exportFilename(rec)}"`);
+    res.send(toMarkdown(rec, project));
   });
 
   /** One chat's transcript, so the manage page is not renaming things blind. */
