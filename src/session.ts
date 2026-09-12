@@ -3,6 +3,7 @@ import { Pushable, deferred } from "./pushable.js";
 import { browserTools, terminalTools, watchTools, promptTools } from "./tools.js";
 import { composePrompt } from "./prompt.js";
 import { summariseResult } from "./results.js";
+import { previewDiff } from "./diff.js";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
 import type { WatchRegistry } from "./watches.js";
@@ -237,8 +238,20 @@ export class Session {
       return promise;
     }
 
-    this.#emit({ kind: "approval", id, tool, input, canAlways: sugg.length > 0 });
-    this.#pushStatus();
+    // For an Edit/Write the card shows the change itself. The file read is
+    // async; the card waits for it (bounded), and is not shown at all if the
+    // SDK withdrew the request meanwhile.
+    const emitCard = (diff: Awaited<ReturnType<typeof previewDiff>>) => {
+      if (!this.#pending.has(id)) return;
+      this.#emit({ kind: "approval", id, tool, input, canAlways: sugg.length > 0, ...(diff ? { diff } : {}) });
+      this.#pushStatus();
+    };
+    if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
+      void Promise.race([
+        previewDiff(tool, input, this.#workspace).catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), 1500)),
+      ]).then(emitCard);
+    } else emitCard(null);
     return promise;
   };
 

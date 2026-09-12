@@ -249,6 +249,18 @@
   .card { border:1px solid var(--line); border-left:3px solid var(--warn);
           border-radius:9px; padding:10px 11px; background:var(--card); }
   .card h4 { margin:0 0 8px; font-size:0.875rem; font-weight:600; color:var(--warn); }
+  .card .diff { margin:0 0 10px; border:1px solid var(--line); border-radius:6px; background:var(--code); overflow:hidden; }
+  .card .diff .dh { display:flex; gap:8px; align-items:baseline; padding:5px 9px; border-bottom:1px solid var(--line); font-size:0.792rem; }
+  .card .diff .dp { font-family:var(--mono); color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1; }
+  .card .diff .dk { color:var(--dim); }
+  .card .diff .dc .add { color:var(--ok); } .card .diff .dc .del { color:var(--bad); }
+  .card .diff .dn { padding:6px 9px; color:var(--warn); font-size:0.792rem; }
+  .card .diff pre.dl { margin:0; padding:6px 0; max-height:260px; overflow:auto; font-size:0.792rem; white-space:pre; border:0; border-radius:0; background:none; }
+  .card .diff .l { display:block; padding:0 9px; white-space:pre-wrap; word-break:break-word; }
+  .card .diff .l.ctx { color:var(--dim); }
+  .card .diff .l.add { color:var(--ok); background:color-mix(in srgb, var(--ok) 12%, transparent); }
+  .card .diff .l.del { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, transparent); }
+  .card .diff .l.hunk { color:var(--dim); font-style:italic; opacity:0.8; }
   .card pre { margin:0 0 10px; padding:8px 9px; background:var(--code);
               border:1px solid var(--line); border-radius:6px;
               max-height:170px; overflow-y:auto; overflow-x:hidden;

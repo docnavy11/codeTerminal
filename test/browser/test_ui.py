@@ -343,3 +343,17 @@ def test_turn_rollup_in_the_status_bar(page, server):
     assert page.text_content("#statustext") == "thinking · 5 tools · 4 screenshots"
     page.evaluate("() => applyStatus({kind:'status', state:'tool', detail:'Read', tokens:0})")
     assert page.text_content("#statustext") == "running Read · 5 tools · 4 screenshots"
+
+
+def test_edit_approval_shows_a_diff(page, server):
+    open_ui(page, server)
+    send(page, "edit-me")
+    page.wait_for_selector(".card[data-tool=Edit] .diff", timeout=10000)
+    d = page.evaluate("""() => { const c = document.querySelector('.card[data-tool=Edit] .diff'); return {
+        path: c.querySelector('.dp').textContent, kind: c.querySelector('.dk').textContent, counts: c.querySelector('.dc').textContent,
+        lines: [...c.querySelectorAll('.l')].map(l => l.className.replace('l ', '') + ':' + l.textContent.trim()) }; }""")
+    assert d["path"] == "notes.txt" and d["kind"] == "edit" and d["counts"] == "+2 −1", d
+    assert "del:- two" in d["lines"] and "add:+ TWO" in d["lines"] and "add:+ and a half" in d["lines"] and "ctx:one" in d["lines"], d
+    assert page.locator(".card[data-tool=Edit] pre:not(.dl)").count() == 0, "no raw JSON when there is a diff"
+    page.click(".card[data-tool=Edit] button[data-decision=allow]")
+    wait_reply(page, "decision: allow")

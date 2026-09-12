@@ -894,6 +894,18 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## The change, before you approve it
+
+An Edit or Write approval card shows the diff, not the tool's JSON: the
+path, `+a −b`, three lines of context, removed lines red, added lines
+green, a `line N` marker per hunk. It is computed on the server from the
+current file and the proposed change (`src/diff.ts`) *before* you decide —
+so "old_string not found — the edit would fail", "the file does not exist"
+and "rewrites the whole file (3000 → 1 lines)" are things you read on the
+card, not discover afterwards. Reading the file is bounded to 1.5 s; if it
+cannot be read the card falls back to the raw input. A request the SDK
+withdraws while the file is being read never shows a card.
+
 ## What each tool returned
 
 Every tool call is one row — `→ Bash  grep -c purchase "$f"` — and the row

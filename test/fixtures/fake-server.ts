@@ -14,6 +14,7 @@ const ROOT = process.env.ROOT!; const PORT = Number(process.env.PORT);
 for (const d of ["ws", "chats", "files", "projects/p1", "home"]) mkdirSync(join(ROOT, d), { recursive: true });
 writeFileSync(join(ROOT, "files", "hello.txt"), "hello from the fixture\n");
 writeFileSync(join(ROOT, "files", "note.txt"), "note\n");
+writeFileSync(join(ROOT, "ws", "notes.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
 writeFileSync(join(ROOT, "files", "blob.txt"), "x".repeat(300_000));
 writeFileSync(join(ROOT, "files", "huge.bin"), Buffer.alloc(5 * 1024 * 1024));   // over the fixture's 4 MB zip cap
 
@@ -44,6 +45,10 @@ const sdk = fakeSdk({ onUser: (m, q) => {
     q.toolUse("t3", "Bash", { command: "grep -c purchase missing.txt" });
     q.toolResult("t3", "grep: missing.txt: No such file or directory\nExit code 2", { is_error: true, structured: { stdout: "", stderr: "grep: missing.txt: No such file or directory", interrupted: false } });
     q.text("Two files changed; the grep target is missing."); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) });
+    return;
+  }
+  if (content.includes("edit-me")) {
+    q.ask("Edit", { file_path: join(ROOT, "ws", "notes.txt"), old_string: "two", new_string: "TWO\nand a half" }).promise.then((r) => { q.text(`decision: ${r.behavior}`); q.result(); });
     return;
   }
   if (content.includes("ask-me")) {

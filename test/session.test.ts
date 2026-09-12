@@ -251,10 +251,10 @@ describe("the approval gate", () => {
   });
 
   test("deny tells the model not to retry", async () => {
-    const { promise } = m.q.ask("Write");
+    const { promise } = m.q.ask("WebFetch");   // not Edit/Write: those cards wait for the file read
     m.s.decide(m.last("approval")!.id, "deny");
     const r = await promise as { behavior: string; message: string };
-    assert.equal(r.behavior, "deny"); assert.match(r.message, /denied Write/);
+    assert.equal(r.behavior, "deny"); assert.match(r.message, /denied WebFetch/);
   });
 
   test("no 'always' when the SDK offered no suggestions", () => {
@@ -289,7 +289,7 @@ describe("the approval gate", () => {
   });
 
   test("several pending: the status counts them", () => {
-    m.q.ask("Bash"); m.q.ask("Write");
+    m.q.ask("Bash"); m.q.ask("WebFetch");
     assert.equal(m.statuses().at(-1), "awaiting:2 things");
   });
 
@@ -304,6 +304,25 @@ describe("the approval gate", () => {
     const r = await promise as { behavior: string; updatedInput: { answers: unknown; questions: unknown } };
     assert.equal(r.behavior, "allow"); assert.deepEqual(r.updatedInput.answers, { "Which?": "A" }); assert.deepEqual(r.updatedInput.questions, questions);
     assert.equal(m.last("approval_closed")!.decision, "allow");
+  });
+
+  test("an Edit approval carries the diff; a withdrawn request never shows a card", async () => {
+    const { mkdtemp, writeFile } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "ct-sess-diff-")); await writeFile(join(dir, "f.txt"), "a\nb\nc\n");
+    const sdk = fakeSdk(); const events: ClientEvent[] = [];
+    const s = new Session(dir, (e) => events.push(e), { chatId: "c", bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start();
+    const { promise } = sdk.last.ask("Edit", { file_path: join(dir, "f.txt"), old_string: "b", new_string: "B" });
+    await new Promise((r) => setTimeout(r, 50));
+    const card = events.find((e) => e.kind === "approval") as Extract<ClientEvent, { kind: "approval" }>;
+    assert.ok(card, "the card arrives once the file was read");
+    assert.equal(card.diff!.path, "f.txt"); assert.equal(card.diff!.adds, 1); assert.equal(card.diff!.dels, 1);
+    s.decide(card.id, "allow"); await promise;
+    // withdrawn before the read finished: no card
+    const w = sdk.last.ask("Write", { file_path: join(dir, "g.txt"), content: "x" }); w.abort();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(events.filter((e) => e.kind === "approval").length, 1);
+    s.close(); await done;
   });
 
   test("answer() on a plain approval, or an unknown id, is refused", () => {

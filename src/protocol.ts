@@ -35,7 +35,9 @@ export type ClientEvent =
   /** What a tool returned: one line for the row, the body behind it (capped). Joined to "tool" by id. */
   | { kind: "tool_result"; id: string; name: string; ok: boolean; summary: string; text: string; bytes: number; truncated: boolean;
       interrupted?: boolean; parent?: string | null }
-  | { kind: "approval"; id: string; tool: string; input: unknown; canAlways: boolean }
+  /** diff: what an Edit/Write would do, computed before you decide; absent for other tools or when the file could not be read. */
+  | { kind: "approval"; id: string; tool: string; input: unknown; canAlways: boolean;
+      diff?: { path: string; kind: "edit" | "write" | "create"; lines: { t: " " | "+" | "-" | "@"; s: string }[]; adds: number; dels: number; truncated: boolean; note?: string } | null }
   | { kind: "approval_closed"; id: string; decision: "allow" | "always" | "deny" | "gone" }
   | { kind: "mode"; mode: PermissionMode }
   | { kind: "commands"; commands: SlashCommand[] }

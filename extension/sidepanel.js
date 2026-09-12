@@ -342,8 +342,8 @@ function renderApproval(m) {
   const card = el("card");
   card.dataset.approval = m.id; card.dataset.tool = m.tool;
   const h = document.createElement("h4"); h.textContent = `Approve ${m.tool}?`;
-  const pre = document.createElement("pre");
-  pre.textContent = typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
+  const pre = m.diff ? renderDiff(m.diff) : document.createElement("pre");
+  if (!m.diff) pre.textContent = typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
   const row = document.createElement("div");
   row.className = "row";
   const choices = [["Approve", "allow", "allow"], ["Deny", "deny", "deny"]];
@@ -362,6 +362,34 @@ function renderApproval(m) {
   }
   card.append(h, pre, row);
   log.scrollTop = log.scrollHeight;
+}
+
+/* The change an Edit/Write would make, as a diff: path and +/− counts on
+   top, then the lines — context dim, removed red, added green, with a "line
+   N" marker at each hunk. A note replaces the lines when there is no diff to
+   show (file missing, old_string not found, too large). */
+function renderDiff(d) {
+  const box = document.createElement("div"); box.className = "diff";
+  const head = document.createElement("div"); head.className = "dh";
+  const p = document.createElement("span"); p.className = "dp"; p.textContent = d.path;
+  const k = document.createElement("span"); k.className = "dk";
+  k.textContent = d.kind === "create" ? "new file" : d.kind === "write" ? "rewrite" : "edit";
+  const c = document.createElement("span"); c.className = "dc";
+  c.append(Object.assign(document.createElement("span"), { className: "add", textContent: `+${d.adds}` }), " ",
+           Object.assign(document.createElement("span"), { className: "del", textContent: `−${d.dels}` }));
+  head.append(p, k, c); box.append(head);
+  if (d.note) { const n = document.createElement("div"); n.className = "dn"; n.textContent = d.note; box.append(n); }
+  if (d.lines.length) {
+    const pre = document.createElement("pre"); pre.className = "dl";
+    for (const l of d.lines) {
+      const row = document.createElement("span"); row.className = "l " + ({ "+": "add", "-": "del", "@": "hunk" }[l.t] ?? "ctx");
+      row.textContent = (l.t === "@" ? "… " : l.t + " ") + l.s + "\n";
+      pre.append(row);
+    }
+    if (d.truncated) pre.append(Object.assign(document.createElement("span"), { className: "l hunk", textContent: "… diff truncated\n" }));
+    box.append(pre);
+  }
+  return box;
 }
 
 function renderQuestion(m) {

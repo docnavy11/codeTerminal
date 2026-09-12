@@ -5,7 +5,7 @@ Ranked by how often it would matter in a day's use. Status: ☐ open, ◐ design
 | # | gap | today | status |
 |---|-----|-------|--------|
 | 1 | **Tool results.** The TUI shows what each tool returned (Bash output, the file read, grep hits). | Every tool row ends with what it returned; click to open the body; errors open themselves; the status bar counts the turn's tools. | ☑ [docs/design-tool-results.md](docs/design-tool-results.md) |
-| 2 | **Diffs for Edit/Write**, shown before approval. | The approval card prints the raw JSON input (`old_string`/`new_string`). | ☐ |
+| 2 | **Diffs for Edit/Write**, shown before approval. | The card shows the change in place: path, `+a −b`, context, removed and added lines; notes when the file is missing or `old_string` is not found. | ☑ |
 | 3 | **Thinking text**, streamed. | `thinking · 251` — a token count. The SDK's `thinking_delta` events are dropped. | ☐ |
 | 4 | **Images in the prompt** (paste a screenshot). | Text only. The SDK accepts image blocks on the user message. | ☐ |
 | 5 | **Plan mode presentation** — `ExitPlanMode` shows the plan and asks. | A generic approval card with JSON. | ☐ |
