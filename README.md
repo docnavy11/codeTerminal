@@ -897,7 +897,7 @@ where it used to be dropped silently.
 ## Subagents and the task list
 
 When the agent delegates to a subagent (the `Agent` tool), the call gets a
-task line beneath it — `⧉ running · 3 tool uses · 42s · Grep` while it
+task line beneath it — `↳ agent · running · 3 tool uses · 42s · Grep` while it
 works, then `completed · 3 tool uses · 4s · <first line of its report>`
 (or failed / stopped), the full report a click away. The subagent's own
 tool calls and words are nested under that row, collapsed with a count

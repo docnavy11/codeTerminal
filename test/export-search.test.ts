@@ -31,7 +31,7 @@ describe("toMarkdown", () => {
     ]), "Project One");
     assert.match(md, /^# My chat\n\n_2023-11-14 22:13 · Project One · \/w_\n/);
     assert.ok(md.includes("**You**\n\nhello\nthere\n\n> ⌁ active tab: T — https://t\n"));
-    assert.ok(md.includes("- → `Bash` `ls -la`\n- → `Read` `/x/y.ts`\n- → `mcp__browser__eval` `{\"code\":\"a'b'\"}`\n  - ✗ ReferenceError\n  - ⧉ completed · 4 tool uses — All found."));
+    assert.ok(md.includes("- → `Bash` `ls -la`\n- → `Read` `/x/y.ts`\n- → `mcp__browser__eval` `{\"code\":\"a'b'\"}`\n  - ✗ ReferenceError\n  - ↳ agent completed · 4 tool uses — All found."));
     assert.ok(md.includes("> 💭 first thought\n> second thought\n\nHere **you** go."));
     assert.ok(md.includes("> Working directory is now /w"));
     assert.ok(md.includes("> ⚠ boom"));

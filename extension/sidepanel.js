@@ -339,7 +339,7 @@ function taskLine(m) {
   line = document.createElement("div"); line.className = "task";
   const st = document.createElement("span"); st.className = "ts";
   const tx = document.createElement("span"); tx.className = "tx";
-  line.append("⧉ ", st, " ", tx);
+  line.append("↳ agent · ", st, " ", tx);
   const row = m.toolUseId ? toolRows.get(m.toolUseId) : null;
   if (row) row.append(line); else { if (curIndex >= 0) line.dataset.i = String(curIndex); log.append(line); }
   tasks.set(m.id, line);
@@ -424,8 +424,9 @@ function toolResult(m) {
 
 function summarize(input) {
   if (!input || typeof input !== "object") return "";
-  if (typeof input.command === "string") return input.command;
-  if (typeof input.file_path === "string") return input.file_path;
+  for (const k of ["command", "file_path", "description", "pattern", "path", "url", "query"]) {
+    if (typeof input[k] === "string" && input[k]) return input[k];
+  }
   return JSON.stringify(input).slice(0, 100);
 }
 

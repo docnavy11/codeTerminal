@@ -28,7 +28,7 @@ export function toMarkdown(rec: ChatRecord, projectName?: string): string {
         out.push(`- → \`${e.name}\` ${toolSummary(e.input)}`);
         break;
       case "task":
-        if (e.state !== "running") out.push(`  - ⧉ ${e.state}${e.toolUses ? ` · ${e.toolUses} tool uses` : ""}${e.summary ? ` — ${e.summary.split("\n")[0]}` : ""}`);
+        if (e.state !== "running") out.push(`  - ↳ agent ${e.state}${e.toolUses ? ` · ${e.toolUses} tool uses` : ""}${e.summary ? ` — ${e.summary.split("\n")[0]}` : ""}`);
         break;
       case "tool_result":
         out.push(`  - ${e.ok ? "" : "✗ "}${e.summary.replace(/^✗ /, "")}`);
