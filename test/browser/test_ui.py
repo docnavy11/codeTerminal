@@ -510,3 +510,18 @@ def test_rewind_previews_then_restores(page, server):
     wait(page, "() => [...document.querySelectorAll('#log .local')].some(l => l.textContent.includes('Rewound 2 files to before'))", what="the note")
     assert page.locator("#log .msg.user .rwcard").count() == 0
     assert page.errors == []
+
+
+def test_a_chat_keeps_running_while_you_are_on_another_and_shows_the_answer_on_return(page, server):
+    open_ui(page, server)
+    long = "please echo " + " ".join(f"w{i}" for i in range(50))     # ~50 deltas at 30 ms each: a turn of ~1.5 s
+    send(page, long)
+    wait(page, "() => document.querySelectorAll('.msg.user').length === 1", what="sent")
+    page.click("#newchat")                                              # switch away while it is still streaming
+    wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="on the new chat")
+    time.sleep(2.5)                                                      # the original finishes in the background
+    page.click("#chatsbtn"); page.wait_for_selector("#clist .c", timeout=5000)
+    page.click("#clist .c:has(.ct:text-is('" + long[:64] + "'))") if len(long) <= 64 else page.click("#clist .c:not(.on) >> nth=0")
+    wait(page, "() => [...document.querySelectorAll('#log .msg.md')].some(m => m.textContent.includes('You said: please echo') && m.textContent.includes('w49'))", what="the full answer, finished while away")
+    assert page.locator("#log .end").count() == 1, "turn ended in the background"
+    assert page.text_content("#statustext") == "ready"
