@@ -894,6 +894,17 @@ restart, sleep or wifi blip doubled the transcript. A prompt typed while the
 socket is down is queued and sent on reconnect (the status shows how many),
 where it used to be dropped silently.
 
+## Images in the prompt
+
+Paste a screenshot (Ctrl/Cmd+V), drop an image on the composer or the
+transcript, or use the paperclip — up to four per message. The browser
+downscales each to the API's recommended 1568 px long side (PNG stays PNG,
+photos become JPEG) and makes a 160 px thumbnail; the full image goes to
+the model as an image block ahead of your words, the thumbnail is what the
+chat keeps and shows under your message. A message can be an image alone.
+The server refuses a prompt whose images are malformed rather than
+stripping them; accepted types are PNG, JPEG, GIF and WebP.
+
 ## Thinking
 
 When the model's thinking carries text, it shows as a dim, collapsed block
