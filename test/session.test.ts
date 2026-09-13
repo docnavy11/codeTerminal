@@ -408,6 +408,27 @@ describe("Session rewind", () => {
   });
 });
 
+describe("MCP server status at session start", () => {
+  test("a server that did not connect is logged, shown in the transcript, and carried on ready; all-connected is silent", async () => {
+    const sdk = fakeSdk(); const events: ClientEvent[] = []; const warned: string[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge: null, getShell: () => null, prompts: null, watches: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, warn: (l) => warned.push(l) });
+    const done = s.start(); await settle(3);
+    sdk.last.init("sid", { mcp_servers: [{ name: "browser", status: "failed" }, { name: "files", status: "connected" }] }); await settle(3);
+    const ready = events.find((e) => e.kind === "ready") as Extract<ClientEvent, { kind: "ready" }>;
+    assert.deepEqual(ready.servers, [{ name: "browser", status: "failed" }, { name: "files", status: "connected" }]);
+    assert.equal(warned.length, 1); assert.match(warned[0], /MCP server not connected: browser \(failed\)/);
+    const note = events.find((e) => e.kind === "local") as Extract<ClientEvent, { kind: "local" }>;
+    assert.match(note.text, /Tool server not connected: browser \(failed\)/);
+    s.close(); await done.catch(() => {});
+    const sdk2 = fakeSdk(); const events2: ClientEvent[] = []; const warned2: string[] = [];
+    const s2 = new Session("/w", (e) => events2.push(e), { chatId: "c", bridge: null, getShell: () => null, prompts: null, watches: null, prefer: () => undefined, spawnQuery: sdk2.spawnQuery, warn: (l) => warned2.push(l) });
+    const done2 = s2.start(); await settle(3);
+    sdk2.last.init("sid", { mcp_servers: [{ name: "browser", status: "connected" }] }); await settle(3);
+    assert.equal(warned2.length, 0); assert.ok(!events2.some((e) => e.kind === "local"));
+    s2.close(); await done2.catch(() => {});
+  });
+});
+
 describe("confirm before submit through the session", () => {
   test("the card carries the form; Submit lets the click through, Stop fails it; the status says a form submit is waiting", async () => {
     const { BrowserBridge } = await import("../src/browser.js");

@@ -132,7 +132,11 @@ not catch it because they call handlers straight from the registry. Found
 by bisecting `src/tools.ts` per commit with a real MCP client (`Client` +
 `InMemoryTransport`): 5ef927b lists 21 tools, 9d1fc91 fails. Fixed with
 `z.any()` for the step args (handlers validate), and a test now lists every
-in-process server's tools the way a session does.
+in-process server's tools the way a session does. Since then the session
+also reads the CLI's `mcp_servers` statuses from its init message: a server
+that is not "connected" is logged (`[session] MCP server not connected: …`),
+noted in the transcript, and shown as a failing **Tool servers** check on
+`/setup`; the opt-in real-SDK suite asserts every server connected.
 
 ## Upload (#15) and a finding about page errors, 2026-09-13
 

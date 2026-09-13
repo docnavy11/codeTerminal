@@ -28,7 +28,8 @@ export type AskQuestion = {
 
 /** Server → client. One flat, discriminated shape. */
 export type ClientEvent =
-  | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean }
+  /** servers: the in-process MCP servers and what the CLI made of them ("connected" is the only good status). */
+  | { kind: "ready"; sessionId: string; model: string; workspace: string; canBypass: boolean; servers?: { name: string; status: string }[] }
   /** images: what the user attached — thumbnails only, for the transcript; the full images went to the model. */
   /** uuid: the id the SDK knows this message by — the rewind target for the files changed after it. */
   | { kind: "user"; text: string; context?: string; images?: { media_type: string; thumb: string }[]; uuid?: string }

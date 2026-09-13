@@ -200,7 +200,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     cfg.chatsDir,
     cfg.projectsRoot,
     // prefer is replaced per-chat by LiveChat, which knows its own browser.
-    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false,
+    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false, warn,
       ...(cfg.spawnQuery ? { spawnQuery: cfg.spawnQuery } : {}),
       ...(cfg.titler ? { titler: cfg.titler } : {}) },
   );
@@ -377,6 +377,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       chats: convo.list().length, home: cfg.home, workspace: WORKSPACE, filesRoot: FILES_ROOT, projectsRoot: cfg.projectsRoot,
       bypassAllowed: ALLOW_BYPASS, systemd: cfg.systemd ?? Boolean(process.env.INVOCATION_ID),
       browserSites: browserAllow ? browserAllow.all().length : null,
+      mcpServers: convo.mcpServers,
     }));
   });
 

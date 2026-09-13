@@ -69,6 +69,8 @@ export type SessionDeps = {
   browserAllow?: BrowserAllowlist | null;
   /** Confirm-before-submit cards (default on; CODETERM_CONFIRM_SUBMIT=0 turns them off). */
   confirmSubmit?: boolean;
+  /** Server log line for things a person should see in the journal. */
+  warn?: (line: string) => void;
   /** The browsable root; files under it can be offered as downloads. */
   filesRoot?: string;
   /** The SDK entry point. Tests inject a scripted one; production leaves it unset. */
@@ -527,7 +529,17 @@ export class Session {
           for (const c of (msg as { terminal_slash_commands?: string[] }).terminal_slash_commands ?? []) {
             this.#hidden.add(c);
           }
-          this.#emit({ kind: "ready", sessionId: msg.session_id, model: msg.model, workspace: this.#workspace, canBypass: ALLOW_BYPASS });
+          // Every in-process MCP server must come up "connected"; one that
+          // failed (a tool schema the CLI cannot convert, 2026-09-13) silently
+          // takes all its tools away from every session. Say so, loudly.
+          const servers = (msg as { mcp_servers?: { name: string; status: string }[] }).mcp_servers ?? [];
+          const failed = servers.filter((s) => s.status !== "connected");
+          this.#emit({ kind: "ready", sessionId: msg.session_id, model: msg.model, workspace: this.#workspace, canBypass: ALLOW_BYPASS, servers });
+          if (failed.length) {
+            const what = failed.map((s) => `${s.name} (${s.status})`).join(", ");
+            this.#deps.warn?.(`[session] MCP server${failed.length > 1 ? "s" : ""} not connected: ${what} — its tools are missing from this session`);
+            this.#emit({ kind: "local", text: `⚠ Tool server${failed.length > 1 ? "s" : ""} not connected: ${what}. Those tools are missing from this session — check the server log (and /setup).` });
+          }
           void this.#publishCommands();
         } else if (msg.subtype === "commands_changed") {
           // The SDK says to REPLACE the cached list, not merge.

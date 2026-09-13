@@ -35,10 +35,10 @@ export class LiveChat {
   #clearRequested = false;
   #onChange: () => void;
 
-  #onReady: () => void;
+  #onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void;
   constructor(rec: ChatRecord, store: Store, workspace: string,
               deps: Omit<SessionDeps, "chatId">, mode: PermissionMode, onChange: () => void,
-              onReady: () => void = () => {}) {
+              onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void = () => {}) {
     this.#onReady = onReady;
     this.#rec = rec;
     this.#store = store;
@@ -117,7 +117,7 @@ export class LiveChat {
       return;
     }
 
-    if (e.kind === "ready") this.#onReady();
+    if (e.kind === "ready") this.#onReady(e);
     if (e.kind === "ready" || e.kind === "commands") {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
@@ -345,6 +345,8 @@ export class Manager {
   onListChanged?: () => void;
   /** True once any session has reported `ready` this run — the login works. */
   readySeen = false;
+  /** From the most recent session start: each in-process MCP server and its status; null before any. */
+  mcpServers: { name: string; status: string }[] | null = null;
   onChatRemoved?: (id: string) => void;
 
   constructor(workspace: string, dir: string, projectsRoot: string,
@@ -495,7 +497,7 @@ export class Manager {
   #admit(rec: ChatRecord, mode: PermissionMode = "default"): LiveChat {
     this.#evictIfFull();
     const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, mode,
-      () => this.onListChanged?.(), () => { this.readySeen = true; });
+      () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers ?? null; });
     this.#chats.set(rec.id, chat);
     return chat;
   }

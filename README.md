@@ -23,8 +23,10 @@ log in (`npm i -g @anthropic-ai/claude-code` if you do not have the CLI).
 Open **http://127.0.0.1:8123/**. That is localhost mode: reachable from this
 machine only, nothing else to configure. The first chat explains the pieces,
 and **http://127.0.0.1:8123/setup.html** checks each step live — login,
-network mode, extension, phone, service, paths — and tells you what to do
-next, including the exact address to paste into the extension.
+tool servers (every in-process MCP server the last session start reported,
+red if one failed to connect), network mode, extension, phone, service,
+paths — and tells you what to do next, including the exact address to
+paste into the extension.
 
 - **Phone or another device:** bind a tailnet or VPN address instead — see
   [Authentication](#authentication). There is deliberately no way to bind

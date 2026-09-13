@@ -27,6 +27,15 @@ describe("buildSetup", () => {
     assert.deepEqual(s.urls.extension, ["ws://127.0.0.1:8123/ext"]);
   });
 
+  test("tool servers: unknown before a session, ok when all connected, not ready when one failed", () => {
+    assert.equal(buildSetup(input()).checks.tools.level, "warn");
+    const ok = buildSetup(input({ readySeen: true, mcpServers: [{ name: "browser", status: "connected" }, { name: "files", status: "connected" }] }));
+    assert.equal(ok.checks.tools.level, "ok"); assert.match(ok.checks.tools.text, /browser, files/);
+    const bad = buildSetup(input({ readySeen: true, mcpServers: [{ name: "browser", status: "failed" }, { name: "files", status: "connected" }] }));
+    assert.equal(bad.checks.tools.level, "bad"); assert.equal(bad.ready, false);
+    assert.match(bad.checks.tools.text, /browser \(failed\)/); assert.match(bad.checks.tools.hint!, /npm run check/);
+  });
+
   test("no login is the one thing that makes it not ready", () => {
     const s = buildSetup(input({ fs: { exists: () => false, isDir: () => true } }));
     assert.equal(s.ready, false);

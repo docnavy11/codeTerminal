@@ -40,6 +40,15 @@ before(async () => {
 after(async () => { if (RUN) { ws.ws.close(); await ws.closed; await s.stop(); } });
 
 describe("real SDK", { skip: !RUN && "set CODETERM_REAL=1 (needs a Claude Code login; costs real turns)" }, () => {
+  test("every in-process MCP server comes up connected (the 2026-09-13 outage would fail here)", async () => {
+    // the first session start of this run: its ready event is already in the socket's log
+    const ready = ws.got.find((m) => m.kind === "ready") as { servers?: { name: string; status: string }[] } | undefined
+      ?? await ws.wait((m) => m.kind === "ready", TURN_MS) as { servers?: { name: string; status: string }[] };
+    assert.ok(ready?.servers?.length, "the init carries mcp_servers");
+    for (const sv of ready!.servers!) assert.equal(sv.status, "connected", `${sv.name}: ${sv.status}`);
+    assert.ok(ready!.servers!.some((sv) => sv.name === "browser"), "the browser server is registered");
+  });
+
   test("the CLI lists models and a switch takes effect on the next session start", async () => {
     const models = (await ws.wait((m) => m.kind === "models", 20_000)).models as { value: string }[];
     assert.ok(models.length >= 2, `models: ${JSON.stringify(models)}`);

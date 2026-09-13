@@ -26,6 +26,8 @@ export type SetupInput = {
   bypassAllowed: boolean;
   /** Standing browser sites; null when the gate is disabled. */
   browserSites?: number | null;
+  /** In-process MCP servers as the last session start reported them; null before any session. */
+  mcpServers?: { name: string; status: string }[] | null;
   /** Set by systemd for every process it starts. */
   systemd: boolean;
   /** Test hook: how to look at the filesystem. */
@@ -71,6 +73,13 @@ export function buildSetup(i: SetupInput) {
         ? { ok: true, level: "ok", text: "Claude Code login present; a session has started this run" }
         : { ok: true, level: "warn", text: "Claude Code login present; no session has started yet this run",
             hint: "Send any message in a chat — the first turn proves the login works." },
+    tools: !i.mcpServers
+      ? { ok: true, level: "warn", text: "Tool servers: not checked yet — no session has started this run",
+          hint: "Send any message in a chat; the session start reports whether every tool server came up." }
+      : i.mcpServers.some((s) => s.status !== "connected")
+        ? { ok: false, level: "bad", text: `Tool server${i.mcpServers.filter((s) => s.status !== "connected").length > 1 ? "s" : ""} not connected: ${i.mcpServers.filter((s) => s.status !== "connected").map((s) => `${s.name} (${s.status})`).join(", ")} — those tools are missing from every session`,
+            hint: "Check the server log. The usual cause is a tool schema the CLI cannot convert; `npm run check` lists every server through a real MCP client and fails on it." }
+        : { ok: true, level: "ok", text: `Tool servers connected: ${i.mcpServers.map((s) => s.name).join(", ")}` },
     extension: ext.length
       ? { ok: true, level: "ok", text: `Browser extension connected (${ext.length} browser${ext.length > 1 ? "s" : ""})` }
       : { ok: true, level: "warn", text: "No browser extension connected",
