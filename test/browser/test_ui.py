@@ -667,3 +667,12 @@ def test_wait_probe_reports_each_condition(page, server):
     assert page.evaluate("() => ctWaitProbe({ selector: '#done' })")["selector"] is True
     assert page.evaluate("() => ctWaitProbe({ selector: ':::bad' })")["selectorError"] == "bad selector"
     assert isinstance(page.evaluate("() => ctWaitProbe({}).resources"), int)
+
+
+def test_reply_tables_have_lines(page, server):
+    open_ui(page, server)
+    page.evaluate("() => handle({ kind: 'text', text: '| txn | € |\\n|---|---|\\n| T1052 | 171,24 |\\n| T1095 | 53,84 |' })")
+    page.wait_for_selector("#log .msg.md table td", timeout=5000)
+    cs = page.evaluate("() => { const td = document.querySelector('#log .msg.md tbody td'); const th = document.querySelector('#log .msg.md th'); const s = getComputedStyle(td), h = getComputedStyle(th);"
+                       " return { border: s.borderTopWidth, pad: s.paddingLeft, headRule: h.borderBottomWidth, collapse: getComputedStyle(document.querySelector('#log .msg.md table')).borderCollapse }; }")
+    assert cs["border"] == "1px" and cs["pad"] == "8px" and cs["headRule"] == "2px" and cs["collapse"] == "collapse", cs

@@ -196,6 +196,14 @@
   .msg.md p, .msg.md ul, .msg.md ol, .msg.md pre, .msg.md blockquote { margin:0 0 6px; }
   .msg.md > *:first-child { margin-top:0; } .msg.md > *:last-child { margin-bottom:0; }
   .msg.md ul, .msg.md ol { padding-left:18px; }
+  /* Tables in replies: lines, padding, a header rule, zebra rows — and a wide
+     table scrolls inside its own box instead of widening the pane. */
+  .msg.md table { display:block; max-width:100%; overflow-x:auto; border-collapse:collapse; border-spacing:0;
+                  font-size:0.875rem; font-variant-numeric:tabular-nums; }
+  .msg.md th, .msg.md td { border:1px solid var(--line); padding:3px 8px; text-align:left; vertical-align:top; white-space:nowrap; }
+  .msg.md th { background:var(--panel); font-weight:600; border-bottom:2px solid var(--dim); }
+  .msg.md tbody tr:nth-child(even) td { background:color-mix(in srgb, var(--panel) 55%, transparent); }
+  .msg.md td:has(> code:only-child) { white-space:normal; }
   .msg.md li { margin:1px 0; }
   .msg.md h1, .msg.md h2, .msg.md h3 { margin:8px 0 4px; font-size:1.083rem; }
   .msg.md pre { background:var(--code); padding:6px; border-radius:4px; overflow-x:auto; font-size:0.833rem; }
