@@ -17,12 +17,14 @@ import { makePdf } from "./pdf.test.js";
  * registry, with a fake extension answering the bridge.
  */
 type Srv = ReturnType<typeof terminalTools>;
-async function call(srv: Srv, name: string, args: Record<string, unknown> = {}): Promise<string> {
+async function callRaw(srv: Srv, name: string, args: Record<string, unknown> = {}): Promise<{ content: { type: string; text?: string; data?: string; mimeType?: string }[] }> {
   const reg = (srv.instance as unknown as { _registeredTools: Record<string, { callback?: Function; handler?: Function }> })._registeredTools;
   const t = reg[name];
   assert.ok(t, `tool ${name} registered (have: ${Object.keys(reg)})`);
-  const r = await (t.callback ?? t.handler)!(args, {});
-  return (r as { content: { text: string }[] }).content.map((c) => c.text).join("\n");
+  return await (t.callback ?? t.handler)!(args, {}) as never;
+}
+async function call(srv: Srv, name: string, args: Record<string, unknown> = {}): Promise<string> {
+  return (await callRaw(srv, name, args)).content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
 }
 
 /** A fake extension: answers every bridge command from a table. */
@@ -279,6 +281,25 @@ describe("browser tools", () => {
     const { bridge } = bridged({ list_tabs: () => [] }, "browser-B");
     const srv = browserTools(bridge, () => "browser-A");
     await assert.rejects(call(srv, "list_tabs"), /not connected/);
+  });
+
+  test("screenshot: the image comes back inline (jpeg or png) with its meta, and the file is kept", async () => {
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 0, 0, 13]), Buffer.from("IHDR"), Buffer.from([0, 0, 0, 5, 0, 0, 0, 7]), Buffer.alloc(9)]);
+    const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0]);
+    let mode = "jpeg";
+    const { bridge } = bridged({ screenshot: () => mode === "jpeg"
+      ? { tabId: 4, url: "https://x", dataUrl: "data:image/jpeg;base64," + jpg.toString("base64"), width: 1568, height: 882 }
+      : { tabId: 4, url: "https://x", dataUrl: "data:image/png;base64," + png.toString("base64") } });
+    const srv = browserTools(bridge, () => undefined);
+    const r = await callRaw(srv, "screenshot", { tabId: 4 });
+    assert.equal(r.content[0].type, "image"); assert.equal(r.content[0].mimeType, "image/jpeg"); assert.equal(r.content[0].data, jpg.toString("base64"));
+    const meta = JSON.parse(r.content[1].text!) as { path: string; width: number; height: number; bytes: number };
+    assert.ok(meta.path.endsWith(".jpg")); assert.equal(meta.width, 1568); assert.equal(meta.height, 882); assert.equal(meta.bytes, jpg.length);
+    assert.equal((await stat(meta.path)).mode & 0o777, 0o600); await unlink(meta.path);
+    mode = "png";
+    const r2 = await callRaw(srv, "screenshot", { tabId: 4 });
+    assert.equal(r2.content[0].mimeType, "image/png");
+    const meta2 = JSON.parse(r2.content[1].text!) as { path: string; width: number }; assert.ok(meta2.path.endsWith(".png")); assert.equal(meta2.width, 5); await unlink(meta2.path);
   });
 
   test("screenshot: writes a private PNG and returns its size; a non-PNG answer is refused", async () => {

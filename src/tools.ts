@@ -49,12 +49,12 @@ function pngSize(buf: Buffer): { width: number; height: number } | null {
  * token budget, and useless inline. Spool it to a file and hand back the path.
  */
 async function screenshotToFile(bridge: BrowserBridge, args: Record<string, unknown>, prefer?: string) {
-  const r = (await bridge.send("screenshot", args, prefer)) as { tabId: number; url?: string; dataUrl: string };
-  const comma = r.dataUrl.indexOf(",");
-  if (!r.dataUrl.startsWith("data:image/png;base64,") || comma < 0) {
-    throw new Error("extension returned something that was not a png data url");
-  }
-  const buf = Buffer.from(r.dataUrl.slice(comma + 1), "base64");
+  const r = (await bridge.send("screenshot", args, prefer)) as { tabId: number; url?: string; dataUrl: string; width?: number; height?: number };
+  const m = /^data:(image\/(?:png|jpeg));base64,/.exec(r.dataUrl ?? "");
+  if (!m) throw new Error("extension returned something that was not a png or jpeg data url");
+  const mime = m[1], ext = mime === "image/png" ? "png" : "jpg";
+  const data = r.dataUrl.slice(m[0].length);
+  const buf = Buffer.from(data, "base64");
   // A screenshot can show a logged-in page — mail, a bank. The dir lives in the
   // shared /tmp, so keep it and the files private to this user (0700 / 0600)
   // rather than the umask default of world-readable. chmod covers a dir left
@@ -64,9 +64,10 @@ async function screenshotToFile(bridge: BrowserBridge, args: Record<string, unkn
   // Tidy the last run's leftovers, never this one's. Fire and forget: a
   // failure to clean up must not fail the screenshot.
   void pruneScreenshots();
-  const path = join(SHOT_DIR, `tab-${r.tabId}-${Date.now()}.png`);
+  const path = join(SHOT_DIR, `tab-${r.tabId}-${Date.now()}.${ext}`);
   await writeFile(path, buf, { mode: 0o600 });
-  return { tabId: r.tabId, url: r.url, path, bytes: buf.length, ...(pngSize(buf) ?? {}) };
+  const size = mime === "image/png" ? pngSize(buf) : (r.width && r.height ? { width: r.width, height: r.height } : null);
+  return { meta: { tabId: r.tabId, url: r.url, path, bytes: buf.length, ...(size ?? {}) }, data, mime };
 }
 
 /**
@@ -359,7 +360,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         }),
 
       tool("screenshot",
-        "Capture the visible area of a tab. Writes a PNG to disk and returns its path — open that with the Read tool.",
+        "Capture the visible area of a tab. Returns the image itself (look at it directly) plus its path on disk.",
         {
           tabId,
           activate: z.boolean().optional()
@@ -374,7 +375,13 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
             return text(`Screenshot budget for this turn (${b.maxScreenshots}) is used up. Tell the user what you have found so far and ask before continuing.`);
           }
           if (b) b.screenshots++;
-          return text(await screenshotToFile(bridge, a, prefer()));
+          // The image itself goes back to the model — no Read round trip —
+          // and the file stays on disk for the transcript and for Read.
+          const shot = await screenshotToFile(bridge, a, prefer());
+          return { content: [
+            { type: "image" as const, data: shot.data, mimeType: shot.mime },
+            { type: "text" as const, text: JSON.stringify(shot.meta, null, 2) },
+          ] };
         }),
     ],
   });

@@ -654,6 +654,17 @@ against a real 11-page PDF tab: `read_page` returned `kind: "pdf", pages:
 — merged cells and superscript placement are lost, and an image-only scan
 has no text to extract (screenshots still cover that).
 
+**Screenshots come back inline.** The screenshot tool returns the image
+itself as part of its result, so the model looks at it directly — no
+`Read` of a path afterwards, which halves the calls in any visual task and
+makes the per-turn screenshot budget a real cap on cost. The extension
+sizes it for the model first: at most 1568 px on the long side (the API's
+recommended maximum), JPEG — a HiDPI capture used to be ~4 MB of PNG. The
+file is still written (0600, pruned by age) so the transcript row has a
+path and `Read` still works. Whether the in-process MCP passes image
+blocks through to the model is **not measured** yet — one real screenshot
+turn will tell.
+
 **`download`.** "Save this as a file": the tab's bytes (or a URL's), fetched
 with your profile's cookies, land in the chat's working directory under
 `downloads/` — named from the URL, the server's suggestion or the agent's

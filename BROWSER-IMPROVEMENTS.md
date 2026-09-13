@@ -20,7 +20,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 | # | improvement | why | status |
 |---|---|---|---|
 | 1 | **PDFs.** `read_page` on a PDF tab returns the text: the extension fetches the tab's bytes, the server extracts text (`pdfjs-dist`, pure JS). | Chrome's PDF viewer is not scriptable, so `read_page` returns nothing and the agent falls back to screenshot→Read per page — that *was* the spiral (20 screenshots, 19 reads). The invoice job is the most common browser task here. | ☑ |
-| 2 | **Screenshots inline.** Return the PNG as an image content block instead of a path. | Halves the calls in any visual task (no `Read` round trip) and makes the screenshot budget a real cap on cost. | ☐ |
+| 2 | **Screenshots inline.** Return the PNG as an image content block instead of a path. | Halves the calls in any visual task (no `Read` round trip) and makes the screenshot budget a real cap on cost. | ☑ |
 | 3 | **Structured reads.** `read_page` with `mode: text \| links \| tables \| forms` — rows, fields with current values, `[text → url]`. | Far fewer tokens than 20 000 chars of `innerText`; and a table no longer needs `eval`, which now asks every time. | ☐ |
 | 4 | **`find` and `scroll`.** Search the page for text → matches with the enclosing element's ref and position; scroll to a ref or by pages. | "Is X on this page?" is a full `read_page` today; long pages are read blind. | ☐ |
 

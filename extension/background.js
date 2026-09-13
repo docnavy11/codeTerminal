@@ -350,6 +350,25 @@ async function resolveTab(tabId) {
   return typeof tabId === "number" ? await chrome.tabs.get(tabId) : await activeTab();
 }
 
+/** Downscale a data URL to `maxSide` and re-encode as JPEG; returns the original if anything is unavailable. */
+async function shrinkImage(dataUrl, maxSide, quality) {
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+    const canvas = new OffscreenCanvas(w, h);
+    canvas.getContext("2d").drawImage(bmp, 0, 0, w, h);
+    bmp.close?.();
+    const out = await canvas.convertToBlob({ type: "image/jpeg", quality });
+    const buf = new Uint8Array(await out.arrayBuffer());
+    let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return { dataUrl: `data:image/jpeg;base64,${btoa(bin)}`, width: w, height: h };
+  } catch {
+    return { dataUrl, width: undefined, height: undefined };
+  }
+}
+
 /** Run a function in the page and return its value. */
 async function run(tabId, fn, args = []) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args, world: "MAIN" });
@@ -533,13 +552,17 @@ async function handle(action, p) {
       }
 
       try {
-        const dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: "png" });
+        const raw = await chrome.tabs.captureVisibleTab(t.windowId, { format: "png" });
         // Belt and braces: prove what we captured is what was asked for.
         const [visible] = await chrome.tabs.query({ active: true, windowId: t.windowId });
         if (visible?.id !== t.id) {
           throw new Error(`captured tab ${visible?.id} but tab ${t.id} was requested`);
         }
-        return { tabId: t.id, url: t.url, dataUrl };
+        // The capture is at device pixels (a HiDPI screen gives ~4 MB of PNG).
+        // The model sees it inline now, so size it for the model: at most
+        // 1568px on the long side (the API's recommended maximum), as JPEG.
+        const shrunk = await shrinkImage(raw, p.maxSide ?? 1568, 0.85);
+        return { tabId: t.id, url: t.url, dataUrl: shrunk.dataUrl, width: shrunk.width, height: shrunk.height };
       } finally {
         if (prior && prior.id !== t.id) {
           try { await chrome.tabs.update(prior.id, { active: true }); } catch {}
