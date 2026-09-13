@@ -686,6 +686,19 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**`console_read` and `network_read`.** For testing a web app: after an
+action, read what the page logged (console.log/warn/error, uncaught errors
+with file:line, unhandled rejections; `level: "error"` for just the
+errors) and what it requested (fetch and XHR with method, URL, status and
+duration; images/scripts/css with URL, type, duration and size but no
+status, which the browser does not expose to a page; `failed: true` for
+status 0 or 4xx/5xx). Both come from a small page-world hook installed at
+document start — no debugger, no bar — that observes `console.*`, `fetch`
+and `XMLHttpRequest` without changing what they do; buffers hold the last
+500 entries and reset on navigation. A page loaded before the extension
+was installed has no buffer and the tool says so. Read-level, usable in a
+`browser_batch`. Measured in real Chromium (`test_extension_reads_console_and_network`).
+
 **`upload`.** Put a file from the files root into an `<input type=file>`:
 `upload {ref | selector, path: "downloads/invoice.pdf"}`. The bytes travel
 from the server to the extension (the browser may be on another machine,

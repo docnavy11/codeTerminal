@@ -184,6 +184,20 @@ debugging bar while attached, so the attachment is visible to the user.
 Nothing else uses the session; a debugger already attached (DevTools) makes
 the attach fail silently and the dialog stays detect-only.
 
+### L7 — Page-world hooks on every page (dialogs, console, fetch/XHR)  ·  DOCUMENTED · by design
+
+Two content scripts run at document start in every page's own world:
+`dialog-hook.js` (wraps alert/confirm/prompt to report them) and
+`console-hook.js` (wraps console.*, fetch and XMLHttpRequest to keep a
+500-entry ring buffer of messages and of method/URL/status/duration — no
+bodies, no headers). They observe and pass through; the originals are
+called with the same arguments and their results returned unchanged. The
+buffers live on `globalThis.__ct` in the page, readable by page scripts
+too — so they hold nothing a page could not already see about itself.
+Measured in `test_extension_reads_console_and_network` that the page's own
+fetch/XHR still complete. A site that patches `fetch` after us wraps our
+wrapper; one that patches before document start cannot exist.
+
 ## Not bugs (checked, holds up)
 
 - **ANSI stripper** — no ReDoS: 50k-param CSI in 1 ms, 500 KB unterminated OSC

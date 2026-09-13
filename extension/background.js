@@ -624,6 +624,51 @@ async function handle(action, p) {
       })};
     }
 
+    // What the page logged / requested, from the console hook's buffers.
+    // Read-only; `clear` empties the buffer after reading. Resources that are
+    // not fetch/XHR (images, scripts, stylesheets) come from resource timing:
+    // URL, type and duration, but no status — the browser does not expose it.
+    case "console_read": {
+      const t = await resolveTab(p.tabId);
+      const r = await run(t.id, (level, since, limit, clear) => {
+        const ct = globalThis.__ct;
+        if (!ct) return { __err: "no console buffer in this page (loaded before the extension was installed, or a page scripts cannot run in) — reload the tab and try again" };
+        const want = level === "error" ? ["error"] : level === "warn" ? ["error", "warn"] : null;
+        let all = ct.console.filter((e) => (!want || want.includes(e.level)) && (!since || e.t >= since));
+        const total = all.length;
+        all = all.slice(-limit);
+        const counts = { error: 0, warn: 0, log: 0, info: 0 };
+        for (const e of ct.console) counts[e.level] = (counts[e.level] ?? 0) + 1;
+        if (clear) { ct.console.length = 0; ct.dropped.console = 0; }
+        return { total, shown: all.length, counts, dropped: ct.dropped.console, entries: all };
+      }, [p.level ?? "all", p.since ?? 0, Math.min(Math.max(p.limit ?? 100, 1), 500), !!p.clear]);
+      return { tabId: t.id, url: t.url, ...r };
+    }
+    case "network_read": {
+      const t = await resolveTab(p.tabId);
+      const r = await run(t.id, (filter, failed, includeResources, limit, clear) => {
+        const ct = globalThis.__ct;
+        if (!ct) return { __err: "no network buffer in this page (loaded before the extension was installed, or a page scripts cannot run in) — reload the tab and try again" };
+        let all = [...ct.net];
+        if (includeResources) {
+          for (const e of performance.getEntriesByType("resource")) {
+            if (e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest") continue;
+            all.push({ t: Math.round(performance.timeOrigin + e.startTime), type: e.initiatorType || "resource", method: "GET", url: e.name.slice(0, 500), status: null, ok: null, ms: Math.round(e.duration), bytes: e.transferSize || undefined });
+          }
+          all.sort((a, b) => a.t - b.t);
+        }
+        const f = filter ? String(filter).toLowerCase() : "";
+        if (f) all = all.filter((e) => e.url.toLowerCase().includes(f));
+        if (failed) all = all.filter((e) => e.ok === false);
+        const total = all.length;
+        const failedCount = all.filter((e) => e.ok === false).length;
+        all = all.slice(-limit);
+        if (clear) { ct.net.length = 0; ct.dropped.net = 0; performance.clearResourceTimings(); }
+        return { total, shown: all.length, failed: failedCount, dropped: ct.dropped.net, entries: all };
+      }, [p.filter ?? "", !!p.failed, p.resources !== false, Math.min(Math.max(p.limit ?? 100, 1), 500), !!p.clear]);
+      return { tabId: t.id, url: t.url, ...r };
+    }
+
     // Tab management: open, close, focus, back, forward, reload.
     case "open_tab": {
       const t = await chrome.tabs.create({ url: p.url, active: p.active !== false });

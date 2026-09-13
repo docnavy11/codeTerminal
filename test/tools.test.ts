@@ -267,6 +267,22 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("console_read and network_read are read-level, forward their filters, and may run in a batch", async () => {
+    const asks: string[] = []; const seen: [string, Record<string, unknown>][] = [];
+    const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "http://localhost:3000/app", title: "App" }),
+      console_read: (p) => { seen.push(["console_read", p]); return { total: 1, shown: 1, counts: { error: 1 }, entries: [{ level: "error", text: "boom" }] }; },
+      network_read: (p) => { seen.push(["network_read", p]); return { total: 2, shown: 1, failed: 1, entries: [{ url: "http://localhost:3000/api", status: 500, method: "GET", ok: false }] }; } });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    const c = JSON.parse(await call(srv, "console_read", { tabId: 1, level: "error", limit: 20 }));
+    const n = JSON.parse(await call(srv, "network_read", { tabId: 1, failed: true, filter: "/api" }));
+    assert.deepEqual(asks, ["console_read:read", "network_read:read"]);
+    assert.deepEqual(seen[0], ["console_read", { tabId: 1, level: "error", limit: 20 }]); assert.deepEqual(seen[1], ["network_read", { tabId: 1, failed: true, filter: "/api" }]);
+    assert.equal(c.entries[0].text, "boom"); assert.equal(n.failed, 1); assert.deepEqual(c.at, { host: "localhost", title: "App" });
+    const b = JSON.parse(await call(srv, "browser_batch", { tabId: 1, steps: [{ tool: "console_read", args: { level: "error" } }, { tool: "network_read", args: { failed: true } }] }));
+    assert.equal(b.steps, 2); assert.equal(b.failed, 0); assert.equal(asks.length, 3);
+  });
+
   test("upload: reads the file under the files root, ships name/mime/base64 to the extension, is act-level; outside the root, too big, or without a target it refuses", async () => {
     const { mkdtemp, writeFile: wf, mkdir: md } = await import("node:fs/promises");
     const root = await mkdtemp(join(tmpdir(), "ct-up-")); await md(join(root, "downloads"));

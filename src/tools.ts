@@ -332,7 +332,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", upload: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", console_read: "read", network_read: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", upload: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -371,6 +371,8 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   /** The read-only tools a batch may run, by name; each returns a plain value (screenshot: its meta + the image). */
   const READ_STEPS: Record<string, (a: Record<string, unknown>) => Promise<unknown>> = {
     list_tabs: () => listTabs(),
+    console_read: (a) => bridge.send("console_read", a, prefer()),
+    network_read: (a) => bridge.send("network_read", a, prefer()),
     read_page: (a) => readPage(a as { tabId?: number; maxChars?: number; mode?: "text" | "markdown" | "links" | "tables" | "forms" }),
     snapshot: (a) => bridge.send("snapshot", a, prefer()),
     find: (a) => bridge.send("find", a, prefer()),
@@ -515,6 +517,19 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
       tool("press", "Send a key to the focused element (Enter, Tab, Escape, ArrowDown, …).",
         { tabId, key: z.string() },
         gated("press", (a) => bridge.send("press", a, prefer()))),
+
+      tool("console_read",
+        "Read what the page has logged since it loaded: console.log/info/warn/error, uncaught errors and unhandled rejections (with file:line where known). Newest last; counts per level. For testing a web app: check for errors after an action. Buffer resets on navigation; clear:true empties it after reading.",
+        { tabId, level: z.enum(["error", "warn", "all"]).optional().describe("error = errors only, warn = warnings and errors (default all)"),
+          since: z.number().optional().describe("Only entries after this ms timestamp (e.g. the t of an earlier read)"),
+          limit: z.number().int().optional().describe("Max entries, newest kept (default 100, max 500)"), clear: z.boolean().optional() },
+        gated("console_read", (a) => bridge.send("console_read", a, prefer()))),
+      tool("network_read",
+        "Read the page's requests since it loaded: fetch and XHR with method, URL, status and duration (no bodies or headers); other loads (images, scripts, css) with URL, type, duration and size but no status. failed:true keeps only failed ones (status 0 or 4xx/5xx). Buffer resets on navigation; clear:true empties it after reading.",
+        { tabId, filter: z.string().optional().describe("Only URLs containing this text"), failed: z.boolean().optional(),
+          resources: z.boolean().optional().describe("Include non-fetch loads: images, scripts, css (default true)"),
+          limit: z.number().int().optional().describe("Max entries, newest kept (default 100, max 500)"), clear: z.boolean().optional() },
+        gated("network_read", (a) => bridge.send("network_read", a, prefer()))),
 
       tool("upload",
         "Put a file from the files root into an <input type=file> (ref from read_page forms/snapshot, or a selector), as if picked in the file dialog; the page's change handler runs. Up to 10 MB. Does not submit.",

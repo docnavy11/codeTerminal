@@ -997,3 +997,65 @@ def test_extension_uploads_files(playwright):
         assert r["ok"] is False and "element not found: #nothing-here" in r["e"], "a page-side miss is an error, not a null result"
     finally:
         ctx.close(); srv.shutdown()
+
+
+def test_extension_reads_console_and_network(playwright):
+    """The real extension: the document_start hook records console output,
+    uncaught errors and rejections, fetch/XHR with status, and resource loads;
+    filters and clear work; the page's own console/fetch keep working."""
+    import tempfile, threading, http.server, socketserver
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    html = b"""<img src="/pic.png"><script>
+      console.log('hello', {a: 1}); console.warn('careful'); console.error('bad', new Error('boom'));
+      setTimeout(() => { nosuch(); }, 10);
+      Promise.reject(new Error('rejected!'));
+      window.results = [];
+      fetch('/api/ok').then(r => results.push(['fetch', r.status]));
+      fetch('/api/missing', {method: 'POST'}).then(r => results.push(['fetch', r.status]));
+      const x = new XMLHttpRequest(); x.open('PUT', '/api/xhr'); x.onloadend = () => results.push(['xhr', x.status]); x.send();
+    </script>"""
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            code = 200 if self.path in ("/", "/api/ok", "/pic.png") else 404
+            self.send_response(code); self.send_header("Content-Type", "text/html" if self.path == "/" else "application/octet-stream"); self.end_headers()
+            self.wfile.write(html if self.path == "/" else b"x" * 10)
+        do_POST = do_GET
+        def do_PUT(self): self.send_response(500); self.end_headers()
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp(prefix="ct-con-prof-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p).then(r => ({ok:true, r}), e => ({ok:false, e:String(e && e.message || e)}))", [action, params])
+    try:
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.6)
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        c = call(sw, "console_read", {"tabId": tab})["r"]
+        texts = [(e["level"], e["text"].split("\n")[0]) for e in c["entries"]]
+        assert ("log", 'hello {"a":1}') in texts and ("warn", "careful") in texts, texts
+        assert any(l == "error" and t.startswith("bad Error: boom") for l, t in texts), texts
+        unc = [e for e in c["entries"] if e.get("uncaught")]
+        assert any(e["text"] == "Uncaught ReferenceError: nosuch is not defined" and ":3:" in e.get("source", "") for e in unc), unc
+        assert any(e["text"].startswith("Unhandled rejection: Error: rejected!") for e in unc), unc
+        assert c["counts"]["error"] == 3 and c["counts"]["warn"] == 1, c["counts"]
+        errs = call(sw, "console_read", {"tabId": tab, "level": "error"})["r"]
+        assert errs["total"] == 3 and all(e["level"] == "error" for e in errs["entries"])
+        n = call(sw, "network_read", {"tabId": tab})["r"]
+        by = {(e["type"], e["method"], e["url"].split(port.__str__())[-1]): e for e in n["entries"]}
+        assert by[("fetch", "GET", "/api/ok")]["status"] == 200 and by[("fetch", "GET", "/api/ok")]["ok"] is True
+        assert by[("fetch", "POST", "/api/missing")]["status"] == 404 and by[("fetch", "POST", "/api/missing")]["ok"] is False
+        assert by[("xhr", "PUT", "/api/xhr")]["status"] == 500
+        assert by[("img", "GET", "/pic.png")]["status"] is None and by[("img", "GET", "/pic.png")]["ms"] >= 0
+        assert n["failed"] == 2, n
+        f = call(sw, "network_read", {"tabId": tab, "failed": True})["r"]
+        assert sorted(e["status"] for e in f["entries"]) == [404, 500]
+        f2 = call(sw, "network_read", {"tabId": tab, "filter": "/api/", "resources": False, "clear": True})["r"]
+        assert f2["total"] == 3
+        assert call(sw, "network_read", {"tabId": tab, "resources": False})["r"]["total"] == 0, "clear emptied the buffer"
+        assert page.evaluate("() => window.results.length") == 3, "the page's own fetch/xhr still completed"
+        c2 = call(sw, "console_read", {"tabId": tab, "clear": True})["r"]; assert c2["total"] >= 5
+        assert call(sw, "console_read", {"tabId": tab})["r"]["total"] == 0
+    finally:
+        ctx.close(); srv.shutdown()

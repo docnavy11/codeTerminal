@@ -146,3 +146,13 @@ describe("upload summary", () => {
     assert.equal(sum({ uploaded: "b.png", bytes: 10, files: ["a.png", "b.png"] }), "uploaded b.png · 10 B · 2 files chosen");
   });
 });
+
+describe("console_read / network_read summaries", () => {
+  test("counts, and the last error or failure", () => {
+    const sum = (n: string, o: unknown) => summariseResult(`mcp__browser__${n}`, { tool_use_id: "t", content: JSON.stringify(o) }, undefined).summary;
+    assert.equal(sum("console_read", { total: 5, shown: 5, counts: { error: 2, warn: 1, log: 2 }, entries: [{ level: "log", text: "hi" }, { level: "error", text: "Uncaught TypeError: x is not a function\n at a.js" }] }), "5 entries · 2 errors · 1 warning · Uncaught TypeError: x is not a function");
+    assert.equal(sum("console_read", { total: 0, shown: 0, counts: {}, entries: [] }), "0 entries");
+    assert.equal(sum("network_read", { total: 12, failed: 1, entries: [{ url: "https://app.example/api/items?x=1", status: 500, method: "POST", ok: false }] }), "12 requests · 1 failed · 500 POST /api/items?x=1");
+    assert.equal(sum("network_read", { total: 1, failed: 0, entries: [{ url: "https://a/b", status: 200, method: "GET", ok: true }] }), "1 request");
+  });
+});
