@@ -101,3 +101,11 @@ describe("whereOf", () => {
     assert.equal(r.where, "bank.example · " + "T".repeat(49) + "…");
   });
 });
+
+describe("handle_dialog summary", () => {
+  test("answered with the message, or the reason it could not", () => {
+    const sum = (o: unknown) => summariseResult("mcp__browser__handle_dialog", { tool_use_id: "t", content: JSON.stringify(o) }, undefined).summary;
+    assert.equal(sum({ handled: true, type: "confirm", message: "Delete everything?" }), 'answered confirm "Delete everything?"');
+    assert.equal(sum({ handled: false, reason: "no dialog is open" }), "✗ no dialog is open");
+  });
+});

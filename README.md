@@ -686,6 +686,20 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**Dialogs.** A page's `alert`, `confirm` or `prompt` used to hang every
+browser call until someone clicked it. Now the extension notices the moment
+one opens: the next call fails at once with *the tab is blocked by a
+JavaScript confirm dialog: "Delete everything?"*, `list_tabs` flags the tab,
+and **`handle_dialog`** answers it — accept (OK), dismiss (Cancel), text for
+a prompt. Answering goes through Chrome's debugger API, which only lets a
+session answer a dialog it saw open, so the extension attaches to a tab
+before the agent's first click/fill/press/eval/navigate in it and lets go
+when the turn ends; Chrome shows its "*code terminal bridge* is debugging
+this browser" bar meanwhile. A dialog the page raises on its own, outside
+such a turn, is detected but not answerable — the tool says so and the
+agent asks you to click it. Measured end to end in real Chromium in the
+browser suite (`test_extension_detects_and_answers_dialogs`).
+
 **Screenshots come back inline.** The screenshot tool returns the image
 itself as part of its result, so the model looks at it directly — no
 `Read` of a path afterwards, which halves the calls in any visual task and

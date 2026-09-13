@@ -223,6 +223,28 @@ describe("browser tools", () => {
     async function bridged_click(s: typeof srv) { try { await call(s, "click", { tabId: 2, selector: "a" }); } catch { /* the fake ext has no click handler; the ask is what matters */ } }
   });
 
+  test("a blocked tab fails every call at once with the dialog's message; handle_dialog goes through, is act-level, and forwards accept/text", async () => {
+    const asks: string[] = []; const seen: Record<string, unknown>[] = [];
+    let dialog: { type: string; message: string } | undefined = { type: "confirm", message: "Delete everything?" };
+    const policy = { allowed: (_h: string, level: string) => level === "read", evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
+    const { bridge } = bridged({
+      tab_url: () => ({ tabId: 1, url: "https://shop.example/cart", title: "Cart", ...(dialog ? { dialog } : {}) }),
+      read_page: () => ({ text: "page" }), click: () => ({ clicked: "button" }),
+      handle_dialog: (p) => { seen.push(p); dialog = undefined; return { tabId: 1, type: "confirm", message: "Delete everything?", handled: true }; },
+    });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    await assert.rejects(call(srv, "read_page", { tabId: 1 }), /blocked by a JavaScript confirm dialog: "Delete everything\?"/);
+    await assert.rejects(call(srv, "click", { tabId: 1, selector: "a" }), /blocked by a JavaScript confirm/);
+    assert.deepEqual(asks, [], "a blocked tab is refused before the site gate asks anything");
+    const r = JSON.parse(await call(srv, "handle_dialog", { tabId: 1, accept: false }));
+    assert.equal(r.handled, true); assert.deepEqual(seen[0], { tabId: 1, accept: false });
+    assert.deepEqual(asks, ["handle_dialog:act"]);
+    assert.deepEqual(r.at, { host: "shop.example", title: "Cart" }, "stamped like any other call, without the dialog");
+    assert.match(await call(srv, "read_page", { tabId: 1 }), /page/, "unblocked");
+    await call(srv, "handle_dialog", { accept: true, text: "Yvan" });
+    assert.deepEqual(seen[1], { accept: true, text: "Yvan" });
+  });
+
   test("results are stamped with where they happened; navigate with its destination; no tab_url is not an error", async () => {
     const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://bank.example/pay", title: "Transfer — My Bank" }), click: () => ({ ok: true }), navigate: (p) => ({ tabId: 1, url: p.url }), list_tabs: () => [] });
     const srv = browserTools(bridge, () => undefined);

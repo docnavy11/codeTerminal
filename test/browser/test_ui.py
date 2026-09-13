@@ -775,3 +775,57 @@ def test_viewer_tables_sort_filter_resize(page, server):
     w1 = th.evaluate("e => e.getBoundingClientRect().width")
     assert w1 > w0 + 80, (w0, w1)
     assert col(0) == ["apple", "fig", "pear", "kiwi"], "a drag on the handle must not change the (amount-sorted) order"
+
+
+def test_extension_detects_and_answers_dialogs(playwright):
+    """The real extension in Chromium: a confirm/prompt/alert raised by the
+    agent's own click is reported with its message, blocks other calls at
+    once instead of hanging, and is answered through the debugger session the
+    worker attached before acting. After `release`, a dialog the page raises
+    itself is still detected but reported as not answerable."""
+    import tempfile, threading, http.server, socketserver
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    html = (b"<button id=b onclick=\"window.r = confirm('Delete everything?')\">go</button>"
+            b"<button id=pr onclick=\"window.p = prompt('Name?', 'anon')\">p</button>"
+            b"<button id=al onclick=\"alert('Saved!'); window.a = 1\">a</button><p>hello page</p>")
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp(prefix="ct-dlg-prof-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    call = lambda sw, action, params, ms=6000: sw.evaluate(
+        "([a, p, ms]) => Promise.race([ctHandle(a, p).then(r => ({ok:true, r}), e => ({ok:false, e:String(e && e.message || e)})),"
+        " new Promise(res => setTimeout(() => res({timeout:true}), ms))])", [action, params, ms])
+    try:
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
+        page.on("dialog", lambda d: None)                      # Playwright must leave dialogs alone
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        assert call(sw, "dialog_state", {"tabId": tab})["r"]["open"] is False
+        t0 = time.time(); r = call(sw, "click", {"tabId": tab, "selector": "#b"}, 12000)
+        assert r["ok"] is False and 'confirm dialog: "Delete everything?"' in r["e"], r
+        assert time.time() - t0 < 5, "the click must fail as soon as the dialog opens, not after the grace"
+        st = call(sw, "dialog_state", {"tabId": tab})["r"]; assert (st["type"], st["message"]) == ("confirm", "Delete everything?")
+        r = call(sw, "read_page", {"tabId": tab, "mode": "text"}); assert r["ok"] is False and "blocked" in r["e"]
+        r = call(sw, "handle_dialog", {"tabId": tab, "accept": False})["r"]; assert r["handled"] is True, r
+        time.sleep(0.3); assert page.evaluate("() => window.r") is False
+        assert call(sw, "read_page", {"tabId": tab, "mode": "text"})["ok"] is True
+        call(sw, "click", {"tabId": tab, "selector": "#pr"}, 12000); time.sleep(0.3)
+        assert call(sw, "dialog_state", {"tabId": tab})["r"]["defaultValue"] == "anon"
+        assert call(sw, "handle_dialog", {"tabId": tab, "accept": True, "text": "Yvan"})["r"]["handled"] is True
+        time.sleep(0.3); assert page.evaluate("() => window.p") == "Yvan"
+        call(sw, "click", {"tabId": tab, "selector": "#al"}, 12000); time.sleep(0.3)
+        assert call(sw, "handle_dialog", {"tabId": tab, "accept": True})["r"]["handled"] is True
+        time.sleep(0.3); assert page.evaluate("() => window.a") == 1
+        assert call(sw, "handle_dialog", {"tabId": tab, "accept": True})["r"] == {"tabId": tab, "handled": False, "reason": "no dialog is open"}
+        assert call(sw, "release", {})["r"] == {"released": 1}
+        page.evaluate("() => setTimeout(() => { window.r2 = confirm('Leave?') }, 50)"); time.sleep(0.6)
+        st = call(sw, "dialog_state", {"tabId": tab})["r"]; assert st["open"] and st["message"] == "Leave?"
+        r = call(sw, "handle_dialog", {"tabId": tab, "accept": True})["r"]; assert r["handled"] is False and "ask the user" in r["reason"]
+        flagged = [t for t in call(sw, "list_tabs", {})["r"] if t["id"] == tab][0]
+        assert flagged["dialog"] == {"type": "confirm", "message": "Leave?"}
+    finally:
+        ctx.close(); srv.shutdown()

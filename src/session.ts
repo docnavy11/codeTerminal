@@ -82,7 +82,7 @@ export type SessionDeps = {
  */
 const BROWSER_TOOLS = [
   "list_tabs", "read_page", "snapshot", "navigate",
-  "click", "fill", "press", "eval", "screenshot", "download", "find", "scroll", "wait_for",
+  "click", "fill", "press", "eval", "screenshot", "download", "find", "scroll", "wait_for", "handle_dialog",
 ].map((n) => `mcp__browser__${n}`);
 
 // Reading the user's own terminal is inert, so it never needs a prompt.
@@ -427,6 +427,7 @@ export class Session {
 
   #hidden = new Set<string>(HIDE_EXTRA);
   #activeTools = new Map<string, string>();   // tool_use_id -> tool name
+  #browserUsed = false;
   #compacting = false;
   #thinkingTokens = 0;
   #lastStatus = "";
@@ -564,6 +565,7 @@ export class Session {
           }
           else if (block.type === "tool_use") {
             this.#activeTools.set(block.id, block.name);
+            if (block.name.startsWith("mcp__browser__")) this.#browserUsed = true;
             this.#emit({ kind: "tool", id: block.id, name: block.name, input: block.input, ...(parent ? { parent } : {}) });
             // The circuit breaker: a turn that keeps calling tools is stopped
             // and told so, instead of running until the model gives up.
@@ -625,6 +627,9 @@ export class Session {
       case "result": {
         this.#busy = false;
         this.#activeTools.clear();
+        // The extension attaches Chrome's debugger to a tab the agent acts in
+        // (to be able to answer its dialogs); the turn is over, let it go.
+        if (this.#browserUsed) { this.#browserUsed = false; this.#deps.bridge?.send("release", {}, this.#deps.prefer()).catch(() => {}); }
         this.#compacting = false;
         // total_cost_usd is the RUNNING TOTAL for this query() — "read the latest
         // result rather than summing". The client sums per-turn costs, so hand

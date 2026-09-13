@@ -408,6 +408,30 @@ describe("Session rewind", () => {
   });
 });
 
+describe("browser release at turn end", () => {
+  test("a turn that used a browser tool ends with `release` to the extension; a turn without one does not", async () => {
+    const { BrowserBridge } = await import("../src/browser.js");
+    const { FakeWs } = await import("./fakes/ws.js");
+    const bridge = new BrowserBridge(() => {}, 500);
+    const ext = new FakeWs(); const actions: string[] = [];
+    const origSend = ext.send.bind(ext);
+    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; actions.push(msg.action); setImmediate(() => ext.frame({ id: msg.id, ok: true, result: {} })); };
+    bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
+    const sdk = fakeSdk(); const events: ClientEvent[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start();
+    await s.send("hi"); await settle(4);
+    const q = sdk.last;
+    q.text("no browser"); q.result({}); await settle(4);
+    assert.deepEqual(actions, [], "no browser tool: nothing to release");
+    await s.send("click it"); await settle(4);
+    sdk.last.toolUse("t1", "mcp__browser__click", { selector: "a" }); sdk.last.toolResult("t1", "{}");
+    sdk.last.text("done"); sdk.last.result({}); await settle(6);
+    assert.deepEqual(actions, ["release"]);
+    s.close(); await done.catch(() => {});
+  });
+});
+
 describe("browser site gate through the session", () => {
   test("a new site puts a card in front of the user; allow is this chat, always is the standing list; deny fails the tool", async () => {
     const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");

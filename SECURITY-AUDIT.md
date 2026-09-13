@@ -173,6 +173,17 @@ workspace.
 
 ---
 
+### L6 — Extension holds the `debugger` permission  ·  DOCUMENTED · by design
+
+Added for `handle_dialog` (2026-09-13): answering a JavaScript dialog is
+only possible through `chrome.debugger`. The worker attaches to a tab only
+before an act-level call the site gate already approved (click, fill, press,
+eval, navigate) and detaches at the end of the turn; it sends one command
+family (`Page.enable`, `Page.handleJavaScriptDialog`). Chrome shows its
+debugging bar while attached, so the attachment is visible to the user.
+Nothing else uses the session; a debugger already attached (DevTools) makes
+the attach fail silently and the dialog stays detect-only.
+
 ## Not bugs (checked, holds up)
 
 - **ANSI stripper** — no ReDoS: 50k-param CSI in 1 ms, 500 KB unterminated OSC

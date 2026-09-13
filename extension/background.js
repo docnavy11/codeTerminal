@@ -369,13 +369,87 @@ async function shrinkImage(dataUrl, maxSide, quality) {
   }
 }
 
+/* Open JavaScript dialogs, by tab: the content-script hook reports one the
+   moment it opens (before the page blocks) and again when it closes. While
+   one is open nothing else in that tab can run, so tab commands give up
+   after DIALOG_GRACE_MS and say what is blocking them. */
+const dialogs = new Map();
+const DIALOG_GRACE_MS = 8000;
+chrome.runtime.onMessage.addListener((m, sender) => {
+  const tabId = sender.tab?.id;
+  if (typeof tabId !== "number" || !m || typeof m !== "object") return;
+  if (m.kind === "dialog") dialogs.set(tabId, { type: m.type, message: String(m.message ?? "").slice(0, 2000), defaultValue: m.defaultValue, frameId: sender.frameId, at: Date.now() });
+  else if (m.kind === "dialog-closed") dialogs.delete(tabId);
+});
+chrome.tabs.onRemoved.addListener((tabId) => dialogs.delete(tabId));
+const dialogError = (tabId) => {
+  const d = dialogs.get(tabId);
+  return d
+    ? new Error(`the tab is blocked by a JavaScript ${d.type} dialog: "${d.message.slice(0, 200)}". Use handle_dialog to accept or dismiss it before anything else in this tab.`)
+    : new Error("the tab is not responding (a JavaScript dialog may be open; handle_dialog can answer it, or the user can look at the tab)");
+};
+const withGrace = (tabId, promise) => new Promise((resolve, reject) => {
+  const done = (f, v) => { clearTimeout(t); clearInterval(poll); f(v); };
+  const t = setTimeout(() => done(reject, dialogError(tabId)), DIALOG_GRACE_MS);
+  // the hook reports a dialog the instant it opens: no need to wait out the grace
+  const poll = setInterval(() => { if (dialogs.has(tabId)) done(reject, dialogError(tabId)); }, 100);
+  promise.then((v) => done(resolve, v), (e) => done(reject, e));
+});
+/* Answering a dialog needs the debugger protocol, and Chrome only lets a
+   session answer a dialog it saw open (measured: a session attached after the
+   dialog opened gets "No dialog is showing"). So the worker attaches to a tab
+   before the agent's first act-level call in it — click, fill, press, eval,
+   navigate — and stays attached until the server says the turn is over
+   (`release`). Chrome shows its "is debugging this browser" bar meanwhile.
+   Read-level calls never attach; a dialog the page raises on its own is still
+   detected by the hook, just not answerable — the user clicks it. */
+const debugged = new Set();
+async function ensureDebugger(tabId) {
+  if (debugged.has(tabId)) return true;
+  try {
+    await chrome.debugger.attach({ tabId }, "1.3");
+    await chrome.debugger.sendCommand({ tabId }, "Page.enable");
+    debugged.add(tabId);
+    return true;
+  } catch { return false; }   // DevTools or another extension has it: fall back to the hook
+}
+async function releaseDebugger(tabId) {
+  const ids = typeof tabId === "number" ? [tabId] : [...debugged];
+  for (const id of ids) { debugged.delete(id); try { await chrome.debugger.detach({ tabId: id }); } catch { /* gone */ } }
+  return { released: ids.length };
+}
+chrome.debugger.onDetach.addListener((src) => { if (typeof src.tabId === "number") debugged.delete(src.tabId); });
+chrome.debugger.onEvent.addListener((src, method, params) => {
+  if (typeof src.tabId !== "number") return;
+  if (method === "Page.javascriptDialogOpening") {
+    dialogs.set(src.tabId, { type: params.type, message: String(params.message ?? "").slice(0, 2000), defaultValue: params.defaultPrompt, at: Date.now(), answerable: true });
+  } else if (method === "Page.javascriptDialogClosed") dialogs.delete(src.tabId);
+});
+async function handleDialog(tabId, accept, text) {
+  if (!debugged.has(tabId)) return { handled: false, reason: "this dialog opened before the worker was attached to the tab (a read-only call, or the page raised it itself); it cannot be answered from here — ask the user to click it, or reload the tab" };
+  try {
+    await chrome.debugger.sendCommand({ tabId }, "Page.handleJavaScriptDialog", { accept: !!accept, ...(typeof text === "string" ? { promptText: text } : {}) });
+    return { handled: true };
+  } catch (e) {
+    if (/no dialog/i.test(String(e?.message ?? e))) return { handled: false, reason: "no dialog is open" };
+    throw e;
+  }
+}
+/** Inject page-read.js (idempotent), with the dialog guard and grace. */
+async function inject(tabId) {
+  if (dialogs.has(tabId)) throw dialogError(tabId);
+  await withGrace(tabId, chrome.scripting.executeScript({ target: { tabId }, files: ["page-read.js"], world: "MAIN" }));
+}
+
 /** Run a function in the page and return its value. */
 async function run(tabId, fn, args = []) {
-  const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args, world: "MAIN" });
+  if (dialogs.has(tabId)) throw dialogError(tabId);
+  const [res] = await withGrace(tabId, chrome.scripting.executeScript({ target: { tabId }, func: fn, args, world: "MAIN" }));
   if (!res) throw new Error("script did not run (restricted page?)");
   return res.result;
 }
 
+globalThis.ctHandle = (action, p) => handle(action, p ?? {});   // test harness entry
 async function handle(action, p) {
   switch (action) {
     // Ambient context for a prompt: what the user is actually looking at.
@@ -415,12 +489,34 @@ async function handle(action, p) {
     // Which site a call is about, before it happens — the server's site gate asks this first.
     case "tab_url": {
       const t = await resolveTab(p.tabId);
-      return { tabId: t.id, url: t.url, title: t.title };
+      const d = dialogs.get(t.id);
+      return { tabId: t.id, url: t.url, title: t.title, ...(d ? { dialog: { type: d.type, message: d.message } } : {}) };
     }
+
+    // What dialog is open in a tab, if any — known from the hook, no scripting needed.
+    case "dialog_state": {
+      const t = await resolveTab(p.tabId);
+      const d = dialogs.get(t.id);
+      return { tabId: t.id, open: !!d, ...(d ? { type: d.type, message: d.message, defaultValue: d.defaultValue, openForMs: Date.now() - d.at } : {}) };
+    }
+
+    // Accept (OK) or dismiss (Cancel) it; text answers a prompt.
+    case "handle_dialog": {
+      const t = await resolveTab(p.tabId);
+      const d = dialogs.get(t.id);
+      if (!d) return { tabId: t.id, handled: false, reason: "no dialog is open" };
+      const r = await handleDialog(t.id, p.accept, p.text);
+      if (r.handled) dialogs.delete(t.id);
+      return { tabId: t.id, type: d.type, message: d.message, ...r };
+    }
+
+    // The turn is over: let go of every tab the worker was attached to.
+    case "release": return await releaseDebugger(p.tabId);
 
     case "list_tabs": {
       const tabs = await chrome.tabs.query({});
-      return tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, active: t.active, windowId: t.windowId }));
+      return tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, active: t.active, windowId: t.windowId,
+        ...(dialogs.has(t.id) ? { dialog: { type: dialogs.get(t.id).type, message: dialogs.get(t.id).message } } : {}) }));
     }
 
     // The bytes behind a tab (or a URL), fetched with the profile's cookies —
@@ -445,7 +541,7 @@ async function handle(action, p) {
       const max = p.maxChars ?? 20000;
       const mode = ["text", "markdown", "links", "tables", "forms"].includes(p.mode) ? p.mode : "text";
       // page-read.js defines ctReadPage in the page; inject once per call (idempotent), then ask it.
-      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+      await inject(t.id);
       const body = await run(t.id, (m, mx) => globalThis.ctReadPage(m, mx), [mode, max]);
       return { tabId: t.id, title: t.title, url: t.url, ...body };
     }
@@ -461,7 +557,7 @@ async function handle(action, p) {
         const t = await resolveTab(p.tabId);
         let probe = null;
         try {
-          await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+          await inject(t.id);
           probe = await run(t.id, (o) => globalThis.ctWaitProbe(o), [{ text: p.text, gone: p.gone, selector: p.selector, load: p.load }]);
         } catch { probe = null; }   // mid-navigation: the page is not scriptable for a moment
         last = { url: t.url, readyState: probe?.readyState ?? "unavailable" };
@@ -487,14 +583,14 @@ async function handle(action, p) {
 
     case "find": {
       const t = await resolveTab(p.tabId);
-      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+      await inject(t.id);
       const r = await run(t.id, (o) => globalThis.ctFind(o), [{ text: p.text, regex: p.regex, role: p.role, name: p.name, limit: p.limit }]);
       return { tabId: t.id, url: t.url, ...r };
     }
 
     case "scroll": {
       const t = await resolveTab(p.tabId);
-      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+      await inject(t.id);
       const r = await run(t.id, (o) => globalThis.ctScroll(o), [{ ref: p.ref, selector: p.selector, direction: p.direction, pages: p.pages, to: p.to }]);
       if (r?.error) throw new Error(r.error);
       await new Promise((res) => setTimeout(res, 150));   // let lazy content paint before the next call
@@ -527,12 +623,14 @@ async function handle(action, p) {
     case "navigate": {
       if (p.newTab) { const t = await chrome.tabs.create({ url: p.url }); return { tabId: t.id, url: p.url }; }
       const t = await resolveTab(p.tabId);
+      await ensureDebugger(t.id);
       await chrome.tabs.update(t.id, { url: p.url });
       return { tabId: t.id, url: p.url };
     }
 
     case "click": {
       const t = await resolveTab(p.tabId);
+      await ensureDebugger(t.id);
       return await run(t.id, (ref, selector) => {
         const el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : document.querySelector(selector);
         if (!el) throw new Error("element not found: " + (ref || selector));
@@ -544,6 +642,7 @@ async function handle(action, p) {
 
     case "fill": {
       const t = await resolveTab(p.tabId);
+      await ensureDebugger(t.id);
       return await run(t.id, (ref, selector, value) => {
         const el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : document.querySelector(selector);
         if (!el) throw new Error("element not found: " + (ref || selector));
@@ -562,6 +661,7 @@ async function handle(action, p) {
 
     case "press": {
       const t = await resolveTab(p.tabId);
+      await ensureDebugger(t.id);
       return await run(t.id, (key) => {
         const el = document.activeElement || document.body;
         for (const type of ["keydown", "keypress", "keyup"]) {
@@ -573,6 +673,7 @@ async function handle(action, p) {
 
     case "eval": {
       const t = await resolveTab(p.tabId);
+      await ensureDebugger(t.id);
       const v = await run(t.id, (code) => {
         const r = eval(code);
         try { return JSON.parse(JSON.stringify(r ?? null)); } catch { return String(r); }

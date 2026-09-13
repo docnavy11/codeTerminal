@@ -45,7 +45,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 | # | improvement | why | status |
 |---|---|---|---|
 | 11 | **`fill_form`** — several fields in one call. | One approval, one round trip for data entry; Playwright MCP and DevTools MCP both have it. | ☐ |
-| 12 | **`handle_dialog`** — detect a blocking `alert`/`confirm`/`prompt`, surface it, accept or dismiss. | A JavaScript dialog blocks every other command; Claude Code's docs list it as the top "browser not responding" cause. We hang the same way. | ☐ |
+| 12 | **`handle_dialog`** — detect a blocking `alert`/`confirm`/`prompt`, surface it, accept or dismiss. | A JavaScript dialog blocks every other command; Claude Code's docs list it as the top "browser not responding" cause. We hang the same way. | ☑ |
 | 13 | **`browser_batch`** — a list of read-only actions as one tool call. | Directly cuts the round-trip count in a spiral; read-only, so no extra gating. | ☐ |
 | 14 | **Console and network readers** (read-only). | The "test my local web app" workflow Claude Code's docs lead with. | ☐ |
 | 15 | **File upload** from the files root into an `<input type=file>`. | Data entry that ends in an attachment; cap at 10 MB like Claude Code. | ☐ |
@@ -63,6 +63,32 @@ readers, file upload.
 
 1, 2, 8, 9 first — the observed pain plus the safety gap; then 3 and 5;
 then 4, 6, 7, 10. Item 1 is the only one that needs a new dependency.
+
+## Dialogs (#12): what was measured, 2026-09-13
+
+Real Chromium with the extension loaded (`test_extension_detects_and_answers_dialogs`,
+and the probe it came from):
+
+- A page-world hook around `alert`/`confirm`/`prompt` reports the dialog
+  (type, message, prompt default) to the worker *before* the native dialog
+  blocks the page. Measured: reported while the tab is blocked; `read_page`
+  and the click that raised it fail within a second with the message instead
+  of hanging (before: the call hung; the 8 s grace is the fallback when the
+  hook did not run, e.g. a page loaded before the extension was installed).
+- Answering needs `chrome.debugger` (`Page.handleJavaScriptDialog`), and
+  Chrome only lets a session answer a dialog it saw open: attaching *after*
+  the dialog opened returns "No dialog is showing" (measured, first attempt).
+  So the worker attaches before the first act-level call in a tab (click,
+  fill, press, eval, navigate) and detaches when the server says the turn is
+  over (`release`, sent by the session when a turn used any browser tool).
+  Measured: confirm → Cancel gives the page `false`, prompt → "Yvan", alert →
+  OK, "no dialog is open" when none; after `release` a page-raised dialog is
+  detected and flagged on `list_tabs`/`tab_url` but reported as not
+  answerable, with "ask the user to click it" for the agent.
+- Not measured: Chrome's "is debugging this browser" bar (headless has no
+  chrome UI); documented Chrome behaviour, narrative. `beforeunload` dialogs
+  (the hook cannot see them; the debugger session reports them while
+  attached) — untested.
 
 ## Measured basis
 

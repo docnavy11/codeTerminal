@@ -305,12 +305,16 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
 
   /** Where a call lands: the tab's host and title. Best-effort — an older
       extension has no tab_url, and the gate (not this) decides what is allowed. */
-  type Where = { host: string; title?: string };
+  type Where = { host: string; title?: string; dialog?: { type: string; message: string } };
   const whereFor = async (id: number | undefined): Promise<Where> => {
     try {
-      const t = (await bridge.send("tab_url", { tabId: id }, prefer())) as { url?: string; title?: string };
-      return { host: hostOfUrl(t?.url), ...(t?.title ? { title: t.title.slice(0, 80) } : {}) };
+      const t = (await bridge.send("tab_url", { tabId: id }, prefer())) as { url?: string; title?: string; dialog?: { type: string; message: string } };
+      return { host: hostOfUrl(t?.url), ...(t?.title ? { title: t.title.slice(0, 80) } : {}), ...(t?.dialog ? { dialog: t.dialog } : {}) };
     } catch { return { host: "" }; }
+  };
+  /** A tab with an open alert/confirm/prompt cannot run anything; say so at once. */
+  const blockedBy = (at: Where, action: string): void => {
+    if (at.dialog && action !== "handle_dialog") throw new Error(`browser.${action}: the tab is blocked by a JavaScript ${at.dialog.type} dialog: "${at.dialog.message.slice(0, 200)}". Answer it with handle_dialog (accept or dismiss) first; if that says it cannot, ask the user to click it.`);
   };
   /** The host a call is about: the tab's current URL, or a navigation's destination. */
   const hostFor = async (id: number | undefined): Promise<string> => {
@@ -319,9 +323,9 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   };
   /** Stamp a result with where it happened (`at`), so the transcript row can say. */
   const stamp = (r: unknown, at: Where): unknown =>
-    r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at } : r;
+    r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act", handle_dialog: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -334,6 +338,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const gated = <A extends { tabId?: number }>(action: string, run: (a: A) => Promise<unknown>) =>
     async (a: A) => {
       const at = await whereFor(a.tabId);
+      blockedBy(at, action);
       if (policy) await ensure(at.host, action);
       return text(stamp(await run(a), at));
     };
@@ -388,10 +393,16 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         async (a) => {
           if (!a.text && !a.gone && !a.selector && !a.url && !a.load && !a.networkIdle) throw new Error("wait_for needs at least one condition");
           const at = await whereFor(a.tabId);
+          blockedBy(at, "wait_for");
           if (policy) await ensure(at.host, "wait_for");
           const r = await bridge.send("wait_for", a, prefer()) as { ok: boolean; elapsedMs: number };
           return text(stamp(r, at));
         }),
+
+      tool("handle_dialog",
+        "Answer the JavaScript dialog (alert, confirm or prompt) that is blocking a tab: accept presses OK, dismiss presses Cancel, text answers a prompt. Other tools fail with the dialog's message while one is open. Only a dialog raised after this session started acting in the tab (click, fill, press, navigate, eval) can be answered; the result says when it cannot — then ask the user to click it.",
+        { tabId, accept: z.boolean().describe("true = OK, false = Cancel"), text: z.string().optional().describe("The answer, for a prompt") },
+        gated("handle_dialog", (a) => bridge.send("handle_dialog", a, prefer()))),
 
       tool("navigate", "Navigate a tab to a URL, or open a new tab.",
         { tabId, url: z.string().describe("Absolute URL"), newTab: z.boolean().optional() },

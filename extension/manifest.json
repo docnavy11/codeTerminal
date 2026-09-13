@@ -6,6 +6,7 @@
   "permissions": [
     "activeTab",
     "contextMenus",
+    "debugger",
     "notifications",
     "scripting",
     "sidePanel",
@@ -30,6 +31,10 @@
     "default_path": "sidepanel.html"
   },
   "options_page": "popup.html",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["dialog-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": true },
+    { "matches": ["<all_urls>"], "js": ["dialog-relay.js"], "run_at": "document_start", "all_frames": true }
+  ],
   "icons": {
     "128": "icon128.png"
   }
