@@ -590,7 +590,10 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     wss.handleUpgrade(req, socket, head, (ws) => {
       // The extension speaks {type}, the panel and pty speak {kind}.
       heartbeat(ws, cfg.heartbeatMs ?? 30_000, route === "/ext" ? '{"type":"ping"}' : '{"kind":"ping"}');
-      if (route === "/ws") attachAgent(ws, ctx, new URL(req.url ?? "/", "http://x").searchParams.get("observe") !== "1");
+      if (route === "/ws") {
+        const q = new URL(req.url ?? "/", "http://x").searchParams;
+        attachAgent(ws, ctx, q.get("observe") !== "1", q.get("chat"));
+      }
       else if (route === "/ext") bridge.attach(ws);
       else attachShell(ws, ctx);
     });

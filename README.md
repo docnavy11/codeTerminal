@@ -821,8 +821,12 @@ switching in one switched everywhere.
 
 Switch conversation from the **chats** button — in the side panel header, in
 the web UI header, or from the manage page's *open in the terminal*. It
-switches that window only; another browser keeps whatever it was on. The list
-filters, since the point of keeping conversations is finding them again.
+switches that window only; another browser keeps whatever it was on. Each
+window remembers its chat: opening the side panel again, or reloading the web
+page, reattaches to the chat that window was on rather than the newest one —
+so a second window never lands on, and then redirects, the first window's
+conversation. A brand-new window starts on the newest chat. The list filters,
+since the point of keeping conversations is finding them again.
 
 Sharing still works: point two clients at the same chat and they both see it
 live — the same words streaming into both, either one able to type. A chat

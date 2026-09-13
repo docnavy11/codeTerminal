@@ -83,7 +83,14 @@ function scheduleStreamRender() {
    host page loaded this file: the extension panel (chrome.* APIs) or the
    mobile page (plain URLs, since it is served by the server itself). The logic
    below is identical in both, which is why it is one file rather than two. */
-async function agentUrl() { return PLATFORM.wsUrl(); }
+/* Each window (extension) or tab (web) reattaches to the chat it was on, so a
+   second window does not land on — and then act on — the first window's chat. */
+async function agentUrl() {
+  const url = await PLATFORM.wsUrl();
+  if (!url) return url;
+  const want = await PLATFORM.recallChat?.().catch(() => null);
+  return want ? `${url}?chat=${encodeURIComponent(want)}` : url;
+}
 
 /* Liveness. The server beats every 30s; a socket that has been silent for
    longer than STALE_MS is dead even if the browser still calls it open — after
@@ -162,6 +169,7 @@ function handle(m) {
     case "commands": COMMANDS = m.commands ?? []; break;
     case "chats":
       CHATS = m.chats ?? []; ACTIVE = m.activeId;
+      if (ACTIVE) PLATFORM.rememberChat?.(ACTIVE)?.catch?.(() => {});
       if (clist.classList.contains("open")) renderChatList();
       break;
     case "cwd":

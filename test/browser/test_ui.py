@@ -712,3 +712,23 @@ def test_viewer_renders_markdown_csv_json(page, server):
 def test_open_in_tab_routes_markdown_to_viewer(page, server):
     open_ui(page, server)
     assert page.evaluate("() => ownViewer('a/b.md') && ownViewer('x.CSV') && ownViewer('d.json') && !ownViewer('p.pdf') && !ownViewer('t.txt')")
+
+
+def test_each_tab_keeps_its_own_chat(page, server):
+    open_ui(page, server)
+    page.click("#newchat")
+    page.wait_for_function("() => ACTIVE && sessionStorage.getItem('ct.chat') === ACTIVE", timeout=5000)
+    mine = page.evaluate("() => ACTIVE")
+    send(page, "mine"); wait_reply(page, "You said: mine")     # used, so "New chat" elsewhere makes a different one
+    other = page.context.new_page()
+    other.goto(server.base + "/m.html")
+    other.wait_for_function("() => ACTIVE", timeout=5000)
+    assert other.evaluate("() => ACTIVE") == mine          # a fresh tab still lands on the newest
+    other.click("#newchat")
+    other.wait_for_function("(m) => ACTIVE && ACTIVE !== m", arg=mine, timeout=5000)
+    theirs = other.evaluate("() => ACTIVE")
+    page.reload()
+    page.wait_for_function("() => ACTIVE", timeout=5000)
+    assert page.evaluate("() => ACTIVE") == mine, "reload must reattach to this tab's chat, not the other tab's newer one"
+    assert other.evaluate("() => ACTIVE") == theirs
+    other.close()

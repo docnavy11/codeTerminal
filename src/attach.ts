@@ -33,12 +33,13 @@ export type AttachContext = {
  * Every attached client picks its own conversation, so two browsers can hold
  * two different chats at once.
  */
-export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true): void {
+export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wantId: string | null = null): void {
   const { convo, bridge, state } = ctx;
   const send = (e: ClientEvent) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(e)); };
 
-  // Land on the most recent chat; the client can switch immediately.
-  const startId = convo.newestId();
+  // Land on the chat this client asked for (each window remembers its own), else
+  // the most recent one; the client can switch immediately either way.
+  const startId = (wantId && convo.get(wantId) ? wantId : null) ?? convo.newestId();
   let chat: LiveChat = (startId && convo.get(startId)) || convo.create();
   let clientBrowser: string | undefined;
   state.lastChat = chat;

@@ -37,6 +37,15 @@ function world() {
 }
 
 describe("attachAgent: connecting", () => {
+  test("lands on the chat the client asks for; an unknown id falls back to the newest", () => {
+    const w = world();
+    const first = w.convo.create(); const second = w.convo.create();
+    assert.equal(w.convo.newestId(), second.id);
+    const ws = new FakeWs(); attachAgent(ws as unknown as WebSocket, w.ctx, true, first.id);
+    assert.equal(ws.last("chats")!.activeId, first.id);
+    const ws2 = new FakeWs(); attachAgent(ws2 as unknown as WebSocket, w.ctx, true, "no-such-chat");
+    assert.equal(ws2.last("chats")!.activeId, second.id);
+  });
   test("lands on the newest chat (creating one if none), announces list, mode and project", () => {
     const w = world();
     const ws = w.agent();

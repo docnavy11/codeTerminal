@@ -290,6 +290,18 @@ describe("upgrades", () => {
     assert.match(await rawUpgrade("/ws", ["Origin: https://evil.example"]), /^HTTP\/1\.1 403/);
     assert.match(await rawUpgrade("/pty", ["Sec-Fetch-Site: cross-site"]), /^HTTP\/1\.1 403/);
   });
+  test("/ws?chat=<id> attaches to that chat, not the newest", async () => {
+    const a = await s.socket("/ws");
+    const first = (await a.wait((m) => m.kind === "chats")).activeId as string;
+    a.send({ type: "new" });
+    const second = (await a.wait((m) => m.kind === "chats" && m.activeId !== first)).activeId as string;
+    assert.notEqual(second, first);
+    const b = await s.socket(`/ws?chat=${first}`);
+    assert.equal((await b.wait((m) => m.kind === "chats")).activeId, first);
+    const c = await s.socket("/ws");
+    assert.equal((await c.wait((m) => m.kind === "chats")).activeId, second);
+    a.ws.close(); b.ws.close(); c.ws.close();
+  });
   test("/ws attaches to a chat and carries a prompt to the SDK", async () => {
     const c = await s.socket("/ws");
     const chats = await c.wait((m) => m.kind === "chats");

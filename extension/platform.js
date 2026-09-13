@@ -33,6 +33,18 @@ globalThis.PLATFORM = {
 
   openUrl(url) { chrome.tabs.create({ url }); },
 
+  /* The chat this window's panel is on, keyed by window id: two windows keep
+     two chats. Session storage — window ids do not outlive the browser. */
+  async recallChat() {
+    const w = await chrome.windows.getCurrent();
+    const got = await chrome.storage.session.get(`chat:${w.id}`);
+    return got[`chat:${w.id}`] ?? null;
+  },
+  async rememberChat(id) {
+    const w = await chrome.windows.getCurrent();
+    await chrome.storage.session.set({ [`chat:${w.id}`]: id });
+  },
+
   tabLabel(on) { return on ? "tab" : "tab off"; },
   tabTitle: "Attach the active tab to each prompt",
 
