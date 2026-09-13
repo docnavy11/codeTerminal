@@ -27,8 +27,7 @@
            border-radius:5px; padding:3px 9px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   button.on { border-color:var(--accent); color:var(--accent); }
-  main { max-width:960px; margin:0 auto; padding:18px 20px 60px; }
-  main.wide { max-width:none; }
+  main { padding:18px 24px 60px; }
   .err { color:var(--bad); }
   .note { color:var(--dim); font-size:0.85rem; margin-bottom:12px; }
   pre { margin:0; background:var(--code); border:1px solid var(--line); border-radius:6px; padding:10px 12px;
@@ -47,6 +46,8 @@
   .md pre { margin:0 0 0.8em; }
   .md table, table.grid { border-collapse:collapse; border-spacing:0; margin:0 0 0.8em; font-variant-numeric:tabular-nums; }
   .md table { display:block; max-width:100%; overflow-x:auto; font-size:0.92rem; }
+  .md td, .md th { white-space:nowrap; }
+  .md td { white-space:normal; min-width:6em; }
   .md th, .md td, .grid th, .grid td { border:1px solid var(--line); padding:4px 9px; text-align:left; vertical-align:top; }
   .md th, .grid th { background:var(--panel); font-weight:600; border-bottom:2px solid var(--dim); }
   .md tbody tr:nth-child(even) td, .grid tbody tr:nth-child(even) td { background:color-mix(in srgb, var(--panel) 55%, transparent); }
