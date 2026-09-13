@@ -693,6 +693,29 @@ routes the browser through a SOCKS/HTTP proxy, for instance one on your
 laptop reached over the tailnet. `CODETERM_SERVER_BROWSER_PLAIN=0` keeps
 the headless tell-tales.
 
+**Leaving from home: the exit-node recipe (this box, 2026-09-13).** The
+Home Assistant Tailscale add-on advertises an exit node; a *second*,
+userspace `tailscaled` on the VPS offers a SOCKS5 port and uses that exit
+node, so only the browser's traffic goes home while the rest of the server
+is untouched. No root needed:
+
+```
+tailscaled --tun=userspace-networking --socks5-server=127.0.0.1:1080 \
+  --state=$HOME/.local/state/tailscale-browser/tailscaled.state \
+  --socket=$HOME/.local/run/tailscale-browser.sock --port=0
+tailscale --socket=$HOME/.local/run/tailscale-browser.sock up --hostname=devserver-browser --accept-dns=false
+tailscale --socket=$HOME/.local/run/tailscale-browser.sock set --exit-node=<exit node's tailnet IP>
+```
+
+(`up` prints a login link to approve the extra machine; set the exit node
+by IP, since the hostname cannot be resolved before the node is up.) A user
+systemd unit with `Restart=always` keeps it running (`loginctl
+enable-linger` once, as root). Then `CODETERM_SERVER_BROWSER_PROXY=socks5://127.0.0.1:1080`;
+the browser bypasses the proxy for this server's own host and loopback, so
+the extension inside still connects direct. Measured: `curl` through the
+port and a page inside the browser both report the home IP; direct from the
+VPS, Hetzner's.
+
 **Notes.** Chromium runs with `--no-sandbox` (a VPS without user namespaces
 cannot start it otherwise); the profile holds real logins, so it is in
 `.gitignore` and belongs to the server's user only. The extension inside

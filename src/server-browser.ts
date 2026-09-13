@@ -140,6 +140,10 @@ export class ServerBrowser {
   }
 
   get running(): boolean { return !!this.#proc && !!this.#cdp; }
+  #serverHosts(): string[] {
+    const u = typeof this.#o.serverWsUrl === "function" ? this.#o.serverWsUrl() : this.#o.serverWsUrl;
+    try { return [new URL(u).hostname]; } catch { return []; }
+  }
   /** The id Chromium gave our unpacked extension inside; known once started. */
   get extensionId(): string | undefined { return this.#extensionId; }
   get chromium(): string | null { return this.#o.chromium ?? findChromium(); }
@@ -173,7 +177,9 @@ export class ServerBrowser {
       "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox",
       `--window-size=${w},${h}`, "--hide-crash-restore-bubble", "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
       ...(this.#o.lang ? [`--lang=${this.#o.lang.split(",")[0]}`, `--accept-lang=${this.#o.lang}`] : []),
-      ...(this.#o.proxy ? [`--proxy-server=${this.#o.proxy}`] : []),
+      // The proxy is for the sites; the extension's own socket to this server
+      // and anything on loopback go direct.
+      ...(this.#o.proxy ? [`--proxy-server=${this.#o.proxy}`, `--proxy-bypass-list=${["127.0.0.1", "localhost", "<-loopback>", ...this.#serverHosts()].join(";")}`] : []),
     ];
     if (this.#o.plain !== false) {
       // Measured before this: UA "HeadlessChrome/151", navigator.webdriver true,
