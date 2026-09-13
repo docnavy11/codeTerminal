@@ -19,7 +19,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 
 | # | improvement | why | status |
 |---|---|---|---|
-| 1 | **PDFs.** `read_page` on a PDF tab returns the text: the extension fetches the tab's bytes, the server extracts text (`pdfjs-dist`, pure JS). | Chrome's PDF viewer is not scriptable, so `read_page` returns nothing and the agent falls back to screenshot→Read per page — that *was* the spiral (20 screenshots, 19 reads). The invoice job is the most common browser task here. | ☐ |
+| 1 | **PDFs.** `read_page` on a PDF tab returns the text: the extension fetches the tab's bytes, the server extracts text (`pdfjs-dist`, pure JS). | Chrome's PDF viewer is not scriptable, so `read_page` returns nothing and the agent falls back to screenshot→Read per page — that *was* the spiral (20 screenshots, 19 reads). The invoice job is the most common browser task here. | ☑ |
 | 2 | **Screenshots inline.** Return the PNG as an image content block instead of a path. | Halves the calls in any visual task (no `Read` round trip) and makes the screenshot budget a real cap on cost. | ☐ |
 | 3 | **Structured reads.** `read_page` with `mode: text \| links \| tables \| forms` — rows, fields with current values, `[text → url]`. | Far fewer tokens than 20 000 chars of `innerText`; and a table no longer needs `eval`, which now asks every time. | ☐ |
 | 4 | **`find` and `scroll`.** Search the page for text → matches with the enclosing element's ref and position; scroll to a ref or by pages. | "Is X on this page?" is a full `read_page` today; long pages are read blind. | ☐ |
@@ -39,6 +39,16 @@ call). Screenshots go to disk and come back as a path the model then reads.
 | 8 | **Read vs act on the site card.** Two levels — *read* (`read_page`, `snapshot`, `screenshot`, `find`) and *act* (`click`, `fill`, `press`, `navigate`, `eval`) — the card asks for the level the call needs. | A site is allowed wholesale today: "let it read my bank" also means "let it click Transfer". Small change on top of the gate. | ☐ |
 | 9 | **Tool rows say where.** The tab's URL is already fetched before every call; show it on the row (`→ click  bank.example · Transfer`). | Makes the transcript auditable at a glance; costs nothing. | ☐ |
 | 10 | **Confirm before submit.** A card when `press Enter` or a click lands on a submit control in a form with filled fields. | Prevents the expensive mistake. Heuristic (what counts as submit), hence last. | ☐ |
+
+## From the research
+
+| # | improvement | why | status |
+|---|---|---|---|
+| 11 | **`fill_form`** — several fields in one call. | One approval, one round trip for data entry; Playwright MCP and DevTools MCP both have it. | ☐ |
+| 12 | **`handle_dialog`** — detect a blocking `alert`/`confirm`/`prompt`, surface it, accept or dismiss. | A JavaScript dialog blocks every other command; Claude Code's docs list it as the top "browser not responding" cause. We hang the same way. | ☐ |
+| 13 | **`browser_batch`** — a list of read-only actions as one tool call. | Directly cuts the round-trip count in a spiral; read-only, so no extra gating. | ☐ |
+| 14 | **Console and network readers** (read-only). | The "test my local web app" workflow Claude Code's docs lead with. | ☐ |
+| 15 | **File upload** from the files root into an `<input type=file>`. | Data entry that ends in an attachment; cap at 10 MB like Claude Code. | ☐ |
 
 ## Reuse
 

@@ -404,6 +404,23 @@ async function handle(action, p) {
       return tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, active: t.active, windowId: t.windowId }));
     }
 
+    // The bytes behind a tab (or a URL), fetched with the profile's cookies —
+    // how the server reads a PDF the viewer will not let a script into.
+    case "fetch_bytes": {
+      const t = p.url ? null : await resolveTab(p.tabId);
+      const url = p.url ?? t?.url;
+      if (!url || !/^https?:/.test(url)) throw new Error("not a fetchable URL");
+      const max = p.maxBytes ?? 20 * 1024 * 1024;
+      const r = await fetch(url, { credentials: "include", redirect: "follow" });
+      if (!r.ok) throw new Error(`fetch failed: HTTP ${r.status}`);
+      const len = Number(r.headers.get("content-length") ?? 0);
+      if (len > max) throw new Error(`too large: ${len} bytes (limit ${max})`);
+      const buf = new Uint8Array(await r.arrayBuffer());
+      if (buf.length > max) throw new Error(`too large: ${buf.length} bytes (limit ${max})`);
+      let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      return { tabId: t?.id, title: t?.title, url, contentType: r.headers.get("content-type") ?? "", bytes: buf.length, data: btoa(bin) };
+    }
+
     case "read_page": {
       const t = await resolveTab(p.tabId);
       const max = p.maxChars ?? 20000;

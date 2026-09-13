@@ -3,9 +3,14 @@
   "version": "0.1.0",
   "description": "A web UI, Chrome side panel and mobile page over a live Claude Code session: approval-gated agent, real shell, file browser, page watches.",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/docnavy11/codeTerminal.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/docnavy11/codeTerminal.git"
+  },
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -28,6 +33,7 @@
     "express": "^5.1.0",
     "marked": "^18.0.12",
     "node-pty": "^1.1.0",
+    "pdfjs-dist": "^6.3.289",
     "ws": "^8.18.0",
     "yazl": "^3.3.1",
     "zod": "^4.6.0"

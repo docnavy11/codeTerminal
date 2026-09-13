@@ -10,6 +10,7 @@ import { WatchRegistry } from "../src/watches.js";
 import { PromptStore } from "../src/prompts.js";
 import { Shell } from "../src/shell.js";
 import { FakeWs } from "./fakes/ws.js";
+import { makePdf } from "./pdf.test.js";
 
 /**
  * The MCP tools the model calls, invoked directly through the MCP server's
@@ -206,6 +207,36 @@ describe("browser tools", () => {
     await call(srv, "eval", { code: "3" }); assert.equal(asks.length, 2, "granted for this host");
     const { bridge: b2 } = bridged({ eval: (p) => ({ value: p.code }) });
     assert.match(await call(browserTools(b2, () => undefined), "eval", { code: "x" }), /x/, "no policy: no tab_url call, no ask");
+  });
+
+  test("read_page on a PDF tab: the viewer refuses, the bytes are fetched, the text comes back", async () => {
+    const pdf = makePdf([["Invoice 0039", "Amount 12,50"]]);
+    const calls: string[] = [];
+    const { bridge } = bridged({
+      tab_url: () => ({ tabId: 5, url: "https://files.example/inv/0039.pdf" }),
+      read_page: () => { calls.push("read_page"); throw new Error("Cannot access contents of the page"); },
+      fetch_bytes: () => { calls.push("fetch_bytes"); return { tabId: 5, title: "0039.pdf", url: "https://files.example/inv/0039.pdf", contentType: "application/pdf", bytes: pdf.length, data: pdf.toString("base64") }; },
+    });
+    const srv = browserTools(bridge, () => undefined);
+    const out = JSON.parse(await call(srv, "read_page", { tabId: 5 })) as { kind: string; pages: number; text: string; title: string };
+    assert.equal(out.kind, "pdf"); assert.equal(out.pages, 1); assert.match(out.text, /Invoice 0039\nAmount 12,50/); assert.equal(out.title, "0039.pdf");
+    assert.deepEqual(calls, ["fetch_bytes"], "a .pdf URL skips the viewer and goes straight to the bytes");
+  });
+
+  test("read_page on an empty, unnamed page tries the bytes; a non-PDF answer falls back to what the page gave", async () => {
+    const { bridge } = bridged({
+      tab_url: () => ({ tabId: 6, url: "https://app.example/doc/77" }),
+      read_page: () => ({ tabId: 6, title: "Doc", url: "https://app.example/doc/77", text: "", chars: 0 }),
+      fetch_bytes: () => ({ tabId: 6, url: "https://app.example/doc/77", contentType: "text/html", bytes: 6, data: Buffer.from("<html>").toString("base64") }),
+    });
+    const out = JSON.parse(await call(browserTools(bridge, () => undefined), "read_page", { tabId: 6 })) as { chars: number; kind?: string };
+    assert.equal(out.chars, 0); assert.equal(out.kind, undefined);
+    const { bridge: b2 } = bridged({
+      tab_url: () => ({ tabId: 7, url: "https://app.example/doc/78" }),
+      read_page: () => { throw new Error("Cannot access contents of the page"); },
+      fetch_bytes: () => { throw new Error("fetch failed: HTTP 403"); },
+    });
+    await assert.rejects(call(browserTools(b2, () => undefined), "read_page", { tabId: 7 }), /Cannot access contents/);
   });
 
   test("a preferred browser that is gone fails rather than acting elsewhere", async () => {

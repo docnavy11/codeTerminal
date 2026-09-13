@@ -419,7 +419,7 @@ describe("browser site gate through the session", () => {
     const bridge = new BrowserBridge(() => {}, 500);
     const ext = new FakeWs();
     const origSend = ext.send.bind(ext);
-    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result: msg.action === "tab_url" ? { tabId: 1, url: "https://bank.example/acct" } : { text: "balance" } })); };
+    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result: msg.action === "tab_url" ? { tabId: 1, url: "https://bank.example/acct" } : { text: "balance is 1,250.00 EUR today", chars: 29 } })); };
     bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
     const sdk = fakeSdk(); const events: ClientEvent[] = [];
     const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, browserAllow: allow });

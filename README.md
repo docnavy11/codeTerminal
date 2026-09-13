@@ -642,6 +642,16 @@ server (`createSdkMcpServer`), so there is no separate process:
     list_tabs  read_page  snapshot  navigate  click
     fill       press      eval      screenshot
 
+**PDF tabs are readable.** Chrome's PDF viewer lets no script in, so
+`read_page` on a PDF used to come back empty and the agent fell back to a
+screenshot per page — twenty of them in the 2026-09-11 turn. Now a tab
+named `.pdf`, or one the viewer refuses, has its bytes fetched by the
+extension with your profile's cookies and the text extracted on the server
+with pdf.js (pure JS, no canvas), page by page, capped at 20 000 characters
+by default. The result says `PDF · 3 pages`. Not measured against a real
+PDF tab yet — the extractor is tested on generated PDFs, the extension's
+fetch path only on the fake.
+
 **Gated per site, not per call.** The first time a chat touches a site —
 reads it, clicks, screenshots, navigates there — a card asks: *Let Claude
 use bank.example?* **Allow (this chat)**, **Always (this site)** or
