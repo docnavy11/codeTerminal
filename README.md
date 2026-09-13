@@ -708,9 +708,16 @@ tailscale --socket=$HOME/.local/run/tailscale-browser.sock set --exit-node=<exit
 ```
 
 (`up` prints a login link to approve the extra machine; set the exit node
-by IP, since the hostname cannot be resolved before the node is up.) A user
-systemd unit with `Restart=always` keeps it running (`loginctl
-enable-linger` once, as root). Then `CODETERM_SERVER_BROWSER_PROXY=socks5://127.0.0.1:1080`;
+by IP, since the hostname cannot be resolved before the node is up.) On this
+box it runs as a **user** systemd unit — `~/.config/systemd/user/tailscale-browser.service`,
+`Restart=always`, wanted by `default.target`, with lingering enabled for the
+user (`loginctl enable-linger dev`, once, as root) — so it starts at boot
+with no login and no root, and `systemctl --user status tailscale-browser`
+shows it (set `XDG_RUNTIME_DIR=/run/user/$(id -u)` in a non-login shell).
+It is not in `/etc/systemd/system`, which is where a look for it fails. If
+the proxy is down, Chromium's `--proxy-server` makes page loads fail with a
+proxy error rather than falling back to the VPS's own address (Chromium's
+behaviour, not measured here). Then `CODETERM_SERVER_BROWSER_PROXY=socks5://127.0.0.1:1080`;
 the browser bypasses the proxy for this server's own host and loopback, so
 the extension inside still connects direct. Measured: `curl` through the
 port and a page inside the browser both report the home IP; direct from the
