@@ -648,3 +648,16 @@ def test_find_and_scroll_in_the_page(page, server):
     assert page.evaluate("() => ctScroll({ to: 'top' })")["atTop"] is True
     assert page.evaluate("() => ctScroll({ selector: '#deep' }).rect.h") > 0
     assert page.evaluate("() => ctScroll({ ref: 'nope' })")["error"].startswith("no element")
+
+
+def test_wait_probe_reports_each_condition(page, server):
+    page.set_content("<h1>Loading…</h1><div id=spinner>please wait</div><button hidden id=done>Done</button>")
+    page.add_script_tag(path=os.path.join(os.path.dirname(__file__), "..", "..", "extension", "page-read.js"))
+    r = page.evaluate("() => ctWaitProbe({ text: ['ready', 'done'], gone: 'please wait', selector: '#done', load: 'complete' })")
+    assert r["text"] is None and r["gone"] is False and r["selector"] is False and r["load"] is True and r["readyState"] == "complete", r
+    page.evaluate("() => { document.querySelector('#spinner').remove(); document.querySelector('#done').hidden = false; document.querySelector('h1').textContent = 'All DONE'; }")
+    r = page.evaluate("() => ctWaitProbe({ text: ['ready', 'done'], gone: 'please wait', selector: '#done' })")
+    assert r["text"] == "done" and r["gone"] is True and r["selector"] is True, r
+    assert page.evaluate("() => ctWaitProbe({ selector: '#done' })")["selector"] is True
+    assert page.evaluate("() => ctWaitProbe({ selector: ':::bad' })")["selectorError"] == "bad selector"
+    assert isinstance(page.evaluate("() => ctWaitProbe({}).resources"), int)

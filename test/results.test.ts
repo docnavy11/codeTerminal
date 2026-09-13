@@ -54,6 +54,8 @@ describe("summariseResult", () => {
     assert.equal(r("mcp__browser__find", JSON.stringify({ count: 1, matches: [{ name: "Pay now" }] })).summary, "1 match · Pay now");
     assert.equal(r("mcp__browser__find", JSON.stringify({ count: 0, matches: [], error: "give text, regex, or role/name" })).summary, "give text, regex, or role/name");
     assert.equal(r("mcp__browser__scroll", JSON.stringify({ percent: 42, atTop: false, atBottom: false })).summary, "42%");
+    assert.equal(r("mcp__browser__wait_for", JSON.stringify({ ok: true, elapsedMs: 1234, text: "Welcome back" })).summary, 'ready after 1.2s · "Welcome back"');
+    assert.equal(r("mcp__browser__wait_for", JSON.stringify({ ok: false, timeout: true, elapsedMs: 10000 })).summary, "✗ timed out after 10.0s");
     assert.equal(r("mcp__browser__scroll", JSON.stringify({ percent: 100, atTop: false, atBottom: true })).summary, "bottom");
     assert.equal(r("mcp__browser__download", JSON.stringify({ path: "/w/downloads/a.pdf", name: "a.pdf", bytes: 1_300_000 })).summary, "saved a.pdf · 1.2 MB");
     assert.equal(r("mcp__browser__snapshot", JSON.stringify({ elements: [1, 2, 3] })).summary, "3 elements");

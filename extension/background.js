@@ -450,6 +450,41 @@ async function handle(action, p) {
       return { tabId: t.id, title: t.title, url: t.url, ...body };
     }
 
+    // Poll the page until every given condition holds (text = any of), or time out.
+    // Polled from here, not inside the page, so a reload mid-wait does not kill it.
+    case "wait_for": {
+      const t0 = Date.now();
+      const timeout = Math.min(Math.max(p.timeoutMs ?? 10000, 100), 60000);
+      const glob = p.url ? new RegExp("^" + String(p.url).split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$") : null;
+      let last = null, prevResources = -1, idleSince = 0;
+      while (true) {
+        const t = await resolveTab(p.tabId);
+        let probe = null;
+        try {
+          await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+          probe = await run(t.id, (o) => globalThis.ctWaitProbe(o), [{ text: p.text, gone: p.gone, selector: p.selector, load: p.load }]);
+        } catch { probe = null; }   // mid-navigation: the page is not scriptable for a moment
+        last = { url: t.url, readyState: probe?.readyState ?? "unavailable" };
+        const checks = [];
+        if (p.text) checks.push(!!probe?.text);
+        if (p.gone) checks.push(!!probe?.gone);
+        if (p.selector) checks.push(!!probe?.selector);
+        if (p.load) checks.push(!!probe?.load);
+        if (glob) checks.push(glob.test(t.url || ""));
+        if (p.networkIdle) {
+          const n = probe?.resources ?? -1;
+          if (probe && n === prevResources && probe.readyState === "complete") { idleSince = idleSince || Date.now(); } else idleSince = 0;
+          prevResources = n;
+          checks.push(idleSince > 0 && Date.now() - idleSince >= 500);
+        }
+        if (checks.length && checks.every(Boolean)) {
+          return { ok: true, elapsedMs: Date.now() - t0, tabId: t.id, url: t.url, ...(probe?.text ? { text: probe.text } : {}) };
+        }
+        if (Date.now() - t0 >= timeout) return { ok: false, timeout: true, elapsedMs: Date.now() - t0, tabId: t.id, last };
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+
     case "find": {
       const t = await resolveTab(p.tabId);
       await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });

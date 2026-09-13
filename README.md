@@ -677,6 +677,15 @@ the viewport ended up (`42%`, `bottom`) so a long page can be read in
 passes. Both are read-level for the site gate. Tested against a fixture
 page in the browser suite.
 
+**`wait_for`.** Wait until text appears (any of a list), text is gone, a
+selector matches a visible element, the URL matches a glob
+(`**/dashboard*`), the document has loaded, or the network has been quiet
+for half a second — all given conditions together, 10 s by default, 60 s
+at most, and a timeout says so instead of hanging. Polled from the
+extension's worker rather than inside the page, so a reload mid-wait does
+not kill it. Read-level. This replaces the `eval(document.readyState)`
+loops that made up six of the spiral's calls.
+
 **Screenshots come back inline.** The screenshot tool returns the image
 itself as part of its result, so the model looks at it directly — no
 `Read` of a path afterwards, which halves the calls in any visual task and

@@ -28,7 +28,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 
 | # | improvement | why | status |
 |---|---|---|---|
-| 5 | **`wait_for`** — selector, text, or network-idle, with a timeout. | The agent guesses with `eval(document.readyState)` loops; six of the spiral's evals were exactly this. | ☐ |
+| 5 | **`wait_for`** — selector, text, or network-idle, with a timeout. | The agent guesses with `eval(document.readyState)` loops; six of the spiral's evals were exactly this. | ☑ |
 | 6 | **Tab management** — `open_tab`, `close_tab`, `focus_tab`, `back`, `reload`. | `navigate {newTab}` is the only tab operation; the agent cannot tidy up after itself or return to where it was. | ☐ |
 | 7 | **`download`** — save a link or the current document into the files root via `chrome.downloads` (or the `fetch_bytes` path #1 already has). | "Get me all the invoices as PDFs" should end in the file browser, not in screenshots. Observed 2026-09-13: asked about a PDF tab, the agent's own plan B for an auth-walled file was `eval(fetch(location.href))` + base64 + write to disk + `Read` — one gated eval per page-set. A `download` tool is that path without the gymnastics, and it gives the model the rendered pages (layout) that the text layer loses. | ☑ |
 

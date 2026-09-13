@@ -149,6 +149,19 @@
     return { scrollY: y, scrollHeight: h, innerHeight: vh, atTop: y <= 0, atBottom: y + vh >= h - 2, percent: h > vh ? Math.round(y / (h - vh) * 100) : 100, ...(target ? { rect: rectOf(target) } : {}) };
   };
 
+  /* ---- wait_for's probe: one look at the page for each condition; the
+     extension polls this from outside so a navigation mid-wait is fine. ---- */
+  globalThis.ctWaitProbe = function ctWaitProbe(o) {
+    const body = (document.body?.innerText || "").toLowerCase();
+    const texts = Array.isArray(o.text) ? o.text : o.text ? [o.text] : [];
+    const r = { readyState: document.readyState, url: location.href, resources: performance.getEntriesByType("resource").length };
+    if (texts.length) { const hit = texts.find((t) => body.includes(String(t).toLowerCase())); r.text = hit ?? null; }
+    if (o.gone) r.gone = !body.includes(String(o.gone).toLowerCase());
+    if (o.selector) { let el = null; try { el = document.querySelector(o.selector); } catch { r.selectorError = "bad selector"; } r.selector = !!(el && visible(el)); }
+    if (o.load) r.load = o.load === "domcontentloaded" ? document.readyState !== "loading" : document.readyState === "complete";
+    return r;
+  };
+
   globalThis.ctReadPage = function ctReadPage(mode, maxChars) {
     const max = maxChars || 20000;
     const cap = (s) => (s.length > max ? s.slice(0, max) + "\n…[truncated]" : s);

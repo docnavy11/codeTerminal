@@ -309,7 +309,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     return hostOfUrl(t?.url);
   };
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -358,6 +358,23 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         "Scroll the page: to an element (ref from find/snapshot, or a CSS selector), by pages up or down, or to the top/bottom. Returns where the viewport ended up (percent, atBottom).",
         { tabId, ref: z.string().optional(), selector: z.string().optional(), direction: z.enum(["down", "up"]).optional(), pages: z.number().optional().describe("How many screens (default 1)"), to: z.enum(["top", "bottom"]).optional() },
         gated("scroll", (a) => bridge.send("scroll", a, prefer()))),
+
+      tool("wait_for",
+        "Wait until the page is in a state — text appears (any of a list), text is gone, an element matches a selector, the URL matches a glob, the document has loaded, or the network has gone quiet — instead of guessing with sleeps or polling eval. Times out (default 10s, max 60s) and says so.",
+        { tabId,
+          text: z.union([z.string(), z.array(z.string())]).optional().describe("Text that must appear (any of these)"),
+          gone: z.string().optional().describe("Text that must have disappeared"),
+          selector: z.string().optional().describe("A CSS selector that must match a visible element"),
+          url: z.string().optional().describe("A glob the tab URL must match, e.g. **/dashboard*"),
+          load: z.enum(["domcontentloaded", "complete"]).optional(),
+          networkIdle: z.boolean().optional().describe("No new resource loads for 500 ms"),
+          timeoutMs: z.number().int().optional() },
+        async (a) => {
+          if (!a.text && !a.gone && !a.selector && !a.url && !a.load && !a.networkIdle) throw new Error("wait_for needs at least one condition");
+          if (policy) await ensure(await hostFor(a.tabId), "wait_for");
+          const r = await bridge.send("wait_for", a, prefer()) as { ok: boolean; elapsedMs: number };
+          return text(r);
+        }),
 
       tool("navigate", "Navigate a tab to a URL, or open a new tab.",
         { tabId, url: z.string().describe("Absolute URL"), newTab: z.boolean().optional() },

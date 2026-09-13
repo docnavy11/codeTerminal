@@ -234,6 +234,17 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("wait_for needs a condition, forwards the rest, and is read-level", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const policy = { allowed: (_h: string, level: string) => level === "read", evalAllowed: () => false, ask: async () => "deny" as const };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://ok.example/" }), wait_for: (p) => { seen.push(p); return { ok: true, elapsedMs: 1200, text: "ready" }; } });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    await assert.rejects(call(srv, "wait_for", { tabId: 1 }), /at least one condition/);
+    assert.match(await call(srv, "wait_for", { text: ["ready", "done"], timeoutMs: 5000 }), /"ok": true/);
+    assert.deepEqual(seen[0], { text: ["ready", "done"], timeoutMs: 5000 });
+    assert.match(await call(srv, "wait_for", { url: "**/dash*" }), /"ok": true/);
+  });
+
   test("eval asks every call on an allowed site until granted for the chat; without a policy nothing asks", async () => {
     const asks: string[] = [];
     const evalOk = new Set<string>();
