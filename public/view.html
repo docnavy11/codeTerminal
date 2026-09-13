@@ -27,6 +27,9 @@
            border-radius:5px; padding:3px 9px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   button.on { border-color:var(--accent); color:var(--accent); }
+  input[type=search] { font:inherit; font-size:0.85rem; background:var(--bg); color:var(--fg); border:1px solid var(--line);
+                       border-radius:5px; padding:3px 8px; width:220px; max-width:40vw; }
+  input[type=search]:focus { outline:none; border-color:var(--accent); }
   main { padding:18px 24px 60px; }
   .err { color:var(--bad); }
   .note { color:var(--dim); font-size:0.85rem; margin-bottom:12px; }
@@ -45,9 +48,21 @@
   .md hr { border:0; border-top:1px solid var(--line); margin:1.2em 0; }
   .md pre { margin:0 0 0.8em; }
   .md table, table.grid { border-collapse:collapse; border-spacing:0; margin:0 0 0.8em; font-variant-numeric:tabular-nums; }
-  .md table { display:block; max-width:100%; overflow-x:auto; font-size:0.92rem; }
-  .md td, .md th { white-space:nowrap; }
-  .md td { white-space:normal; min-width:6em; }
+  .md table { font-size:0.92rem; }
+  .md th { white-space:nowrap; }
+  .md td { white-space:normal; min-width:6em; overflow-wrap:anywhere; }
+  /* tables: scroll in their own box; sortable, resizable headers; filtered rows */
+  .tw { overflow-x:auto; margin:0 0 0.8em; }
+  .tw table { margin:0; }
+  .tw .cnt { color:var(--dim); font-size:0.8rem; margin:0 0 4px; }
+  th.sortable { cursor:pointer; user-select:none; position:relative; padding-right:18px; }
+  th.sortable::after { content:"⇅"; position:absolute; right:6px; opacity:0.35; font-size:0.8em; }
+  th.sortable.asc::after { content:"▲"; opacity:1; } th.sortable.desc::after { content:"▼"; opacity:1; }
+  th .rz { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:1; }
+  th .rz:hover, th .rz.on { background:var(--accent); opacity:0.5; }
+  table.fixed { table-layout:fixed; }
+  table.fixed td, table.fixed th { overflow:hidden; text-overflow:ellipsis; }
+  tr[hidden] { display:none; }
   .md th, .md td, .grid th, .grid td { border:1px solid var(--line); padding:4px 9px; text-align:left; vertical-align:top; }
   .md th, .grid th { background:var(--panel); font-weight:600; border-bottom:2px solid var(--dim); }
   .md tbody tr:nth-child(even) td, .grid tbody tr:nth-child(even) td { background:color-mix(in srgb, var(--panel) 55%, transparent); }
@@ -56,12 +71,14 @@
   /* csv/tsv grid */
   .gridwrap { overflow:auto; }
   table.grid { font:0.9rem/1.4 var(--mono); white-space:nowrap; }
+  table.grid.fixed td { white-space:normal; overflow-wrap:anywhere; }
   table.grid td:first-child, table.grid th:first-child { color:var(--dim); text-align:right; }
 </style>
 <header>
   <span class="name" id="name">…</span>
   <span class="meta" id="meta"></span>
   <span class="sp"></span>
+  <input id="q" type="search" placeholder="filter rows…" hidden>
   <button id="raw" hidden>Raw</button>
   <button id="dl">Download</button>
 </header>

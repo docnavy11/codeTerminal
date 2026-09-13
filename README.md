@@ -1069,7 +1069,10 @@ shows a card: name, size, its note, **Download**, **Show in files** and,
 for a type the browser can display, **Open in tab**. Markdown, CSV/TSV and
 JSON open in the app's own viewer page (`/view.html`): rendered markdown
 with lined tables, a row-numbered grid, pretty-printed JSON, each with a
-**Raw** toggle and a Download button. PDF goes to Chrome's PDF viewer,
+**Raw** toggle and a Download button. Tables there sort by clicking a header
+(numbers as numbers, including `1.234,56`; a third click restores file
+order), resize by dragging a header's right edge, and a filter box hides
+rows with no matching cell. PDF goes to Chrome's PDF viewer,
 images and media to the browser's own, other text and code as plain text.
 The file pane's viewer has the same button. Inline responses carry a sandboxing CSP, and
 HTML and SVG are served as plain text on purpose: a file the agent wrote

@@ -744,3 +744,34 @@ def test_browser_tool_rows_say_where(page, server):
     page.wait_for_selector("#log .tool .where", timeout=5000)
     assert page.text_content("#log .tool .where") == "bank.example · Transfer"
     assert page.evaluate("() => document.querySelectorAll('#log .tool .where').length") == 1
+
+
+def test_viewer_tables_sort_filter_resize(page, server):
+    import os
+    os.makedirs(os.path.join(server.root, "files"), exist_ok=True)
+    with open(os.path.join(server.root, "files", "t.md"), "w") as f:
+        f.write("# T\n\n| name | amount |\n|---|---|\n| pear | 10,50 |\n| apple | -331.33 |\n| fig | 2 |\n| kiwi | |\n")
+    page.goto(server.base + "/view.html?path=files/t.md")
+    page.wait_for_selector("#main .tw table th.sortable", timeout=5000)
+    col = lambda i: page.evaluate("(i) => [...document.querySelectorAll('#main tbody tr:not([hidden])')].map(r => r.cells[i].textContent.trim())", i)
+    page.click("#main th.sortable >> nth=0")                    # name asc
+    assert col(0) == ["apple", "fig", "kiwi", "pear"]
+    page.click("#main th.sortable >> nth=0")                    # desc
+    assert col(0) == ["pear", "kiwi", "fig", "apple"]
+    page.click("#main th.sortable >> nth=0")                    # file order again
+    assert col(0) == ["pear", "apple", "fig", "kiwi"]
+    page.click("#main th.sortable >> nth=1")                    # numeric: 10,50 > 2 > -331.33; blank last
+    assert col(1) == ["-331.33", "2", "10,50", ""], col(1)
+    assert not page.is_hidden("#q")
+    page.fill("#q", "PE")
+    assert col(0) == ["pear"]
+    assert page.text_content("#main .cnt").strip() == "1 of 4 rows"
+    page.fill("#q", "")
+    assert len(col(0)) == 4 and page.is_hidden("#main .cnt")
+    th = page.locator("#main th.sortable >> nth=0")
+    w0 = th.evaluate("e => e.getBoundingClientRect().width")
+    box = th.locator(".rz").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2); page.mouse.down(); page.mouse.move(box["x"] + 120, box["y"] + 5, steps=4); page.mouse.up()
+    w1 = th.evaluate("e => e.getBoundingClientRect().width")
+    assert w1 > w0 + 80, (w0, w1)
+    assert col(0) == ["apple", "fig", "pear", "kiwi"], "a drag on the handle must not change the (amount-sorted) order"
