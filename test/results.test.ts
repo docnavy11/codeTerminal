@@ -120,3 +120,12 @@ describe("tab management summaries", () => {
     assert.equal(sum("reload", { url: "https://a.example/", loading: true }), "loading https://a.example/");
   });
 });
+
+describe("fill_form summary", () => {
+  test("counts, and names the misses", () => {
+    const sum = (o: unknown) => summariseResult("mcp__browser__fill_form", { tool_use_id: "t", content: JSON.stringify(o) }, undefined).summary;
+    assert.equal(sum({ filled: 3, total: 3, results: [] }), "filled 3 fields");
+    assert.equal(sum({ filled: 1, total: 1, results: [{ ok: true, field: "f1" }] }), "filled 1 field");
+    assert.equal(sum({ filled: 2, total: 3, results: [{ ok: true, field: "f1" }, { ok: false, field: "f9", error: "element not found" }, { ok: true, field: "f2" }] }), "filled 2 of 3 · f9: element not found");
+  });
+});

@@ -901,3 +901,55 @@ def test_extension_manages_tabs(playwright):
         time.sleep(0.2); assert opened["tabId"] not in [t["id"] for t in call(sw, "list_tabs", {})]
     finally:
         ctx.close(); srv.shutdown()
+
+
+def test_extension_fills_forms(playwright):
+    """The real extension: read_page forms gives refs; fill_form sets text,
+    textarea, select (by text), checkbox and radio in one call, fires the
+    events a framework listens to, reports a missing ref and a select with no
+    matching option without stopping, and does not submit."""
+    import tempfile, threading, http.server, socketserver
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    html = b"""<form id=f action="/submitted"><label>Name <input name=name></label>
+      <label>Notes <textarea name=notes></textarea></label>
+      <label>Country <select name=country><option value="">--</option><option value=be>Belgium</option><option value=nl>Netherlands</option></select></label>
+      <label><input type=checkbox name=gift> Gift</label>
+      <label><input type=radio name=ship value=std checked> Standard</label><label><input type=radio name=ship value=exp> Express</label>
+      <button type=submit>Order</button></form>
+      <script>window.ev = []; for (const el of document.querySelectorAll('input,select,textarea')) { el.addEventListener('input', e => ev.push('i:' + el.name)); el.addEventListener('change', e => ev.push('c:' + el.name)); }
+      document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); window.submitted = true; });</script>"""
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp(prefix="ct-form-prof-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
+    try:
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        forms = call(sw, "read_page", {"tabId": tab, "mode": "forms"})["forms"]
+        ref = {f["name"]: f["ref"] for f in forms[0]["fields"]}
+        assert forms[0]["submit"]["text"] == "Order" and set(ref) >= {"name", "notes", "country", "gift", "ship"}
+        r = call(sw, "fill_form", {"tabId": tab, "fields": [
+            {"ref": ref["name"], "value": "Yvan"}, {"ref": ref["notes"], "value": "two\nlines"},
+            {"ref": ref["country"], "value": "netherlands"}, {"ref": ref["gift"], "value": True},
+            {"ref": ref["ship"], "value": "Express"}, {"ref": "nope", "value": "x"}, {"selector": "select[name=country]", "value": "Mars"}]})
+        assert (r["filled"], r["total"]) == (5, 7), r
+        by = {x["field"]: x for x in r["results"]}
+        assert by["nope"]["error"] == "element not found"
+        assert by["select[name=country]"]["error"] == 'no option matches "Mars"' and by["select[name=country]"]["options"] == ["--", "Belgium", "Netherlands"]
+        assert by[ref["country"]]["set"] == "Netherlands" and by[ref["gift"]]["set"] is True and by[ref["ship"]]["set"] == "exp"
+        state = page.evaluate("() => ({ name: f.name.value, notes: f.notes.value, country: f.country.value, gift: f.gift.checked, ship: f.ship.value, ev: window.ev, submitted: !!window.submitted })")
+        assert state["name"] == "Yvan" and state["notes"] == "two\nlines" and state["country"] == "nl" and state["gift"] is True and state["ship"] == "exp", state
+        assert "i:name" in state["ev"] and "c:country" in state["ev"] and "c:gift" in state["ev"] and "c:ship" in state["ev"], state["ev"]
+        assert state["submitted"] is False, "fill_form must not submit"
+        # single fill understands the same controls
+        assert call(sw, "fill", {"tabId": tab, "selector": "select[name=country]", "value": "be"})["set"] == "Belgium"
+        assert call(sw, "fill", {"tabId": tab, "selector": "input[name=gift]", "value": "off"})["set"] is False
+        assert page.evaluate("() => [f.country.value, f.gift.checked]") == ["be", False]
+    finally:
+        ctx.close(); srv.shutdown()

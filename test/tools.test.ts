@@ -267,6 +267,18 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("fill_form is one act-level call that forwards every field", async () => {
+    const asks: string[] = []; const seen: Record<string, unknown>[] = [];
+    const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://shop.example/checkout", title: "Checkout" }), fill_form: (p) => { seen.push(p); return { tabId: 1, filled: 2, total: 3, results: [{ field: "f1", ok: true, length: 4 }, { field: "f2", ok: true, set: "Belgium" }, { field: "f9", ok: false, error: "element not found" }] }; } });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    const r = JSON.parse(await call(srv, "fill_form", { tabId: 1, fields: [{ ref: "f1", value: "Yvan" }, { ref: "f2", value: "Belgium" }, { selector: "#gift", value: true }] }));
+    assert.deepEqual(asks, ["fill_form:act"], "one ask for the whole form");
+    assert.deepEqual(seen[0], { tabId: 1, fields: [{ ref: "f1", value: "Yvan" }, { ref: "f2", value: "Belgium" }, { selector: "#gift", value: true }] });
+    assert.equal(r.filled, 2); assert.equal(r.results[2].error, "element not found");
+    await assert.rejects(call(srv, "fill_form", { tabId: 1, fields: [] }), /at least one field/, "an empty form is refused");
+  });
+
   test("tab management: open is gated on the destination, close/back/reload are act-level on the tab, focus is read-level", async () => {
     const asks: string[] = []; const seen: [string, Record<string, unknown>][] = [];
     const policy = { allowed: (h: string, level: string) => h === "ok.example" && level === "read", evalAllowed: () => false, ask: async (host: string, action: string, _d: string | undefined, level: string) => { asks.push(`${action}:${host}:${level}`); return "allow" as const; } };

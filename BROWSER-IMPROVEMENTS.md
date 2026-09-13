@@ -44,7 +44,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 
 | # | improvement | why | status |
 |---|---|---|---|
-| 11 | **`fill_form`** — several fields in one call. | One approval, one round trip for data entry; Playwright MCP and DevTools MCP both have it. | ☐ |
+| 11 | **`fill_form`** — several fields in one call. | One approval, one round trip for data entry; Playwright MCP and DevTools MCP both have it. | ☑ |
 | 12 | **`handle_dialog`** — detect a blocking `alert`/`confirm`/`prompt`, surface it, accept or dismiss. | A JavaScript dialog blocks every other command; Claude Code's docs list it as the top "browser not responding" cause. We hang the same way. | ☑ |
 | 13 | **`browser_batch`** — a list of read-only actions as one tool call. | Directly cuts the round-trip count in a spiral; read-only, so no extra gating. | ☐ |
 | 14 | **Console and network readers** (read-only). | The "test my local web app" workflow Claude Code's docs lead with. | ☐ |

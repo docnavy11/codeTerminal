@@ -325,7 +325,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -427,9 +427,14 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         { tabId, ref: z.string().optional(), selector: z.string().optional() },
         gated("click", (a) => bridge.send("click", a, prefer()))),
 
-      tool("fill", "Set the value of an input or textarea and fire input/change events.",
-        { tabId, ref: z.string().optional(), selector: z.string().optional(), value: z.string() },
+      tool("fill", "Set one form control: text/textarea/contenteditable (value + input/change events), select (option by text or value), checkbox (true/false), radio (by value or label).",
+        { tabId, ref: z.string().optional(), selector: z.string().optional(), value: z.union([z.string(), z.boolean()]) },
         gated("fill", (a) => bridge.send("fill", a, prefer()))),
+
+      tool("fill_form",
+        "Fill several fields in one call — one approval, one round trip. Refs come from read_page {mode: \"forms\"} (or snapshot). Each field is set like `fill`; a field that is not found or has no matching option is reported in `results` and the rest are still filled. Never submits: press Enter or click the submit button as a separate step.",
+        { tabId, fields: z.array(z.object({ ref: z.string().optional(), selector: z.string().optional(), value: z.union([z.string(), z.boolean()]) })).min(1).max(100) },
+        gated("fill_form", (a) => { if (!a.fields?.length) throw new Error("fill_form needs at least one field"); return bridge.send("fill_form", a, prefer()); })),
 
       tool("press", "Send a key to the focused element (Enter, Tab, Escape, ArrowDown, …).",
         { tabId, key: z.string() },

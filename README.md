@@ -686,6 +686,18 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**`fill_form`.** Several fields in one call: `fields: [{ref | selector,
+value}, …]` with refs from `read_page {mode: "forms"}` — one approval, one
+round trip, one row (`filled 8 fields`). Each field is set the way `fill`
+sets one, and `fill` itself now understands more than text: selects take an
+option by text or value, checkboxes take true/false, radios a value or
+label, contenteditables text; React-style listeners fire because the value
+goes through the native setter. A field that is not found, or a select
+with no matching option (the options are listed back), is reported in the
+result while the rest are still filled. Neither tool submits — pressing
+Enter or clicking the button stays a separate, visible step. Measured in
+real Chromium (`test_extension_fills_forms`).
+
 **Tabs.** `open_tab` (returns the new tab's id), `close_tab`, `focus_tab`
 (bring it to the front, so you see what the agent is looking at), `back`,
 `forward` and `reload` (`hard` bypasses the cache). Open is gated on the

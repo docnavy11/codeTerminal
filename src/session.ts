@@ -83,7 +83,7 @@ export type SessionDeps = {
 const BROWSER_TOOLS = [
   "list_tabs", "read_page", "snapshot", "navigate",
   "click", "fill", "press", "eval", "screenshot", "download", "find", "scroll", "wait_for", "handle_dialog",
-  "open_tab", "close_tab", "focus_tab", "back", "forward", "reload",
+  "open_tab", "close_tab", "focus_tab", "back", "forward", "reload", "fill_form",
 ].map((n) => `mcp__browser__${n}`);
 
 // Reading the user's own terminal is inert, so it never needs a prompt.

@@ -689,20 +689,21 @@ async function handle(action, p) {
     case "fill": {
       const t = await resolveTab(p.tabId);
       await ensureDebugger(t.id);
-      return await run(t.id, (ref, selector, value) => {
-        const el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : document.querySelector(selector);
-        if (!el) throw new Error("element not found: " + (ref || selector));
-        el.focus();
-        if (el.isContentEditable) el.textContent = value;
-        else {
-          // React and friends listen on the native setter, not on .value.
-          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-          Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
-        }
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
-        return { filled: ref || selector, length: value.length };
-      }, [p.ref ?? null, p.selector ?? null, p.value]);
+      await inject(t.id);
+      const r = await run(t.id, (f) => globalThis.ctSetField(f), [{ ref: p.ref ?? null, selector: p.selector ?? null, value: p.value }]);
+      if (!r.ok) throw new Error(`${r.error}: ${r.field}${r.options ? ` (options: ${r.options.join(", ")})` : ""}`);
+      return { filled: r.field, ...(r.length != null ? { length: r.length } : {}), ...(r.set != null ? { set: r.set } : {}) };
+    }
+
+    // Several fields in one call; misses are reported, not fatal.
+    case "fill_form": {
+      const t = await resolveTab(p.tabId);
+      await ensureDebugger(t.id);
+      await inject(t.id);
+      const fields = Array.isArray(p.fields) ? p.fields.slice(0, 100) : [];
+      const results = await run(t.id, (fs) => fs.map((f) => globalThis.ctSetField(f)), [fields.map((f) => ({ ref: f.ref ?? null, selector: f.selector ?? null, value: f.value }))]);
+      const filled = results.filter((r) => r.ok).length;
+      return { tabId: t.id, filled, total: results.length, results };
     }
 
     case "press": {

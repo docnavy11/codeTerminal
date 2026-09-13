@@ -215,3 +215,48 @@
     }
   };
 })();
+
+/* Set one form control the way a person would, so frameworks notice:
+   text-like inputs, textareas and contenteditables get the value through
+   the native setter plus input/change; selects match an option by text or
+   value (case-insensitive); checkboxes take true/false (or "on"/"off",
+   "yes"/"no", "checked"); radios check the one whose value matches, or the
+   element itself. Used by fill and fill_form. */
+globalThis.ctSetField = function ctSetField({ ref, selector, value }) {
+  const el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : selector ? document.querySelector(selector) : null;
+  const key = ref || selector || "?";
+  if (!el) return { field: key, ok: false, error: "element not found" };
+  const fire = (t) => el.dispatchEvent(new Event(t, { bubbles: true }));
+  const tag = el.tagName; const type = (el.getAttribute("type") || "").toLowerCase();
+  try {
+    el.focus?.();
+    if (tag === "SELECT") {
+      const want = String(value).trim().toLowerCase();
+      const opt = [...el.options].find((o) => o.text.trim().toLowerCase() === want || o.value.toLowerCase() === want)
+        ?? [...el.options].find((o) => o.text.trim().toLowerCase().includes(want));
+      if (!opt) return { field: key, ok: false, error: `no option matches "${value}"`, options: [...el.options].slice(0, 30).map((o) => o.text.trim()) };
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(el, opt.value);
+      fire("input"); fire("change");
+      return { field: key, ok: true, set: opt.text.trim() };
+    }
+    if (type === "checkbox") {
+      const on = typeof value === "boolean" ? value : /^(true|on|yes|checked|1)$/i.test(String(value).trim());
+      if (el.checked !== on) el.click(); else fire("change");
+      return { field: key, ok: true, set: el.checked };
+    }
+    if (type === "radio") {
+      const group = el.name ? [...document.querySelectorAll(`input[type=radio][name="${CSS.escape(el.name)}"]`)] : [el];
+      const want = String(value).trim().toLowerCase();
+      const pick = typeof value === "boolean" ? el : group.find((r) => r.value.toLowerCase() === want || (r.labels?.[0]?.innerText || "").trim().toLowerCase() === want) ?? el;
+      if (!pick.checked) pick.click();
+      return { field: key, ok: true, set: pick.value };
+    }
+    if (el.isContentEditable) { el.textContent = String(value); fire("input"); return { field: key, ok: true, length: String(value).length }; }
+    const proto = tag === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (!setter) return { field: key, ok: false, error: `cannot set a ${tag.toLowerCase()}` };
+    setter.call(el, String(value));
+    fire("input"); fire("change");
+    return { field: key, ok: true, length: String(value).length };
+  } catch (e) { return { field: key, ok: false, error: String(e?.message ?? e) }; }
+};
