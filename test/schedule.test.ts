@@ -56,7 +56,7 @@ describe("the store", () => {
       const path = join(dir, "schedules.json");
       const st = new ScheduleStore(path);
       const s = st.add({ title: "Jobs", prompt: "search", when: { text: "every day at 08:00", tz: BX }, project: "jobsearch" });
-      assert.equal(s.when.cron, "0 8 * * *"); assert.equal(s.browser, "server"); assert.equal(s.mode, "acceptEdits"); assert.equal(s.waitMs, 120_000); assert.equal(s.keepRuns, 10); assert.equal(s.paused, false);
+      assert.equal(s.when.cron, "0 8 * * *"); assert.equal(s.browser, "server"); assert.equal(s.mode, "auto"); assert.equal(s.waitMs, 120_000); assert.equal(s.keepRuns, 10); assert.equal(s.paused, false);
       assert.throws(() => st.add({ title: "", prompt: "x", when: { text: "daily", tz: "UTC" } }), /needs a title/);
       assert.throws(() => st.add({ title: "x", prompt: "x", when: { text: "daily", tz: "Nowhere/Here" } }), /unknown time zone/);
       assert.throws(() => st.add({ title: "x", prompt: "x", when: { text: "daily", tz: "UTC" }, budgetUsd: 5000 }), /budget: between/);

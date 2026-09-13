@@ -452,10 +452,10 @@ describe("MCP server status at session start", () => {
     const sdk = fakeSdk(); const events: ClientEvent[] = []; const warned: string[] = [];
     const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge: null, getShell: () => null, prompts: null, watches: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, warn: (l) => warned.push(l) });
     const done = s.start(); await settle(3);
-    sdk.last.init("sid", { mcp_servers: [{ name: "browser", status: "failed" }, { name: "files", status: "connected" }] }); await settle(3);
+    sdk.last.init("sid", { mcp_servers: [{ name: "browser", status: "failed" }, { name: "files", status: "connected" }, { name: "claude.ai Google Drive", status: "needs-auth" }] }); await settle(3);
     const ready = events.find((e) => e.kind === "ready") as Extract<ClientEvent, { kind: "ready" }>;
-    assert.deepEqual(ready.servers, [{ name: "browser", status: "failed" }, { name: "files", status: "connected" }]);
-    assert.equal(warned.length, 1); assert.match(warned[0], /MCP server not connected: browser \(failed\)/);
+    assert.deepEqual(ready.servers, [{ name: "browser", status: "failed" }, { name: "files", status: "connected" }, { name: "claude.ai Google Drive", status: "needs-auth" }]);
+    assert.equal(warned.length, 1); assert.match(warned[0], /MCP server not connected: browser \(failed\)/); assert.doesNotMatch(warned[0], /Google Drive/, "a user's own connector is not our alarm");
     const note = events.find((e) => e.kind === "local") as Extract<ClientEvent, { kind: "local" }>;
     assert.match(note.text, /Tool server not connected: browser \(failed\)/);
     s.close(); await done.catch(() => {});

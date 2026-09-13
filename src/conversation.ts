@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import { Session, type ClientEvent, type SessionDeps } from "./session.js";
+import { Session, type ClientEvent, type SessionDeps, OUR_SERVERS } from "./session.js";
 import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js";
 import { generateTitle } from "./titles.js";
 import { ChatSearch } from "./search.js";
@@ -508,7 +508,7 @@ export class Manager {
   #admit(rec: ChatRecord, mode: PermissionMode = "default"): LiveChat {
     this.#evictIfFull();
     const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, mode,
-      () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers ?? null; });
+      () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers?.filter((s) => OUR_SERVERS.has(s.name)) ?? null; });
     this.#chats.set(rec.id, chat);
     return chat;
   }

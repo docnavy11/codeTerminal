@@ -207,7 +207,7 @@ export class ScheduleStore {
     const prompt = String(input.prompt ?? "").trim(); if (!prompt) throw new Error("a schedule needs a prompt");
     const tz = String(input.when?.tz ?? "UTC"); if (!validTimeZone(tz)) throw new Error(`unknown time zone "${tz}"`);
     const { cron } = parseWhen(String(input.when?.text ?? ""));
-    const mode = input.mode ?? "acceptEdits";
+    const mode = input.mode ?? "auto";
     if (!["default", "acceptEdits", "auto", "bypassPermissions", "plan"].includes(mode)) throw new Error(`unknown mode "${mode}"`);
     const num = (v: unknown, d: number, lo: number, hi: number, what: string) => { if (v === undefined || v === null || v === "") return d; const n = Number(v); if (!Number.isFinite(n) || n < lo || n > hi) throw new Error(`${what}: between ${lo} and ${hi}`); return n; };
     return {

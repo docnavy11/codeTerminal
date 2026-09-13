@@ -454,8 +454,8 @@ function schedForm(s) {
   const proj = document.createElement("select"); proj.id = "sf-project"; for (const p of schedData.projects) proj.append(new Option(p.name, p.id)); proj.value = s?.project || "general"; row("Project", proj);
   const br = document.createElement("select"); br.id = "sf-browser"; br.append(new Option("server browser (runs while your laptop is off)", "server"), new Option("whichever browser is connected", "auto")); br.value = s?.browser || "server"; row("Browser", br);
   const mode = document.createElement("select"); mode.id = "sf-mode";
-  for (const [v, l] of [["acceptEdits", "Build, auto-accept edits"], ["default", "Build (asks — answered “no” unattended)"], ["auto", "Auto"], ["bypassPermissions", "Never ask"], ["plan", "Plan"]]) mode.append(new Option(l, v));
-  mode.value = s?.mode || "acceptEdits"; row("Mode", mode);
+  for (const [v, l] of [["auto", "Auto — the CLI decides what is safe (shell commands run)"], ["acceptEdits", "Build, auto-accept edits (shell commands ask — answered “no” unattended)"], ["default", "Build (asks — answered “no” unattended)"], ["bypassPermissions", "Never ask"], ["plan", "Plan"]]) mode.append(new Option(l, v));
+  mode.value = s?.mode || "auto"; row("Mode", mode);
   const model = row("Model", Object.assign(document.createElement("input"), { value: s?.model || "", id: "sf-model", placeholder: "default" }));
   const budget = row("Budget per run ($)", Object.assign(document.createElement("input"), { value: s?.budgetUsd ?? "", id: "sf-budget", placeholder: "none", type: "number", step: "0.1", min: "0.01" }));
   const wait = row("Wait for a person (min)", Object.assign(document.createElement("input"), { value: String((s?.waitMs ?? 120000) / 60000), id: "sf-wait", type: "number", min: "1", max: "60" }));

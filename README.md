@@ -882,6 +882,11 @@ shows a notification.
   **needed you**.
 - The per-run budget is the SDK's cost ceiling for that chat; the run stops
   past it. The maximum run time interrupts the turn.
+- The default mode is **Auto** — the CLI's own judgement of what is safe,
+  so shell commands run. Measured on the first real run (2026-09-13, "Search
+  for jobs", $0.76): in *Build, auto-accept edits* the very first `ls` asked
+  for approval, was answered "no" after two minutes, and the agent stopped
+  with nothing done. Unattended, a mode that asks is a mode that fails.
 
 **It deliberately does not** run two copies at once (the second is recorded
 as skipped), catch up on times missed while the server was down (recorded

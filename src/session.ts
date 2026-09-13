@@ -40,6 +40,9 @@ const num = (v: string | undefined, d: number) => { const n = Number(v); return 
 export const MAX_TOOL_CALLS = num(process.env.CODETERM_MAX_TOOL_CALLS, 100);
 /** Screenshots in one turn before the tool refuses and asks the model to report. */
 export const MAX_SCREENSHOTS = num(process.env.CODETERM_MAX_SCREENSHOTS, 15);
+/** The in-process MCP servers this process registers; the tool-server check alarms only about these. */
+export const OUR_SERVERS = new Set(["terminal", "browser", "watch", "prompts", "files"]);
+
 /** Cost ceiling for one session (the SDK's maxBudgetUsd); unset = none. */
 export const MAX_BUDGET_USD = process.env.CODETERM_MAX_BUDGET_USD ? num(process.env.CODETERM_MAX_BUDGET_USD, 0) || undefined : undefined;
 
@@ -567,7 +570,10 @@ export class Session {
           // failed (a tool schema the CLI cannot convert, 2026-09-13) silently
           // takes all its tools away from every session. Say so, loudly.
           const servers = (msg as { mcp_servers?: { name: string; status: string }[] }).mcp_servers ?? [];
-          const failed = servers.filter((s) => s.status !== "connected");
+          // Only the servers this process registered are ours to alarm about; a
+          // connector from the user's own Claude config that "needs-auth" (the
+          // Google Drive one, measured) is theirs, and is left to them.
+          const failed = servers.filter((s) => s.status !== "connected" && OUR_SERVERS.has(s.name));
           this.#emit({ kind: "ready", sessionId: msg.session_id, model: msg.model, workspace: this.#workspace, canBypass: ALLOW_BYPASS, servers });
           if (failed.length) {
             const what = failed.map((s) => `${s.name} (${s.status})`).join(", ");
