@@ -40,6 +40,15 @@ call). Screenshots go to disk and come back as a path the model then reads.
 | 9 | **Tool rows say where.** The tab's URL is already fetched before every call; show it on the row (`→ click  bank.example · Transfer`). | Makes the transcript auditable at a glance; costs nothing. | ☐ |
 | 10 | **Confirm before submit.** A card when `press Enter` or a click lands on a submit control in a form with filled fields. | Prevents the expensive mistake. Heuristic (what counts as submit), hence last. | ☐ |
 
+## Reuse
+
+What other projects do for each of these, and what to borrow, is in
+[docs/browser-research.md](docs/browser-research.md) — including the
+first-party option (Claude Code's own Chrome integration, usable only when
+the server and the browser share a machine) and five ideas the research
+added: `fill_form`, `handle_dialog`, `browser_batch`, console/network
+readers, file upload.
+
 ## Suggested order
 
 1, 2, 8, 9 first — the observed pain plus the safety gap; then 3 and 5;
