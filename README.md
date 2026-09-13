@@ -1058,9 +1058,12 @@ When the result of the work is a file — an export, a report, a converted
 document — the agent offers it (`files.offer`, auto-approved: it only
 announces a file already written through the gate) and the transcript
 shows a card: name, size, its note, **Download**, **Show in files** and,
-for a type the browser can display, **Open in tab** — Chrome's PDF viewer
-for a PDF, the image itself, plain text for text and code. The file pane's
-viewer has the same button. Inline responses carry a sandboxing CSP, and
+for a type the browser can display, **Open in tab**. Markdown, CSV/TSV and
+JSON open in the app's own viewer page (`/view.html`): rendered markdown
+with lined tables, a row-numbered grid, pretty-printed JSON, each with a
+**Raw** toggle and a Download button. PDF goes to Chrome's PDF viewer,
+images and media to the browser's own, other text and code as plain text.
+The file pane's viewer has the same button. Inline responses carry a sandboxing CSP, and
 HTML and SVG are served as plain text on purpose: a file the agent wrote
 or downloaded never runs as a page on this origin.
 Only files under the browsable root can be offered, because that is what

@@ -676,3 +676,39 @@ def test_reply_tables_have_lines(page, server):
     cs = page.evaluate("() => { const td = document.querySelector('#log .msg.md tbody td'); const th = document.querySelector('#log .msg.md th'); const s = getComputedStyle(td), h = getComputedStyle(th);"
                        " return { border: s.borderTopWidth, pad: s.paddingLeft, headRule: h.borderBottomWidth, collapse: getComputedStyle(document.querySelector('#log .msg.md table')).borderCollapse }; }")
     assert cs["border"] == "1px" and cs["pad"] == "8px" and cs["headRule"] == "2px" and cs["collapse"] == "collapse", cs
+
+
+def test_viewer_renders_markdown_csv_json(page, server):
+    import os
+    os.makedirs(os.path.join(server.root, "files"), exist_ok=True)
+    with open(os.path.join(server.root, "files", "report.md"), "w") as f:
+        f.write("# Report\n\n| txn | amount |\n|---|---|\n| T1 | 1,00 |\n\n[site](https://example.com) <script>alert(1)</script>\n")
+    with open(os.path.join(server.root, "files", "data.csv"), "w") as f:
+        f.write('id,name\n1,"Doe, Jane"\n2,"say ""hi"""\n')
+    with open(os.path.join(server.root, "files", "d.json"), "w") as f:
+        f.write('{"a":[1,2],"b":{"c":true}}')
+    page.goto(server.base + "/view.html?path=files/report.md")
+    page.wait_for_selector("#main .md table td", timeout=5000)
+    assert page.text_content("#main .md h1").strip() == "Report"
+    assert page.evaluate("() => getComputedStyle(document.querySelector('#main .md td')).borderTopWidth") == "1px"
+    assert page.evaluate("() => document.querySelector('#main .md a').target") == "_blank"
+    assert page.evaluate("() => document.querySelectorAll('#main script').length") == 0
+    assert page.title().startswith("report.md")
+    page.click("#raw")
+    assert "| txn | amount |" in page.text_content("#main pre")
+    page.goto(server.base + "/view.html?path=files/data.csv")
+    page.wait_for_selector("#main table.grid tbody tr", timeout=5000)
+    cells = page.evaluate("() => [...document.querySelectorAll('#main table.grid tbody tr')].map(r => [...r.cells].map(c => c.textContent))")
+    assert cells == [["1", "1", "Doe, Jane"], ["2", "2", 'say "hi"']], cells
+    assert page.text_content("#main .note").strip() == "2 rows"
+    page.goto(server.base + "/view.html?path=files/d.json")
+    page.wait_for_selector("#main pre", timeout=5000)
+    assert page.text_content("#main pre") == '{\n  "a": [\n    1,\n    2\n  ],\n  "b": {\n    "c": true\n  }\n}'
+    page.goto(server.base + "/view.html?path=files/nope.md")
+    page.wait_for_selector("#main .err", timeout=5000)
+    assert "Cannot open nope.md" in page.text_content("#main .err")
+
+
+def test_open_in_tab_routes_markdown_to_viewer(page, server):
+    open_ui(page, server)
+    assert page.evaluate("() => ownViewer('a/b.md') && ownViewer('x.CSV') && ownViewer('d.json') && !ownViewer('p.pdf') && !ownViewer('t.txt')")

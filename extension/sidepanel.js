@@ -333,12 +333,17 @@ function fileCard(m) {
   body.append(row);
   card.append(ic, body);
 }
-/* The browser's own viewer for the type — Chrome's PDF viewer, an image, plain
-   text — in a new tab. The server serves these inline with a sandboxing CSP;
-   HTML and SVG come back as plain text, never as a page. */
-const viewableInTab = (name) => /\.(pdf|png|jpe?g|gif|webp|bmp|txt|md|csv|tsv|json|log|ya?ml|xml|html?|svg|js|ts|py|sh|toml|ini|mp4|webm|mp3|wav)$/i.test(name);
+/* A viewer in a new tab. Markdown, CSV/TSV and JSON open in our own viewer
+   page (rendered markdown, a grid, pretty JSON, with a Raw toggle); PDF, images,
+   media and other text go to the browser's own viewer for the type, served
+   inline with a sandboxing CSP. HTML and SVG come back as plain text, never as
+   a page. */
+const viewableInTab = (name) => /\.(pdf|png|jpe?g|gif|webp|bmp|txt|md|markdown|csv|tsv|json|log|ya?ml|xml|html?|svg|js|ts|py|sh|toml|ini|mp4|webm|mp3|wav)$/i.test(name);
+const ownViewer = (name) => /\.(md|markdown|csv|tsv|json)$/i.test(name);
 async function openInTab(relPath) {
-  const url = (await base()) + `/files/read?path=${encodeURIComponent(relPath)}&inline=1`;
+  const url = (await base()) + (ownViewer(relPath)
+    ? `/view.html?path=${encodeURIComponent(relPath)}`
+    : `/files/read?path=${encodeURIComponent(relPath)}&inline=1`);
   if (PLATFORM.name === "extension") PLATFORM.openUrl(url); else window.open(url, "_blank", "noopener");
 }
 function showInFiles(relPath) {

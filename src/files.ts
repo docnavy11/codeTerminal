@@ -317,7 +317,7 @@ export function clearSuggestCache(): void { suggestCache.clear(); }
 const INLINE_TYPES: Record<string, string> = {
   pdf: "application/pdf",
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", ico: "image/x-icon",
-  txt: "text/plain", md: "text/plain", csv: "text/plain", tsv: "text/plain", json: "text/plain", log: "text/plain", yaml: "text/plain", yml: "text/plain",
+  txt: "text/plain", md: "text/plain", markdown: "text/plain", csv: "text/plain", tsv: "text/plain", json: "text/plain", log: "text/plain", yaml: "text/plain", yml: "text/plain",
   xml: "text/plain", html: "text/plain", htm: "text/plain", svg: "text/plain", js: "text/plain", ts: "text/plain", py: "text/plain", sh: "text/plain", toml: "text/plain", ini: "text/plain",
   mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", wav: "audio/wav",
 };

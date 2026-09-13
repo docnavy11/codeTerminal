@@ -1,0 +1,70 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>code terminal — view</title>
+<style>
+  :root {
+    --bg:#14171e; --panel:#1a1e27; --line:#2b3140; --fg:#dfe3ec; --dim:#8b93a7;
+    --accent:#7aa2f7; --bad:#f07178; --btn:#252a36; --code:#0f1219;
+    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
+            --accent:#2f5fd0; --bad:#c0392b; --btn:#e6e8ee; --code:#f4f5f8; color-scheme: light; }
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html { font-size:14px; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:1rem/1.55 var(--ui); }
+  header { position:sticky; top:0; display:flex; align-items:center; gap:8px; padding:8px 14px;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  header .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  header .meta { color:var(--dim); font-size:0.85rem; flex-shrink:0; }
+  header .sp { flex:1; }
+  button { font:inherit; font-size:0.85rem; background:var(--btn); color:var(--fg); border:1px solid var(--line);
+           border-radius:5px; padding:3px 9px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  main { max-width:960px; margin:0 auto; padding:18px 20px 60px; }
+  main.wide { max-width:none; }
+  .err { color:var(--bad); }
+  .note { color:var(--dim); font-size:0.85rem; margin-bottom:12px; }
+  pre { margin:0; background:var(--code); border:1px solid var(--line); border-radius:6px; padding:10px 12px;
+        font:0.9rem/1.45 var(--mono); overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--code); padding:0 3px; border-radius:3px; }
+  pre code { background:none; padding:0; }
+  /* rendered markdown */
+  .md h1, .md h2, .md h3 { line-height:1.25; margin:1.2em 0 0.5em; }
+  .md h1 { font-size:1.6rem; } .md h2 { font-size:1.3rem; } .md h3 { font-size:1.1rem; }
+  .md > :first-child { margin-top:0; }
+  .md p, .md ul, .md ol, .md blockquote { margin:0 0 0.8em; }
+  .md blockquote { border-left:3px solid var(--line); padding-left:10px; color:var(--dim); }
+  .md img { max-width:100%; }
+  .md a { color:var(--accent); }
+  .md hr { border:0; border-top:1px solid var(--line); margin:1.2em 0; }
+  .md pre { margin:0 0 0.8em; }
+  .md table, table.grid { border-collapse:collapse; border-spacing:0; margin:0 0 0.8em; font-variant-numeric:tabular-nums; }
+  .md table { display:block; max-width:100%; overflow-x:auto; font-size:0.92rem; }
+  .md th, .md td, .grid th, .grid td { border:1px solid var(--line); padding:4px 9px; text-align:left; vertical-align:top; }
+  .md th, .grid th { background:var(--panel); font-weight:600; border-bottom:2px solid var(--dim); }
+  .md tbody tr:nth-child(even) td, .grid tbody tr:nth-child(even) td { background:color-mix(in srgb, var(--panel) 55%, transparent); }
+  .md li > p { margin:0; }
+  .md input[type=checkbox] { margin-right:6px; }
+  /* csv/tsv grid */
+  .gridwrap { overflow:auto; }
+  table.grid { font:0.9rem/1.4 var(--mono); white-space:nowrap; }
+  table.grid td:first-child, table.grid th:first-child { color:var(--dim); text-align:right; }
+</style>
+<header>
+  <span class="name" id="name">…</span>
+  <span class="meta" id="meta"></span>
+  <span class="sp"></span>
+  <button id="raw" hidden>Raw</button>
+  <button id="dl">Download</button>
+</header>
+<main id="main"></main>
+<script src="/vendor/marked/marked.umd.js"></script>
+<script src="/vendor/dompurify/purify.min.js"></script>
+<script src="/view.js"></script>
