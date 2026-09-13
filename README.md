@@ -686,6 +686,19 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**`browser_batch`.** A list of read-only steps on one tab in one call:
+`steps: [{tool: "find", args: {text: "Invoice"}}, {tool: "scroll", args:
+{to: "bottom"}}, {tool: "read_page", args: {mode: "tables"}}, {tool:
+"screenshot"}]` — up to 20 of `list_tabs`, `read_page`, `snapshot`, `find`,
+`scroll`, `wait_for`, `screenshot`. One site check at read level, one
+approval, one round trip, one row (`4 steps · 1 failed · find → scroll✗ →
+read_page → screenshot`). Steps run in order; a failure is recorded and the
+rest still run (`stopOnError` to stop). Screenshots come back as images
+after the text, numbered in step order, and count against the per-turn
+screenshot budget like single shots. Nothing that acts on the page can be
+in a batch, by construction: the tool refuses the list before running any
+of it.
+
 **`fill_form`.** Several fields in one call: `fields: [{ref | selector,
 value}, …]` with refs from `read_page {mode: "forms"}` — one approval, one
 round trip, one row (`filled 8 fields`). Each field is set the way `fill`

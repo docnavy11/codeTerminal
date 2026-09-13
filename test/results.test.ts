@@ -129,3 +129,12 @@ describe("fill_form summary", () => {
     assert.equal(sum({ filled: 2, total: 3, results: [{ ok: true, field: "f1" }, { ok: false, field: "f9", error: "element not found" }, { ok: true, field: "f2" }] }), "filled 2 of 3 · f9: element not found");
   });
 });
+
+describe("browser_batch summary", () => {
+  test("step count, failures, skipped, and the chain", () => {
+    const sum = (o: unknown) => summariseResult("mcp__browser__browser_batch", { tool_use_id: "t", content: JSON.stringify(o) }, undefined).summary;
+    assert.equal(sum({ steps: 3, failed: 0, results: [{ tool: "find", ok: true }, { tool: "scroll", ok: true }, { tool: "read_page", ok: true }] }), "3 steps · find → scroll → read_page");
+    assert.equal(sum({ steps: 3, failed: 1, results: [{ tool: "find", ok: false }, { skipped: 2 }] }), "3 steps · 1 failed · 2 skipped · find✗");
+    assert.equal(sum({ steps: 1, failed: 0, results: [{ tool: "screenshot", ok: true }] }), "1 step · screenshot");
+  });
+});

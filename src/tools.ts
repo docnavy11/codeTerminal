@@ -325,7 +325,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -343,18 +343,83 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
       return text(stamp(await run(a), at));
     };
 
+  const listTabs = async () => {
+    const tabs = (await bridge.send("list_tabs", {}, prefer())) as { id: number; title?: string; url?: string; active?: boolean; windowId?: number }[];
+    if (!policy) return tabs;
+    return tabs.map((t) => {
+      const host = hostOfUrl(t.url);
+      return policy.allowed(host, "read") ? t : { id: t.id, host, active: t.active, windowId: t.windowId, allowed: false };
+    });
+  };
+  /** The screenshot budget for this turn, or the refusal text. */
+  const shotAllowed = (): string | null => {
+    const b = budget?.();
+    if (b && b.screenshots >= b.maxScreenshots) return `Screenshot budget for this turn (${b.maxScreenshots}) is used up. Tell the user what you have found so far and ask before continuing.`;
+    if (b) b.screenshots++;
+    return null;
+  };
+  const waitArgs = (a: Record<string, unknown>) => {
+    if (!a.text && !a.gone && !a.selector && !a.url && !a.load && !a.networkIdle) throw new Error("wait_for needs at least one condition");
+  };
+  /** The read-only tools a batch may run, by name; each returns a plain value (screenshot: its meta + the image). */
+  const READ_STEPS: Record<string, (a: Record<string, unknown>) => Promise<unknown>> = {
+    list_tabs: () => listTabs(),
+    read_page: (a) => readPage(a as { tabId?: number; maxChars?: number; mode?: "text" | "markdown" | "links" | "tables" | "forms" }),
+    snapshot: (a) => bridge.send("snapshot", a, prefer()),
+    find: (a) => bridge.send("find", a, prefer()),
+    scroll: (a) => bridge.send("scroll", a, prefer()),
+    wait_for: (a) => { waitArgs(a); return bridge.send("wait_for", a, prefer()); },
+    screenshot: async (a) => {
+      const refused = shotAllowed();
+      if (refused) throw new Error(refused);
+      const shot = await screenshotToFile(bridge, a, prefer());
+      return { ...shot.meta, image: { data: shot.data, mime: shot.mime } };
+    },
+  };
+  const BATCH_MAX = 20;
+
   return createSdkMcpServer({
     name: "browser",
     version: "1.0.0",
     tools: [
       tool("list_tabs", "List every open browser tab with its id, title and URL. Tabs on sites not yet allowed show only their id and host; ask the user to allow a site to read it.",
-        {}, async () => {
-          const tabs = (await bridge.send("list_tabs", {}, prefer())) as { id: number; title?: string; url?: string; active?: boolean; windowId?: number }[];
-          if (!policy) return text(tabs);
-          return text(tabs.map((t) => {
-            const host = hostOfUrl(t.url);
-            return policy.allowed(host, "read") ? t : { id: t.id, host, active: t.active, windowId: t.windowId, allowed: false };
-          }));
+        {}, async () => text(await listTabs())),
+
+      tool("browser_batch",
+        `Run several read-only steps on one tab in one call — one round trip, one approval, one row — instead of scroll/read/scroll/read as separate calls. Steps: ${Object.keys(READ_STEPS).join(", ")} (no click/fill/press/navigate/eval: a batch never acts on the page). Steps run in order; a failing step is recorded and the rest still run unless stopOnError. Screenshots come back as images after the text, in step order.`,
+        { tabId,
+          steps: z.array(z.object({ tool: z.enum(Object.keys(READ_STEPS) as [string, ...string[]]), args: z.record(z.string(), z.unknown()).optional() })).min(1).max(BATCH_MAX),
+          stopOnError: z.boolean().optional() },
+        async (a) => {
+          if (!a.steps?.length) throw new Error("browser_batch needs at least one step");
+          if (a.steps.length > BATCH_MAX) throw new Error(`browser_batch: at most ${BATCH_MAX} steps`);
+          const bad = a.steps.find((s) => !READ_STEPS[s.tool]);
+          if (bad) throw new Error(`browser_batch: "${bad.tool}" is not a read-only step (allowed: ${Object.keys(READ_STEPS).join(", ")})`);
+          const at = await whereFor(a.tabId);
+          blockedBy(at, "browser_batch");
+          if (policy) await ensure(at.host, "browser_batch");
+          const results: Record<string, unknown>[] = [];
+          const images: { type: "image"; data: string; mimeType: string }[] = [];
+          for (const [i, s] of a.steps.entries()) {
+            const t0 = Date.now();
+            const args = { tabId: a.tabId, ...(s.args ?? {}) };
+            try {
+              const r = await READ_STEPS[s.tool](args) as Record<string, unknown> | unknown[] | null;
+              let out: unknown = r;
+              if (r && !Array.isArray(r) && typeof r === "object" && "image" in r) {
+                const { image, ...meta } = r as { image: { data: string; mime: string } } & Record<string, unknown>;
+                images.push({ type: "image", data: image.data, mimeType: image.mime });
+                out = { ...meta, image: images.length };
+              }
+              results.push({ step: i + 1, tool: s.tool, ok: true, ms: Date.now() - t0, result: out });
+            } catch (e) {
+              results.push({ step: i + 1, tool: s.tool, ok: false, ms: Date.now() - t0, error: e instanceof Error ? e.message : String(e) });
+              if (a.stopOnError) { results.push({ step: i + 2, skipped: a.steps.length - i - 1 }); break; }
+            }
+          }
+          const failed = results.filter((r) => r.ok === false).length;
+          const body = text(stamp({ steps: results.length, failed, results }, at));
+          return { content: [...body.content, ...images] };
         }),
 
       tool("read_page",
@@ -391,7 +456,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           networkIdle: z.boolean().optional().describe("No new resource loads for 500 ms"),
           timeoutMs: z.number().int().optional() },
         async (a) => {
-          if (!a.text && !a.gone && !a.selector && !a.url && !a.load && !a.networkIdle) throw new Error("wait_for needs at least one condition");
+          waitArgs(a);
           const at = await whereFor(a.tabId);
           blockedBy(at, "wait_for");
           if (policy) await ensure(at.host, "wait_for");
@@ -483,11 +548,8 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           if (policy) await ensure(await hostFor(a.tabId), "screenshot");
           // Ungated by design, so the loop guard lives here: past the per-turn
           // budget the tool refuses and tells the model to report instead.
-          const b = budget?.();
-          if (b && b.screenshots >= b.maxScreenshots) {
-            return text(`Screenshot budget for this turn (${b.maxScreenshots}) is used up. Tell the user what you have found so far and ask before continuing.`);
-          }
-          if (b) b.screenshots++;
+          const refused = shotAllowed();
+          if (refused) return text(refused);
           // The image itself goes back to the model — no Read round trip —
           // and the file stays on disk for the transcript and for Read.
           const shot = await screenshotToFile(bridge, a, prefer());

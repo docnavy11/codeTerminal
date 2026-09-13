@@ -267,6 +267,44 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("browser_batch: read-only steps in order with one read-level gate; a failure is recorded and the rest run; act tools are refused up front", async () => {
+    const asks: string[] = []; const calls: string[] = [];
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 0, 0, 13]), Buffer.from("IHDR"), Buffer.from([0, 0, 0, 5, 0, 0, 0, 7]), Buffer.alloc(9)]);
+    const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
+    const { bridge } = bridged({
+      tab_url: () => ({ tabId: 1, url: "https://docs.example/long", title: "Long doc" }),
+      find: (p) => { calls.push("find"); if (p.text === "missing") throw new Error("nothing matches"); return { count: 1, matches: [{ ref: "r1", text: "hit" }] }; },
+      scroll: () => { calls.push("scroll"); return { percent: 100, atBottom: true }; },
+      read_page: () => { calls.push("read_page"); return { text: "the end" }; },
+      screenshot: () => { calls.push("screenshot"); return { tabId: 1, url: "u", dataUrl: "data:image/png;base64," + png.toString("base64") }; },
+      click: () => { calls.push("click"); return {}; },
+    });
+    const budget = { screenshots: 0, maxScreenshots: 5 };
+    const srv = browserTools(bridge, () => undefined, () => budget, policy);
+    const r = await callRaw(srv, "browser_batch", { tabId: 1, steps: [{ tool: "find", args: { text: "hit" } }, { tool: "find", args: { text: "missing" } }, { tool: "scroll", args: { to: "bottom" } }, { tool: "read_page", args: { mode: "text" } }, { tool: "screenshot" }] });
+    assert.deepEqual(asks, ["browser_batch:read"], "one ask, read level, for the whole batch");
+    assert.deepEqual(calls, ["find", "find", "scroll", "read_page", "screenshot"], "every step ran, in order, past the failure");
+    const j = JSON.parse(r.content[0].text!) as { steps: number; failed: number; results: Record<string, unknown>[]; at: unknown };
+    assert.equal(j.steps, 5); assert.equal(j.failed, 1);
+    assert.equal(j.results[1].ok, false); assert.match(String(j.results[1].error), /nothing matches/);
+    assert.deepEqual((j.results[2] as { result: unknown }).result, { percent: 100, atBottom: true });
+    assert.equal((j.results[4] as { result: { image: number } }).result.image, 1, "the screenshot step points at image 1");
+    assert.equal(r.content[1].type, "image"); assert.equal(r.content[1].mimeType, "image/png");
+    assert.equal(budget.screenshots, 1, "counts against the turn's screenshot budget");
+    assert.deepEqual(j.at, { host: "docs.example", title: "Long doc" });
+    await unlink(((j.results[4] as { result: { path: string } }).result.path));
+    // stopOnError
+    const s2 = JSON.parse(await call(srv, "browser_batch", { tabId: 1, stopOnError: true, steps: [{ tool: "find", args: { text: "missing" } }, { tool: "scroll" }, { tool: "scroll" }] })) as { steps: number; results: { skipped?: number }[] };
+    assert.equal(s2.results[0].skipped, undefined); assert.equal(s2.results[1].skipped, 2);
+    assert.equal(calls.filter((c) => c === "scroll").length, 1, "nothing after the failure ran");
+    // act tools refused before anything runs
+    const before = calls.length;
+    await assert.rejects(callRaw(srv, "browser_batch", { tabId: 1, steps: [{ tool: "scroll" }, { tool: "click", args: { selector: "a" } }] }), /"click" is not a read-only step/);
+    assert.equal(calls.length, before, "refused up front: not even the scroll ran");
+    await assert.rejects(callRaw(srv, "browser_batch", { tabId: 1, steps: [] }), /at least one step/);
+    await assert.rejects(callRaw(srv, "browser_batch", { tabId: 1, steps: Array.from({ length: 21 }, () => ({ tool: "scroll" })) }), /at most 20/);
+  });
+
   test("fill_form is one act-level call that forwards every field", async () => {
     const asks: string[] = []; const seen: Record<string, unknown>[] = [];
     const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
