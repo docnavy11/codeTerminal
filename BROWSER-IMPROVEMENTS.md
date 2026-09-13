@@ -104,6 +104,20 @@ anyway for act-level calls) and fall back to `history.go()` in the page.
 A `back` issued while a navigation is still in flight would step over the
 page just asked for; the worker waits for the tab to finish loading first.
 
+## Incident: every browser tool gone, 2026-09-13 08:30–
+
+`browser_batch` (`9d1fc91`) used `z.record()` in its schema. The SDK's
+zod → JSON-schema conversion throws on it ("Cannot read properties of
+undefined (reading 'push')"), and it runs when a session lists the server's
+tools — so `listTools` failed for the whole browser server and every session
+started after that restart had no browser tools at all, with nothing in the
+server log (the failure is inside the SDK's MCP client). The unit tests did
+not catch it because they call handlers straight from the registry. Found
+by bisecting `src/tools.ts` per commit with a real MCP client (`Client` +
+`InMemoryTransport`): 5ef927b lists 21 tools, 9d1fc91 fails. Fixed with
+`z.any()` for the step args (handlers validate), and a test now lists every
+in-process server's tools the way a session does.
+
 ## Upload (#15) and a finding about page errors, 2026-09-13
 
 Real Chromium (`test_extension_uploads_files`): bytes sent to the worker

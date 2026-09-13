@@ -395,7 +395,11 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
       tool("browser_batch",
         `Run several read-only steps on one tab in one call — one round trip, one approval, one row — instead of scroll/read/scroll/read as separate calls. Steps: ${Object.keys(READ_STEPS).join(", ")} (no click/fill/press/navigate/eval: a batch never acts on the page). Steps run in order; a failing step is recorded and the rest still run unless stopOnError. Screenshots come back as images after the text, in step order.`,
         { tabId,
-          steps: z.array(z.object({ tool: z.enum(Object.keys(READ_STEPS) as [string, ...string[]]), args: z.record(z.string(), z.unknown()).optional() })).min(1).max(BATCH_MAX),
+          // Not z.record: the SDK's schema conversion throws on it (measured:
+          // "Cannot read properties of undefined (reading 'push')"), and one
+          // bad schema took every browser tool away — listTools fails for
+          // the whole server. z.any() converts; the step handlers validate.
+          steps: z.array(z.object({ tool: z.enum(Object.keys(READ_STEPS) as [string, ...string[]]), args: z.any().optional().describe("Arguments for that tool, as an object") })).min(1).max(BATCH_MAX),
           stopOnError: z.boolean().optional() },
         async (a) => {
           if (!a.steps?.length) throw new Error("browser_batch needs at least one step");

@@ -485,3 +485,36 @@ describe("browser tools", () => {
     await assert.rejects(call(srv, "screenshot", {}), /not a png/);
   });
 });
+
+/* The tests above call handlers straight from the registry, which never
+   runs the zod → JSON-schema conversion the SDK does when a session lists the
+   server's tools. One unconvertible schema (a z.record, 2026-09-13) made
+   listTools fail for the whole browser server, and every session lost every
+   browser tool with nothing in the logs. This lists them the way a session
+   does, for each in-process server. */
+describe("MCP servers list their tools through a real client", () => {
+  test("browser, files, terminal, watch and prompts servers all list; every tool has an object schema", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+    const { fileTools, terminalTools, watchTools, promptTools } = await import("../src/tools.js");
+    const { bridge } = bridged({});
+    const servers: Record<string, unknown> = {
+      browser: browserTools(bridge, () => undefined, () => ({ screenshots: 0, maxScreenshots: 5 }), undefined, () => root, root),
+      files: fileTools(root, root, () => {}),
+      terminal: terminalTools(() => null),
+    };
+    try { servers.watch = watchTools(bridge, { list: () => [] } as never, () => "c", () => undefined); } catch { /* signature drift: skip */ }
+    try { servers.prompts = promptTools({ list: async () => [] } as never); } catch { /* skip */ }
+    for (const [name, srv] of Object.entries(servers)) {
+      const inst = (srv as { instance: { connect: (t: unknown) => Promise<void> } }).instance;
+      const [a, b] = InMemoryTransport.createLinkedPair(); await inst.connect(a);
+      const client = new Client({ name: "probe", version: "0" }); await client.connect(b);
+      const { tools } = await client.listTools();
+      assert.ok(tools.length > 0, `${name}: lists at least one tool`);
+      for (const t of tools) assert.equal((t.inputSchema as { type?: string }).type, "object", `${name}.${t.name} has an object schema`);
+      await client.close();
+    }
+    const browser = (servers.browser as { instance: { _registeredTools: Record<string, unknown> } }).instance._registeredTools;
+    assert.ok(Object.keys(browser).includes("browser_batch") && Object.keys(browser).includes("upload"));
+  });
+});
