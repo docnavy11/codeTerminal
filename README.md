@@ -1057,7 +1057,12 @@ its turn without acting — say "go" if you want it to start at once.
 When the result of the work is a file — an export, a report, a converted
 document — the agent offers it (`files.offer`, auto-approved: it only
 announces a file already written through the gate) and the transcript
-shows a card: name, size, its note, **Download** and **Show in files**.
+shows a card: name, size, its note, **Download**, **Show in files** and,
+for a type the browser can display, **Open in tab** — Chrome's PDF viewer
+for a PDF, the image itself, plain text for text and code. The file pane's
+viewer has the same button. Inline responses carry a sandboxing CSP, and
+HTML and SVG are served as plain text on purpose: a file the agent wrote
+or downloaded never runs as a page on this origin.
 Only files under the browsable root can be offered, because that is what
 the file routes serve. `Write`/`Edit` rows and browser downloads also get a
 small ⬇ when the file sits under the root. Offers are kept with the chat

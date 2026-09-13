@@ -466,8 +466,19 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
         res.json(t ? { kind: "text", name: f.name, ...t } : { kind: "binary", name: f.name, bytes: f.size });
         return;
       }
-      // Let the browser name the download; the client also sets its own.
-      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(f.name)}"`);
+      // ?inline=1: open in the browser's own viewer for the type (PDF viewer,
+      // image, plain text); unknown types, and HTML/SVG (never as a page on
+      // this origin), stay downloads. Otherwise let the browser name the
+      // download; the client also sets its own.
+      const inline = req.query.inline === "1" ? files.inlineType(f.name) : null;
+      if (inline) {
+        res.setHeader("Content-Type", inline);
+        res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(f.name)}"`);
+        // belt and braces for anything the browser might render: no scripts, no origin
+        if (!inline.startsWith("application/pdf")) res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
+      } else {
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(f.name)}"`);
+      }
       res.setHeader("Content-Length", String(f.size));
       // pipeline, not pipe: a client that goes away mid-download destroys the
       // file stream too, instead of leaving it reading into a dead socket.

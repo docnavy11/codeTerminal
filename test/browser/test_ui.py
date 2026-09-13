@@ -618,6 +618,12 @@ def test_offered_file_has_a_download_button(page, server):
     with page.expect_download(timeout=10000) as dl:
         page.click("#log .filecard button:has-text('Download')")
     assert dl.value.suggested_filename == "notes.txt"
+    with page.context.expect_page(timeout=10000) as newp:
+        page.click("#log .filecard button:has-text('Open in tab')")
+    tab = newp.value; tab.wait_for_load_state()
+    assert "inline=1" in tab.url and tab.url.endswith("path=ws%2Fnotes.txt&inline=1"), tab.url
+    assert "one" in tab.content(), "the text file renders as plain text in its own tab"
+    tab.close()
     page.click("#log .filecard button:has-text('Show in files')")
     page.wait_for_selector("#flist .row:has(.n:text-is('notes.txt'))", timeout=5000)
     page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)

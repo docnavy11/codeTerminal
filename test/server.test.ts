@@ -208,6 +208,20 @@ describe("/files", () => {
       assert.equal((await s.req(`/files/read?path=${encodeURIComponent(p)}`)).status, 400, p);
     }
   });
+  test("read ?inline=1: viewer types are served inline with a sandbox; html is plain text; unknown stays a download", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(s.root, "files", "doc.pdf"), "%PDF-1.4 fake"); await writeFile(join(s.root, "files", "page.html"), "<script>alert(1)</script>"); await writeFile(join(s.root, "files", "blob.xyz"), "?");
+    const pdf = await s.req("/files/read?path=doc.pdf&inline=1");
+    assert.equal(pdf.headers.get("content-type"), "application/pdf"); assert.match(pdf.headers.get("content-disposition") ?? "", /^inline/); assert.equal(pdf.headers.get("content-security-policy")?.includes("sandbox"), false);
+    const txt = await s.req("/files/read?path=hello.txt&inline=1");
+    assert.equal(txt.headers.get("content-type"), "text/plain; charset=utf-8"); assert.match(txt.headers.get("content-security-policy") ?? "", /sandbox/);
+    const html = await s.req("/files/read?path=page.html&inline=1");
+    assert.equal(html.headers.get("content-type"), "text/plain; charset=utf-8", "never a page on this origin"); assert.equal(await html.text(), "<script>alert(1)</script>");
+    const unk = await s.req("/files/read?path=blob.xyz&inline=1");
+    assert.match(unk.headers.get("content-disposition") ?? "", /^attachment/);
+    assert.match((await s.req("/files/read?path=hello.txt")).headers.get("content-disposition") ?? "", /^attachment/, "without inline: a download, as before");
+  });
+
   test("zip: json and urlencoded, single name, and the refusals", async () => {
     const z = await s.req("/files/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: "", names: ["hello.txt", "sub"] }) });
     assert.equal(z.status, 200); assert.equal(z.headers.get("content-type"), "application/zip");

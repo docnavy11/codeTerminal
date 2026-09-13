@@ -309,6 +309,24 @@ export async function suggest(root: string, dir: string | undefined, q: string, 
 }
 export function clearSuggestCache(): void { suggestCache.clear(); }
 
+/**
+ * What the browser may open inline, by extension. HTML and SVG are served
+ * as plain text on purpose: a file the agent wrote or downloaded must not
+ * run as a page on this origin. Unknown types stay downloads.
+ */
+const INLINE_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", ico: "image/x-icon",
+  txt: "text/plain", md: "text/plain", csv: "text/plain", tsv: "text/plain", json: "text/plain", log: "text/plain", yaml: "text/plain", yml: "text/plain",
+  xml: "text/plain", html: "text/plain", htm: "text/plain", svg: "text/plain", js: "text/plain", ts: "text/plain", py: "text/plain", sh: "text/plain", toml: "text/plain", ini: "text/plain",
+  mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", wav: "audio/wav",
+};
+export function inlineType(name: string): string | null {
+  const ext = name.toLowerCase().slice(name.lastIndexOf(".") + 1);
+  const t = INLINE_TYPES[ext];
+  return t ? (t.startsWith("text/") ? `${t}; charset=utf-8` : t) : null;
+}
+
 /** Bytes at the end of `b` that begin a UTF-8 sequence the buffer does not finish. */
 export function partialUtf8Tail(b: Uint8Array): number {
   for (let back = 1; back <= 3 && back <= b.length; back++) {

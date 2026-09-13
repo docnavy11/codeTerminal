@@ -328,8 +328,18 @@ function fileCard(m) {
   dl.onclick = (e) => { e.stopPropagation(); download(m.path, m.name); };
   const show = document.createElement("button"); show.textContent = "Show in files";
   show.onclick = (e) => { e.stopPropagation(); showInFiles(m.path); };
-  row.append(dl, show); body.append(row);
+  row.append(dl, show);
+  if (viewableInTab(m.name)) { const op = document.createElement("button"); op.textContent = "Open in tab"; op.onclick = (e) => { e.stopPropagation(); openInTab(m.path); }; row.append(op); }
+  body.append(row);
   card.append(ic, body);
+}
+/* The browser's own viewer for the type — Chrome's PDF viewer, an image, plain
+   text — in a new tab. The server serves these inline with a sandboxing CSP;
+   HTML and SVG come back as plain text, never as a page. */
+const viewableInTab = (name) => /\.(pdf|png|jpe?g|gif|webp|bmp|txt|md|csv|tsv|json|log|ya?ml|xml|html?|svg|js|ts|py|sh|toml|ini|mp4|webm|mp3|wav)$/i.test(name);
+async function openInTab(relPath) {
+  const url = (await base()) + `/files/read?path=${encodeURIComponent(relPath)}&inline=1`;
+  if (PLATFORM.name === "extension") PLATFORM.openUrl(url); else window.open(url, "_blank", "noopener");
 }
 function showInFiles(relPath) {
   const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
@@ -1311,7 +1321,8 @@ async function view(path, entry) {
   back.textContent = "← back"; back.onclick = () => browse(cwdPath);
   const dl = document.createElement("button");
   dl.textContent = "Download"; dl.onclick = () => download(path, entry.name);
-  hd.append(back, dl, Object.assign(document.createElement("span"),
+  const op = document.createElement("button"); op.textContent = "Open in tab"; op.hidden = !viewableInTab(entry.name); op.onclick = () => openInTab(path);
+  hd.append(back, dl, op, Object.assign(document.createElement("span"),
     { textContent: `${entry.name} · ${fmtSize(entry.size)}` }));
   fview.append(hd);
 
