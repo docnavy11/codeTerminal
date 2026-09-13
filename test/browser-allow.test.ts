@@ -44,3 +44,21 @@ describe("browser allowlist", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
+
+describe("bridge: the server browser is never the automatic pick while a person's browser is connected", () => {
+  test("newest person's browser wins; the server browser only when alone", async () => {
+    const { BrowserBridge } = await import("../src/browser.js");
+    const { FakeWs } = await import("./fakes/ws.js");
+    const bridge = new BrowserBridge(() => {}, 300);
+    const answer = (ws: InstanceType<typeof FakeWs>, who: string) => { const orig = ws.send.bind(ws); ws.send = (d: string | Buffer) => { orig(d); const m = JSON.parse(String(d)); if (m.id) setImmediate(() => ws.frame({ id: m.id, ok: true, result: who })); }; };
+    const srv = new FakeWs(); answer(srv, "server"); bridge.attach(srv as never); srv.frame({ type: "hello", instance: "server-browser" });
+    assert.equal(await bridge.send("tab_url", {}), "server", "alone: the server browser serves");
+    const me = new FakeWs(); answer(me, "laptop"); bridge.attach(me as never); me.frame({ type: "hello", instance: "laptop" });
+    assert.equal(await bridge.send("tab_url", {}), "laptop", "a person's browser is preferred even though the server browser connected first");
+    const srv2 = new FakeWs(); answer(srv2, "server"); bridge.attach(srv2 as never); srv2.frame({ type: "hello", instance: "server-browser" });
+    assert.equal(await bridge.send("tab_url", {}), "laptop", "a server browser reconnecting later still does not take over");
+    assert.equal(await bridge.send("tab_url", {}, "server-browser"), "server", "asked for by name, it serves");
+    me.close();
+    assert.equal(await bridge.send("tab_url", {}), "server", "the person's browser gone: the server browser again");
+  });
+});

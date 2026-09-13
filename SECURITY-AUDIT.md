@@ -198,6 +198,21 @@ Measured in `test_extension_reads_console_and_network` that the page's own
 fetch/XHR still complete. A site that patches `fetch` after us wraps our
 wrapper; one that patches before document start cannot exist.
 
+### L8 — The server browser: a logged-in Chromium on the server  ·  DOCUMENTED · by design
+
+Added 2026-09-13. A headless Chromium with a persistent profile runs as the
+server's user; its cookies are real logins to whatever you log in to
+through the live view. Surface: the DevTools port binds 127.0.0.1 on a
+random port (Chromium's own `--remote-debugging-port=0`), reachable only by
+processes on the host; the live view socket `/browser/live` and the
+start/stop/navigate routes sit behind the same guard as `/ws` (tailnet
+identity, Origin, Sec-Fetch-Site). `--no-sandbox` is passed (a VPS without
+user namespaces cannot start Chromium otherwise): a renderer compromise
+is a process as the server's user, not a sandboxed one — the same user
+that already runs the agent with a shell. The profile directory is
+git-ignored. The embedded extension's origin is admitted to `/ext`
+alongside a pinned `CODETERM_EXT_ORIGIN`, by its id learned at start.
+
 ## Not bugs (checked, holds up)
 
 - **ANSI stripper** — no ReDoS: 50k-param CSI in 1 ms, 500 KB unterminated OSC

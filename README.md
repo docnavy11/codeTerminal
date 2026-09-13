@@ -647,6 +647,45 @@ The full description of each tool, the extension's own CSP, the site gate,
 the debugger session and why it is attached, and what was measured for
 each piece is in **[docs/browser-tools.md](docs/browser-tools.md)**.
 
+### The server browser
+
+A headless Chromium on the server itself, with its own persistent profile
+and the same extension loaded inside, dialled at this server. Start it on
+the manage page (**Server browser** tab) or with `CODETERM_SERVER_BROWSER=1`;
+it then appears in every chat's header as **browser: server browser**, and a
+chat that picks it has all 26 browser tools act there instead of in your
+laptop's Chrome — so a job can run while your machine is off.
+
+**The live view** (`/browser.html`, "Open live view" on that tab) shows the
+tab as a stream of JPEG frames and sends your mouse and keyboard back as
+real input — the same DevTools calls the `type` and `press` tools use. URL
+bar, back/forward/reload, tabs, paste, and the page's own alert/confirm
+dialogs. It is how you log in to a site once; the session then lives in
+the profile and renews like any browser's. Talks DevTools protocol
+directly (no Playwright, no desktop, no VNC); Chromium is found on PATH or
+in Playwright's cache, or set `CODETERM_CHROMIUM`.
+
+**Choosing a browser.** With no choice made, a chat's tools go to the newest
+*person's* browser; the server browser is picked automatically only when it
+is the only one connected, so a chat never lands in it by accident. The
+header menu makes the choice explicit per chat.
+
+**What was measured** (`test/server-browser.test.ts`, real Chromium; and
+`test_server_browser_live_view` through the manage page): the extension
+inside connects as `server-browser`, frames arrive (1280 wide; the height
+is what a 1280×800 headless window gives its viewport, measured 657),
+a click focuses the mobile page's prompt box and keys and pasted text land
+in it, navigate/back/forward/new tab/close tab work from the view, stop
+ends the process and the extension drops off. Not measured: which of your
+sites accept a login from this machine's IP without a challenge, and frame
+rate over your tailnet.
+
+**Notes.** Chromium runs with `--no-sandbox` (a VPS without user namespaces
+cannot start it otherwise); the profile holds real logins, so it is in
+`.gitignore` and belongs to the server's user only. The extension inside
+gets its own id, allowed through even when `CODETERM_EXT_ORIGIN` pins your
+laptop's.
+
 
 ## Projects and the manage page
 

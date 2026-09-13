@@ -347,12 +347,46 @@ async function loadBrowser() {
   }
 }
 
+/* ---------------- server browser ---------------- */
+/* A headless Chromium on the server with its own profile: start it, look at
+   it (the live view), stop it. Logins made in the live view persist in the
+   profile; a chat picks it from the header's browser menu. */
+async function loadServer() {
+  const st = await api("/browser/server");
+  const host = $("server"); host.replaceChildren();
+  const p = document.createElement("p"); p.className = "hint";
+  p.textContent = "A Chromium that runs on this machine, headless, with its own profile. Log in to sites through the live view once; the sessions stay in the profile. In a chat, pick “server browser” in the header to make its browser tools act here instead of in your own browser.";
+  host.append(p);
+  const row = document.createElement("div"); row.className = "row";
+  const state = document.createElement("span"); state.className = "pill " + (st.running ? "ok" : "warn");
+  state.textContent = st.running ? `running · pid ${st.pid} · ${st.viewers} viewer${st.viewers === 1 ? "" : "s"}` : "stopped";
+  row.append(state);
+  const btn = document.createElement("button"); btn.textContent = st.running ? "Stop" : "Start";
+  btn.onclick = async () => { btn.disabled = true; try { await api(`/browser/server/${st.running ? "stop" : "start"}`, { method: "POST" }); } catch (e) { show(e.message); } await loadServer(); };
+  row.append(btn);
+  if (st.running) { const view = document.createElement("a"); view.href = "/browser.html"; view.target = "_blank"; view.textContent = "Open live view ↗"; view.className = "btnlink"; row.append(view); }
+  host.append(row);
+  const dl = document.createElement("dl"); dl.className = "kv";
+  const kv = (k, v) => { const dt = document.createElement("dt"); dt.textContent = k; const dd = document.createElement("dd"); dd.textContent = v; dl.append(dt, dd); };
+  kv("Chromium", st.chromium ?? "none found — set CODETERM_CHROMIUM");
+  kv("Profile", st.profileDir);
+  if (st.extensionId) kv("Extension id inside", st.extensionId);
+  if (st.lastError) kv("Last error", st.lastError);
+  host.append(dl);
+  if (st.running && st.tabs?.length) {
+    const h = document.createElement("h3"); h.textContent = "Tabs"; host.append(h);
+    const ul = document.createElement("ul");
+    for (const t of st.tabs) { const li = document.createElement("li"); li.textContent = `${t.title || "(untitled)"} — ${t.url}`; ul.append(li); }
+    host.append(ul);
+  }
+}
+
 /* ---------------- tabs ---------------- */
-const loaders = { chats: loadChats, prompts: loadPrompts, projects: loadProjects, browser: loadBrowser };
+const loaders = { chats: loadChats, prompts: loadPrompts, projects: loadProjects, browser: loadBrowser, server: loadServer };
 
 function tab(name) {
   for (const b of document.querySelectorAll("nav button")) b.classList.toggle("on", b.dataset.tab === name);
-  for (const id of ["chats", "prompts", "projects", "browser"]) $(id).hidden = id !== name;
+  for (const id of ["chats", "prompts", "projects", "browser", "server"]) $(id).hidden = id !== name;
   show("");
   loaders[name]().catch((e) => show(e.message));
 }

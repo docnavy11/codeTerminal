@@ -11,7 +11,23 @@
 
 const $ = (id) => document.getElementById(id);
 const log = $("log"), box = $("box"), dot = $("dot"), meta = $("meta");
-const stop = $("stop"), modeSel = $("mode"), modelSel = $("model");
+const stop = $("stop"), modeSel = $("mode"), modelSel = $("model"), browserSel = $("browser");
+/* Which browser this chat's tools act in. "auto" is the server's pick (the
+   newest person's browser, never the server browser unless it is alone);
+   the extension names its own; the server browser is the headless one on
+   the machine. Hidden until there is a choice to make. */
+let myBrowser = null, chosenBrowser = "";
+function paintBrowsers(list) {
+  if (!browserSel) return;
+  const cur = chosenBrowser;
+  browserSel.replaceChildren(new Option("auto", ""));
+  for (const b of list) browserSel.append(new Option(b.server ? "server browser" : b.id === myBrowser ? "this browser" : `browser ${b.id.slice(0, 6)}`, b.id));
+  if (cur && !list.some((b) => b.id === cur)) { chosenBrowser = ""; }
+  browserSel.value = chosenBrowser;
+  const show = list.length > 1 || (list.length === 1 && list[0].id !== myBrowser);
+  browserSel.hidden = !show; const l = $("browserlbl"); if (l) l.hidden = !show;
+}
+if (browserSel) browserSel.onchange = () => { chosenBrowser = browserSel.value; ws?.send(JSON.stringify({ type: "browser", instance: chosenBrowser })); };
 const statusEl = $("status"), statusText = $("statustext"), statusTime = $("statustime");
 
 let cwdShown = "";
@@ -138,7 +154,9 @@ async function connect() {
     // browser tools act here and not in another browser that is also open.
     try {
       const instanceId = await PLATFORM.instanceId();
-      if (instanceId) ws.send(JSON.stringify({ type: "browser", instance: instanceId }));
+      myBrowser = instanceId || null;
+      if (chosenBrowser) ws.send(JSON.stringify({ type: "browser", instance: chosenBrowser }));
+      else if (instanceId) { chosenBrowser = instanceId; ws.send(JSON.stringify({ type: "browser", instance: instanceId })); }
     } catch { /* no instance: the server falls back to the newest browser */ }
     flushQueued();
   };
@@ -185,6 +203,7 @@ function handle(m) {
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
+    case "browsers": paintBrowsers(m.list ?? []); break;
     case "models": {
       // the CLI's list; keep "default" first and whatever is selected selected
       const cur = modelSel.value;

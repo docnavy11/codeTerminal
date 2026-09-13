@@ -30,11 +30,27 @@ function world() {
   const convo = new Manager(join(root, "ws"), join(root, `chats-${++n}`), join(root, "projects"),
     { bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, titler: async () => null });
   const bridge = new BrowserBridge(() => {}, 200);
-  const ctx: AttachContext = { convo, bridge, filesRoot: join(root, "files"), workspace: join(root, "ws"), clients: new Set(), state: { lastChat: null, activeShell: null } };
+  const browserWatchers = new Set<() => void>();
+  const ctx: AttachContext = { convo, bridge, filesRoot: join(root, "files"), workspace: join(root, "ws"), clients: new Set(), state: { lastChat: null, activeShell: null }, browserWatchers };
   convo.onListChanged = () => { for (const f of ctx.clients) f(); };
+  bridge.onChange = () => { for (const f of browserWatchers) f(); };
   const agent = (replay = true) => { const ws = new FakeWs(); attachAgent(ws as unknown as WebSocket, ctx, replay); return ws; };
   return { sdk, convo, ctx, agent };
 }
+
+describe("attachAgent: browsers", () => {
+  test("every client gets the connected browsers on attach and whenever one comes or goes; the server browser is flagged", () => {
+    const w = world();
+    const ws = w.agent();
+    assert.deepEqual(ws.last("browsers"), { kind: "browsers", list: [] });
+    const ext = new FakeWs(); w.ctx.bridge.attach(ext as never); ext.frame({ type: "hello", instance: "laptop-1" });
+    const ext2 = new FakeWs(); w.ctx.bridge.attach(ext2 as never); ext2.frame({ type: "hello", instance: "server-browser" });
+    assert.deepEqual(ws.last("browsers"), { kind: "browsers", list: [{ id: "laptop-1", server: false }, { id: "server-browser", server: true }] });
+    ext.close();
+    assert.deepEqual((ws.last("browsers") as { list: unknown[] }).list, [{ id: "server-browser", server: true }]);
+    ext2.close(); ws.close(); w.convo.shutdown();   // no debounced save may land after the temp dir is removed
+  });
+});
 
 describe("attachAgent: connecting", () => {
   test("lands on the chat the client asks for; an unknown id falls back to the newest", () => {

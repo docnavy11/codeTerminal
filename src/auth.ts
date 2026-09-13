@@ -28,6 +28,8 @@ export type AuthConfig = {
   trustedCidrSpec: string | undefined;
   /** Pin one extension id; unset accepts any chrome-extension:// origin. */
   extOrigin?: string;
+  /** Origins allowed besides the pinned one — the extension inside the server browser, once its id is known. */
+  extraExtOrigins?: () => string[];
   /** Injection points for tests; default to the real tailscale calls. */
   deps?: { self?: () => Promise<TailnetSelf | null>; whois?: typeof realWhois };
 };
@@ -106,7 +108,7 @@ export async function createAuth(cfg: AuthConfig): Promise<Auth> {
     // A chrome-extension:// origin can never be a page on a website, so the
     // cross-site concern the Origin check exists for does not apply.
     if (typeof origin === "string" && origin.startsWith("chrome-extension://")) {
-      if (cfg.extOrigin && origin !== cfg.extOrigin) return `extension ${origin} is not the pinned one`;
+      if (cfg.extOrigin && origin !== cfg.extOrigin && !(cfg.extraExtOrigins?.() ?? []).includes(origin)) return `extension ${origin} is not the pinned one`;
       return identityReason(req);
     }
     // A simple cross-site request (<img>, form GET) carries no Origin, so the

@@ -53,6 +53,8 @@ export type ClientEvent =
   | { kind: "mode"; mode: PermissionMode }
   /** The models this CLI offers, for the picker; and the one this chat now uses (null = the CLI's default). */
   | { kind: "models"; models: { value: string; label: string }[] }
+  /** Connected browsers (extension instances); server: the headless one on this machine. mine: this client's own, if it is an extension. */
+  | { kind: "browsers"; list: { id: string; server: boolean }[] }
   | { kind: "model"; model: string | null }
   | { kind: "commands"; commands: SlashCommand[] }
   | { kind: "local"; text: string }
@@ -108,7 +110,7 @@ function parseImages(v: unknown): PromptImage[] | false {
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
-  "local", "file", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model", "rewind",
+  "local", "file", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model", "rewind", "browsers",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 
@@ -121,6 +123,7 @@ export const PERMISSION_MODES = [
 export type AgentMessage =
   /** images: base64 data (full size, sent to the model) and a small base64 thumb (kept with the chat). */
   | { type: "prompt"; text: string; withTab?: boolean; images?: PromptImage[] }
+  /** instance "" = no preference (the server picks: the newest person's browser). */
   | { type: "browser"; instance: string }
   | { type: "answer"; id: string; answers: Record<string, string> }
   /** mode: with an allow on ExitPlanMode, the mode to build in (default = ask, acceptEdits = auto-accept edits). */
@@ -166,7 +169,7 @@ export function parseAgentMessage(raw: unknown): AgentMessage | null {
       if ((text === null || !text.trim()) && !images.length) return null;
       return { type: "prompt", text: text ?? "", ...(typeof m.withTab === "boolean" ? { withTab: m.withTab } : {}), ...(images.length ? { images } : {}) };
     }
-    case "browser": { const instance = str("instance"); return instance ? { type: "browser", instance } : null; }
+    case "browser": { const instance = str("instance"); return { type: "browser", instance: instance ?? "" }; }
     case "answer": {
       const id = str("id");
       if (!id || !m.answers || typeof m.answers !== "object") return null;

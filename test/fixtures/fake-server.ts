@@ -137,6 +137,7 @@ const running = await boot({
   filesRoot: ROOT, projectsRoot: join(ROOT, "projects"),
   promptsPath: join(ROOT, "prompts.json"), usagePath: join(ROOT, "usage.json"),
   browserAllowPath: join(ROOT, "browser-allow.json"), browserAllowSeed: [],
+  serverBrowser: { profileDir: join(ROOT, "server-browser-profile"), extensionDir: join(import.meta.dirname, "..", "..", "extension") },
   maxUpload: 1024 * 1024, maxZip: 4 * 1024 * 1024, extraOrigins: [], forceLocal: true, denyExtra: [], home: join(ROOT, "home"),
   spawnQuery: sdk.spawnQuery, titler: async () => null,
   // stdout carries only READY; everything else goes to stderr (the harness's log file)

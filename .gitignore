@@ -11,3 +11,4 @@ chats-snapshots/
 usage.json
 __pycache__/
 .pytest_cache/
+server-browser/

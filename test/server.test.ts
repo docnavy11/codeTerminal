@@ -290,6 +290,17 @@ describe("upgrades", () => {
     assert.match(await rawUpgrade("/ws", ["Origin: https://evil.example"]), /^HTTP\/1\.1 403/);
     assert.match(await rawUpgrade("/pty", ["Sec-Fetch-Site: cross-site"]), /^HTTP\/1\.1 403/);
   });
+  test("server browser: status without Chromium running; navigate refused; the live socket exists and is gated", async () => {
+    const st = (await (await fetch(`${s.base}/browser/server`, { headers: { Origin: s.base } })).json()) as { running: boolean; profileDir: string; viewers: number };
+    assert.equal(st.running, false); assert.ok(st.profileDir); assert.equal(st.viewers, 0);
+    const nav = await fetch(`${s.base}/browser/server/navigate`, { method: "POST", headers: { Origin: s.base, "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://x" }) });
+    assert.equal(nav.status, 400); assert.match(((await nav.json()) as { error: string }).error, /not running/);
+    const v = await s.socket("/browser/live");
+    const gone = await v.wait((m) => m.kind === "gone");
+    assert.match(String(gone.reason), /not running/);
+    assert.match(await rawUpgrade("/browser/live", ["Origin: https://evil.example"]), /^HTTP\/1\.1 403/);
+  });
+
   test("/ws?chat=<id> attaches to that chat, not the newest", async () => {
     const a = await s.socket("/ws");
     const first = (await a.wait((m) => m.kind === "chats")).activeId as string;

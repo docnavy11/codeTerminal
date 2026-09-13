@@ -14,6 +14,7 @@ import { UsageLog } from "./usage.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
 import { resolveProject } from "./projects.js";
+import { ServerBrowser } from "./server-browser.js";
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
@@ -55,6 +56,8 @@ export type ServerConfig = {
   /** Extra denied paths, on top of the credential defaults under HOME. */
   denyExtra: string[];
   home: string;
+  /** The server browser: a headless Chromium on this machine with a persistent profile (see src/server-browser.ts). */
+  serverBrowser?: { profileDir: string; chromium?: string; extensionDir?: string; autostart?: boolean };
   /** Injection points for tests: tailscale calls and the SDK entry point. */
   authDeps?: AuthConfig["deps"];
   spawnQuery?: SessionDeps["spawnQuery"];
@@ -83,6 +86,8 @@ export function envConfig(): ServerConfig {
     promptsPath: process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"),
     usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : join(ROOT, "browser-allow.json"),
+    serverBrowser: { profileDir: process.env.CODETERM_SERVER_BROWSER_PROFILE ?? join(ROOT, "server-browser", "profile"),
+      ...(process.env.CODETERM_CHROMIUM ? { chromium: process.env.CODETERM_CHROMIUM } : {}), autostart: process.env.CODETERM_SERVER_BROWSER === "1" },
     browserAllowSeed: csv(process.env.CODETERM_BROWSER_ALLOW, /,/),
     confirmSubmit: process.env.CODETERM_CONFIRM_SUBMIT !== "0",
     maxUpload: Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024),
@@ -247,15 +252,21 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   }, 60_000);
   sweeper.unref();
 
+
+  let port = PORT;   // the bound port; differs from PORT only when PORT is 0 (tests)
+  const sbCfg = cfg.serverBrowser ?? { profileDir: join(ROOT, "server-browser", "profile") };
+  const serverBrowser = new ServerBrowser({
+    profileDir: sbCfg.profileDir, chromium: sbCfg.chromium, extensionDir: sbCfg.extensionDir ?? join(ROOT, "extension"),
+    serverWsUrl: () => `ws://${HOST}:${port}/ext`, log, warn,
+  });
   const auth = await createAuth({
     host: HOST, port: PORT, extraOrigins: cfg.extraOrigins,
     forceLocal: cfg.forceLocal,
     trustedCidrSpec: cfg.trustedCidrSpec,
     extOrigin: cfg.extOrigin,
+    extraExtOrigins: () => (serverBrowser.extensionId ? [`chrome-extension://${serverBrowser.extensionId}`] : []),
     ...(cfg.authDeps ? { deps: cfg.authDeps } : {}),
   });
-
-  let port = PORT;   // the bound port; differs from PORT only when PORT is 0 (tests)
   const app = express();
 
   app.use((_req, res, next) => {
@@ -573,11 +584,25 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   // frame is a screenshot data URL over /ext (a few MB); 32 MB leaves headroom.
   const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
 
-  const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state };
+  const browserWatchers = new Set<() => void>();
+  const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state, browserWatchers };
+  bridge.onChange = () => { for (const f of browserWatchers) f(); };
+
+  /* The server browser: status, start, stop, navigate. The live view is the /browser/live socket below. */
+  app.get("/browser/server", guard, async (_req, res) => { res.json(await serverBrowser.status()); });
+  app.post("/browser/server/start", guard, async (_req, res) => {
+    try { await serverBrowser.start(); res.json(await serverBrowser.status()); }
+    catch (e) { res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); }
+  });
+  app.post("/browser/server/stop", guard, async (_req, res) => { await serverBrowser.stop(); res.json(await serverBrowser.status()); });
+  app.post("/browser/server/navigate", guard, express.json({ limit: "8kb" }), async (req, res) => {
+    try { await serverBrowser.navigate(String((req.body as { url?: string }).url ?? "about:blank")); res.json({ ok: true }); }
+    catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
+  });
 
   server.on("upgrade", async (req: IncomingMessage, socket, head) => {
     const route = new URL(req.url ?? "/", `http://${req.headers.host}`).pathname;
-    if (route !== "/ws" && route !== "/pty" && route !== "/ext") {
+    if (route !== "/ws" && route !== "/pty" && route !== "/ext" && route !== "/browser/live") {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
@@ -599,6 +624,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
         attachAgent(ws, ctx, q.get("observe") !== "1", q.get("chat"));
       }
       else if (route === "/ext") bridge.attach(ws);
+      else if (route === "/browser/live") serverBrowser.attachViewer(ws);
       else attachShell(ws, ctx);
     });
   });
@@ -629,6 +655,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   });
 
   log(`code-terminal  http://${HOST}:${port}`);
+  if (sbCfg.autostart) serverBrowser.start().catch((e) => warn(`[server-browser] autostart: ${e instanceof Error ? e.message : e}`));
   for (const line of auth.banner()) log(line);
   log(`workspace      ${WORKSPACE}`);
   log(`shell          /pty — real PTY, NO approval gate`);
@@ -650,6 +677,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       log(`[${signal}] shutting down`);
       clearInterval(sweeper);
       try { convo.shutdown(); } catch (e) { warn(`shutdown: chats ${String(e)}`); }
+      void serverBrowser.stop().catch((e) => warn(`shutdown: server browser ${String(e)}`));
       try { usage.save(); } catch (e) { warn(`shutdown: usage ${String(e)}`); }
       for (const ws of wss.clients) ws.close(1001, "server restarting");
       server.close(() => done());

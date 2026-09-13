@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
+import { SERVER_BROWSER_ID } from "./server-browser.js";
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
 
@@ -36,11 +37,19 @@ export class BrowserBridge {
 
   get connected(): boolean { return this.#conns.size > 0; }
   get instances(): string[] { return [...this.#conns.keys()]; }
+  /** Called whenever a browser connects, identifies itself, or drops. */
+  onChange: () => void = () => {};
 
-  /** The browser to use when a caller has no preference: the newest connected. */
+  /** The browser to use when a caller has no preference: the newest connected
+      person's browser; the server browser only when it is the only one, so a
+      chat never lands in it by accident. */
   #newest(): Conn | null {
     let best: Conn | null = null;
-    for (const c of this.#conns.values()) if (!best || c.connectedAt > best.connectedAt) best = c;
+    for (const c of this.#conns.values()) {
+      if (c.instance.startsWith("pending:")) continue;
+      if (c.instance === SERVER_BROWSER_ID && best && best.instance !== SERVER_BROWSER_ID) continue;
+      if (!best || best.instance === SERVER_BROWSER_ID || c.connectedAt > best.connectedAt) best = c;
+    }
     return best;
   }
 
@@ -78,6 +87,7 @@ export class BrowserBridge {
         conn.connectedAt = Date.now();
         this.#conns.set(instance, conn);
         this.#onLog(`extension connected (${instance.slice(0, 8)}) — ${this.#conns.size} browser(s)`);
+        this.onChange();
         return;
       }
 
@@ -96,6 +106,7 @@ export class BrowserBridge {
       if (this.#conns.get(conn.instance) !== conn) return;   // already replaced
       this.#conns.delete(conn.instance);
       this.#onLog(`extension disconnected (${conn.instance.slice(0, 8)}) — ${this.#conns.size} left`);
+      this.onChange();
       for (const [, p] of conn.pending) {
         clearTimeout(p.timer);
         p.reject(new Error("the extension disconnected mid-command"));

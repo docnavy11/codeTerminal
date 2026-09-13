@@ -2,6 +2,7 @@ import type { WebSocket } from "ws";
 import { stat } from "node:fs/promises";
 import type { Manager, LiveChat } from "./conversation.js";
 import type { BrowserBridge } from "./browser.js";
+import { SERVER_BROWSER_ID } from "./server-browser.js";
 import { Shell } from "./shell.js";
 import * as files from "./files.js";
 import { wantsContext } from "./prompt.js";
@@ -20,6 +21,8 @@ export type AttachContext = {
   workspace: string;
   /** Every attached client's list refresher, so a rename shows up everywhere. */
   clients: Set<() => void>;
+  /** Every attached client's browsers-list sender, for when a browser connects or drops. */
+  browserWatchers?: Set<() => void>;
   /** Cross-connection state that is "whatever was most recent" by design. */
   state: {
     /** The chat most recently attached to; a shell pane opens in its cwd. */
@@ -59,8 +62,11 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
     sendProject(next);
   };
 
+  const sendBrowsers = () => send({ kind: "browsers", list: bridge.instances.filter((i) => !i.startsWith("pending:")).map((id) => ({ id, server: id === SERVER_BROWSER_ID })) });
+  ctx.browserWatchers?.add(sendBrowsers);
   chat.attach(send, replay);
   listFor();
+  sendBrowsers();
   send({ kind: "mode", mode: chat.mode });
   send({ kind: "model", model: chat.model });
   sendProject(chat);
@@ -98,7 +104,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
       }
       // Which browser this client is in; follows the person across chats.
       case "browser":
-        clientBrowser = msg.instance; chat.useBrowser(clientBrowser); return;
+        clientBrowser = msg.instance || undefined; chat.useBrowser(clientBrowser); return;
       case "answer":
         chat.session.answer(msg.id, msg.answers); return;
       case "decision":
@@ -157,7 +163,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
 
   const refresh = () => listFor();
   ctx.clients.add(refresh);
-  const detach = () => { chat.detach(send); ctx.clients.delete(refresh); };
+  const detach = () => { chat.detach(send); ctx.clients.delete(refresh); ctx.browserWatchers?.delete(sendBrowsers); };
   ws.on("close", detach);
   ws.on("error", detach);
 }

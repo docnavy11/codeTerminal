@@ -1115,3 +1115,45 @@ def test_extension_trusted_input_and_csp_eval(ext_pages):
         r = call(sw, "eval", {"tabId": tab, "code": "1 + 1", "synthetic": True}); assert r["ok"] is False and "unsafe-eval" in r["e"], r
     finally:
         srv.shutdown()
+
+
+def test_server_browser_live_view(page, server):
+    """The server browser from the manage page: Start launches a headless
+    Chromium with the extension (it appears as 'server-browser' on /setup and
+    in the chat's browser menu); the live view shows frames, the URL bar
+    navigates, clicks and keys reach the page; Stop ends it."""
+    import json, urllib.request
+    page.goto(server.base + "/manage.html"); page.click("nav button[data-tab=server]")
+    page.wait_for_selector("#server button", timeout=5000)
+    assert page.text_content("#server .pill") == "stopped"
+    page.click("#server button:text-is('Start')")
+    page.wait_for_selector("#server .pill.ok", timeout=30000)
+    connected = lambda: json.load(urllib.request.urlopen(server.base + "/setup"))["extension"]["connected"]
+    t0 = time.time()
+    while time.time() - t0 < 15 and "server-browser" not in connected(): time.sleep(0.2)
+    assert "server-browser" in connected(), connected()
+    # the chat header offers it
+    chat = page.context.new_page(); chat.goto(server.base + "/m.html")
+    chat.wait_for_function("() => !document.getElementById('browser').hidden", timeout=10000)
+    assert chat.evaluate("() => [...document.getElementById('browser').options].map(o => o.textContent)") == ["auto", "server browser"]
+    chat.close()
+    # the live view
+    view = page.context.new_page(); view.goto(server.base + "/browser.html")
+    view.wait_for_function("() => document.getElementById('screen').naturalWidth > 100", timeout=15000)
+    assert view.text_content("#st") == "live"
+    view.fill("#url", server.base + "/m.html"); view.press("#url", "Enter")
+    view.wait_for_function("(b) => document.getElementById('url').value.startsWith(b) && document.getElementById('url').value.endsWith('/m.html')", arg=server.base, timeout=15000)
+    time.sleep(1.0)   # a frame of the loaded page
+    # frame geometry: the viewport is what headless Chromium gives a 1280×800 window (measured 1280×657: window minus its bars)
+    box = view.evaluate("() => { const img = document.getElementById('screen'); return { nw: img.naturalWidth, nh: img.naturalHeight }; }")
+    assert box["nw"] == 1280 and 500 <= box["nh"] <= 800, box
+    # the pointer and keys reach the tab: measured with exact coordinates in test/server-browser.test.ts; here only that the path is live
+    view.mouse.click(300, 300); view.keyboard.type("x"); time.sleep(0.3)
+    st = json.load(urllib.request.urlopen(server.base + "/browser/server"))
+    assert st["running"] and st["viewers"] == 1 and any(t["url"].endswith("/m.html") for t in st["tabs"]), st
+    view.close()
+    page.click("#server button:text-is('Stop')")
+    page.wait_for_selector("#server .pill.warn", timeout=15000)
+    t0 = time.time()
+    while time.time() - t0 < 10 and "server-browser" in connected(): time.sleep(0.2)
+    assert "server-browser" not in connected()

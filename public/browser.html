@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>code terminal — server browser</title>
+<style>
+  :root {
+    --bg:#14171e; --panel:#1a1e27; --line:#2b3140; --fg:#dfe3ec; --dim:#8b93a7;
+    --accent:#7aa2f7; --ok:#7dcfa0; --warn:#e0af68; --bad:#f07178; --btn:#252a36;
+    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
+            --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b; --btn:#e6e8ee; color-scheme: light; }
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.4 var(--ui); display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0; flex-wrap:wrap; }
+  header button, header select { font:inherit; background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:3px 8px; cursor:pointer; height:28px; }
+  header button:hover { border-color:var(--accent); }
+  header input#url { flex:1; min-width:160px; font:inherit; font-family:var(--mono); background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:3px 8px; height:28px; }
+  header input#url:focus { outline:none; border-color:var(--accent); }
+  header select#tabs { max-width:260px; }
+  header .st { color:var(--dim); font-size:12px; margin-left:4px; white-space:nowrap; }
+  header .st.bad { color:var(--bad); }
+  main { flex:1; min-height:0; display:flex; align-items:flex-start; justify-content:center; background:#000; overflow:auto; }
+  #screen { display:block; max-width:100%; max-height:100%; object-fit:contain; cursor:default; outline:none; user-select:none; -webkit-user-drag:none; }
+  #screen:focus { box-shadow:0 0 0 2px var(--accent) inset; }
+  #note { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px 20px; max-width:480px; text-align:center; }
+  #note button { margin-top:10px; font:inherit; background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:4px 12px; cursor:pointer; }
+  #dialog { position:fixed; left:50%; top:20%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--warn); border-radius:8px; padding:14px 18px; max-width:520px; }
+  #dialog input { width:100%; margin:8px 0; font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:4px 8px; }
+  #dialog .row { display:flex; gap:8px; justify-content:flex-end; }
+  #dialog button { font:inherit; background:var(--btn); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:4px 12px; cursor:pointer; }
+  kbd { font-family:var(--mono); border:1px solid var(--line); border-radius:3px; padding:0 4px; font-size:11px; color:var(--dim); }
+</style>
+<header>
+  <button id="back" title="Back">←</button>
+  <button id="fwd" title="Forward">→</button>
+  <button id="reload" title="Reload">↻</button>
+  <input id="url" placeholder="URL or search" spellcheck="false" autocomplete="off">
+  <select id="tabs" title="Tabs"></select>
+  <button id="newtab" title="New tab">+</button>
+  <button id="closetab" title="Close this tab">✕</button>
+  <button id="paste" title="Paste your clipboard into the page (the page's own Ctrl+V cannot reach it)">paste</button>
+  <span class="st" id="st">connecting…</span>
+</header>
+<main><img id="screen" tabindex="0" alt="the server browser's tab" draggable="false"></main>
+<div id="note" hidden><div id="notetext"></div><button id="noteact" hidden></button></div>
+<div id="dialog" hidden><div id="dlgtext"></div><input id="dlginput" hidden><div class="row"><button id="dlgcancel">Cancel</button><button id="dlgok">OK</button></div></div>
+<script src="/browser.js"></script>
