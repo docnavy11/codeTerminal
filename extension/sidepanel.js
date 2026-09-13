@@ -583,7 +583,7 @@ function applyStatus(m) {
     thinking:   `thinking${m.tokens > 0 ? ` · ${m.tokens >= 1000 ? (m.tokens / 1000).toFixed(1) + "k" : m.tokens}` : ""}${rollup()}`,
     tool:       `running ${m.detail}${rollup()}`,
     compacting: "compacting",
-    awaiting:   `waiting for you — ${m.detail === "ExitPlanMode" ? "the plan" : m.detail === "browser" ? "a site" : m.detail}`,
+    awaiting:   `waiting for you — ${m.detail === "ExitPlanMode" ? "the plan" : m.detail === "browser" ? "a site" : m.detail === "submit" ? "a form submit" : m.detail}`,
   }[m.state] ?? m.state;
 
   setBusy(m.state !== "idle");
@@ -637,6 +637,7 @@ function renderPlan(m) {
    list. eval asks per call: "Allow once" / "Allow on this site (this chat)". */
 function renderApproval(m) {
   if (m.tool === "ExitPlanMode") return renderPlan(m);
+  if (m.tool === "submit") return renderSubmit(m);
   const site = m.tool === "browser";
   const card = el("card" + (site ? " site" : ""));
   card.dataset.approval = m.id; card.dataset.tool = m.tool;
@@ -666,6 +667,36 @@ function renderApproval(m) {
     b.dataset.decision = decision;
     b.onclick = () => {
       if (ws?.readyState !== WebSocket.OPEN) return;   // reconnecting: the server will re-ask
+      ws.send(JSON.stringify({ type: "decision", id: m.id, decision }));
+      card.querySelectorAll("button").forEach((x) => (x.disabled = true));
+    };
+    row.append(b);
+  }
+  card.append(h, pre, row);
+  log.scrollTop = log.scrollHeight;
+}
+
+/* Confirm before submit: a click or Enter is about to send a form with
+   filled fields. Where it goes, which button, what is in it — then Submit
+   or Stop. No "always": every submit is worth a look. */
+function renderSubmit(m) {
+  const d = m.input || {};
+  const card = el("card submit");
+  card.dataset.approval = m.id; card.dataset.tool = "submit";
+  const h = document.createElement("h4");
+  h.textContent = `Submit this form on ${d.host || "this site"}?`;
+  const pre = document.createElement("pre");
+  let path = d.action || "";
+  try { const u = new URL(d.action); path = u.pathname + u.search; } catch { /* keep */ }
+  const lines = [`${String(d.method || "get").toUpperCase()} ${path}${d.button ? ` · button "${d.button}"` : ""}${d.via === "enter" ? " · via Enter" : ""}`];
+  for (const f of d.fields || []) lines.push(`${f.name}: ${f.value}`);
+  if (!(d.fields || []).length) lines.push("(no fields filled)");
+  pre.textContent = lines.join("\n");
+  const row = document.createElement("div"); row.className = "row";
+  for (const [label, decision, cls] of [["Submit", "allow", "allow"], ["Stop", "deny", "deny"]]) {
+    const b = document.createElement("button"); b.textContent = label; b.className = cls; b.dataset.decision = decision;
+    b.onclick = () => {
+      if (ws?.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ type: "decision", id: m.id, decision }));
       card.querySelectorAll("button").forEach((x) => (x.disabled = true));
     };

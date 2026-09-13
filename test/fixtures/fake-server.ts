@@ -103,6 +103,10 @@ const sdk = fakeSdk({ setup: (q) => {
     q.ask("browser", { host: "bank.example", action: "read_page", level: "read" }).promise.then((r) => { q.text(`site: ${r.behavior}`); q.result(); });
     return;
   }
+  if (content.includes("submit-me")) {
+    q.ask("submit", { host: "shop.example", via: "click", action: "https://shop.example/checkout?step=2", method: "post", button: "Place order", fields: [{ name: "name", value: "Yvan" }, { name: "card", value: "•••" }], filled: 2 }).promise.then((r) => { q.text(`submit: ${r.behavior}`); q.result(); });
+    return;
+  }
   if (content.includes("eval-me")) {
     q.ask("browser", { host: "bank.example", action: "eval", detail: "document.title" }).promise.then((r) => { q.text(`eval: ${r.behavior}`); q.result(); });
     return;

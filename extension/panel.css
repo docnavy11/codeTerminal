@@ -320,6 +320,8 @@
   .card .diff .l.add { color:var(--ok); background:color-mix(in srgb, var(--ok) 12%, transparent); }
   .card .diff .l.del { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, transparent); }
   .card .diff .l.hunk { color:var(--dim); font-style:italic; opacity:0.8; }
+  .card.submit { border-left-color:var(--bad); }
+  .card.submit h4 { color:var(--bad); }
   .card.site { border-left-color:var(--accent); }
   .card.site h4 { color:var(--accent); }
   .card.site .row { flex-wrap:wrap; }

@@ -1,6 +1,6 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate, type PermissionMode, type SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { Pushable, deferred } from "./pushable.js";
-import { browserTools, terminalTools, watchTools, promptTools, fileTools } from "./tools.js";
+import { browserTools, terminalTools, watchTools, promptTools, fileTools, type SubmitDetail } from "./tools.js";
 import { composePrompt } from "./prompt.js";
 import { summariseResult } from "./results.js";
 import { previewDiff } from "./diff.js";
@@ -67,6 +67,8 @@ export type SessionDeps = {
   prefer: () => string | undefined;
   /** Sites the browser tools may use without asking; "Always" on the card adds to it. Absent = allow everything (tests). */
   browserAllow?: BrowserAllowlist | null;
+  /** Confirm-before-submit cards (default on; CODETERM_CONFIRM_SUBMIT=0 turns them off). */
+  confirmSubmit?: boolean;
   /** The browsable root; files under it can be offered as downloads. */
   filesRoot?: string;
   /** The SDK entry point. Tests inject a scripted one; production leaves it unset. */
@@ -117,6 +119,7 @@ type Pending = {
   suggestions: PermissionUpdate[];
   /** Set for a browser-site ask: which host, action and level; "always" adds the host to the standing list at that level. */
   browser?: { host: string; action: string; level: Level };
+  submit?: SubmitDetail;
   /** Set for AskUserQuestion, whose answer rides back in updatedInput. */
   question?: { input: Record<string, unknown>; questions: AskQuestion[] };
 };
@@ -180,7 +183,8 @@ export class Session {
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS, ...FILE_TOOLS],
         mcpServers: {
           terminal: terminalTools(this.#deps.getShell),
-          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy, () => this.#workspace, d.filesRoot) } : {}),
+          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy, () => this.#workspace, d.filesRoot,
+            d.confirmSubmit === false ? undefined : (detail) => this.#askSubmit(detail)) } : {}),
           // The chat id is this session's own, so a watch is always attributed
           // to the conversation that set it.
           ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
@@ -242,6 +246,16 @@ export class Session {
     evalAllowed: (host) => this.#evalGrants.has(host),
     ask: (host, action, detail, level) => this.#askBrowser(host, action, detail, level),
   };
+  /** A form is about to be submitted with filled fields: show it, wait for the answer. */
+  #askSubmit(detail: SubmitDetail): Promise<boolean> {
+    const id = randomUUID();
+    const { promise, resolve } = deferred<PermissionResult>();
+    this.#pending.set(id, { resolve, tool: "submit", suggestions: [], submit: detail });
+    this.#emit({ kind: "approval", id, tool: "submit", input: detail, canAlways: false });
+    this.#pushStatus();
+    return promise.then((r) => r.behavior === "allow");
+  }
+
   #askBrowser(host: string, action: string, detail: string | undefined, level: Level): Promise<"allow" | "deny"> {
     const id = randomUUID();
     const { promise, resolve } = deferred<PermissionResult>();
@@ -307,6 +321,12 @@ export class Session {
     if (!p) return false;
     this.#pending.delete(id);
 
+    if (p.submit) {
+      p.resolve(decision === "deny" ? { behavior: "deny", message: "stopped" } : { behavior: "allow" });
+      this.#emit({ kind: "approval_closed", id, decision });
+      this.#pushStatus();
+      return true;
+    }
     if (p.browser) {
       // allow: this chat. always: this site from now on (eval: this host, this chat — never standing).
       const { host, action, level } = p.browser;

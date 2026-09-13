@@ -408,6 +408,48 @@ describe("Session rewind", () => {
   });
 });
 
+describe("confirm before submit through the session", () => {
+  test("the card carries the form; Submit lets the click through, Stop fails it; the status says a form submit is waiting", async () => {
+    const { BrowserBridge } = await import("../src/browser.js");
+    const { FakeWs } = await import("./fakes/ws.js");
+    const bridge = new BrowserBridge(() => {}, 500);
+    const ext = new FakeWs(); const clicks: number[] = [];
+    const origSend = ext.send.bind(ext);
+    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result:
+      msg.action === "tab_url" ? { tabId: 1, url: "https://shop.example/cart", title: "Cart" }
+      : msg.action === "submit_probe" ? { submit: true, via: "click", form: { action: "https://shop.example/checkout", method: "post", button: "Pay", fields: [{ name: "amount", value: "120" }], filled: 1 } }
+      : (clicks.push(1), { clicked: "button" }) })); };
+    bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
+    const sdk = fakeSdk(); const events: ClientEvent[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start();
+    type Reg = Record<string, { callback?: Function; handler?: Function }>;
+    const tools = (sdk.last.options.mcpServers as Record<string, { instance: { _registeredTools: Reg } }>).browser.instance._registeredTools;
+    const click = () => (tools.click.callback ?? tools.click.handler)!({ tabId: 1, selector: "#pay" }, {}) as Promise<{ content: { text: string }[] }>;
+    let p = click(); await settle(8);
+    let card = events.filter((e) => e.kind === "approval").at(-1) as Extract<ClientEvent, { kind: "approval" }>;
+    assert.equal(card.tool, "submit"); assert.equal(card.canAlways, false);
+    assert.deepEqual(card.input, { host: "shop.example", via: "click", action: "https://shop.example/checkout", method: "post", button: "Pay", fields: [{ name: "amount", value: "120" }], filled: 1 });
+    assert.equal(s.status().state, "awaiting"); assert.equal(s.status().detail, "submit");
+    s.decide(card.id, "deny");
+    await assert.rejects(p, /the user stopped the submit/); assert.equal(clicks.length, 0);
+    assert.equal((events.at(-2) as { kind: string; decision?: string }).decision ?? (events.filter((e) => e.kind === "approval_closed").at(-1) as { decision: string }).decision, "deny");
+    p = click(); await settle(8);
+    card = events.filter((e) => e.kind === "approval").at(-1) as typeof card; s.decide(card.id, "allow");
+    assert.match((await p).content[0].text, /clicked/); assert.equal(clicks.length, 1);
+    s.close(); await done.catch(() => {});
+  });
+  test("with confirmSubmit false the browser tools never probe", async () => {
+    const sdk = fakeSdk(); const events: ClientEvent[] = [];
+    const { BrowserBridge } = await import("../src/browser.js");
+    const bridge = new BrowserBridge(() => {}, 200);
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, confirmSubmit: false });
+    const done = s.start();
+    assert.ok((sdk.last.options.mcpServers as Record<string, unknown>).browser);
+    s.close(); await done.catch(() => {});
+  });
+});
+
 describe("browser release at turn end", () => {
   test("a turn that used a browser tool ends with `release` to the extension; a turn without one does not", async () => {
     const { BrowserBridge } = await import("../src/browser.js");

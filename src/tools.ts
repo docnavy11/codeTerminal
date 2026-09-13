@@ -278,7 +278,10 @@ export type BrowserPolicy = {
   evalAllowed(host: string): boolean;
 };
 
-export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined, budget?: () => { screenshots: number; maxScreenshots: number }, policy?: BrowserPolicy, getCwd?: () => string, filesRoot?: string) {
+/** What the confirm-before-submit card shows: where the form goes and what is in it. */
+export type SubmitDetail = { host: string; via: "click" | "enter"; action: string; method: string; button?: string; fields: { name: string; value: string }[]; filled: number };
+
+export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined, budget?: () => { screenshots: number; maxScreenshots: number }, policy?: BrowserPolicy, getCwd?: () => string, filesRoot?: string, confirmSubmit?: (d: SubmitDetail) => Promise<boolean>) {
   const tabId = z.number().int().optional().describe("Target tab id; omit for the active tab");
 
   /**
@@ -386,6 +389,17 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     },
   };
   const BATCH_MAX = 20;
+  /** Confirm-before-submit: ask the page whether this click/Enter submits a form, and if so put it in front of the user. */
+  const guardSubmit = async (a: { tabId?: number }, what: { ref?: string; selector?: string; key?: string }): Promise<void> => {
+    if (!confirmSubmit) return;
+    type Probe = { submit: boolean; via?: "click" | "enter"; form?: Omit<SubmitDetail, "host" | "via"> };
+    let probe: Probe | null;
+    try { probe = (await bridge.send("submit_probe", { tabId: a.tabId, ...what }, prefer())) as Probe | null; } catch { return; }   // an older extension: no probe, no card
+    if (!probe?.submit || !probe.form) return;
+    const host = hostOfUrl(probe.form.action) || (await whereFor(a.tabId)).host;
+    const ok = await confirmSubmit({ host, via: probe.via ?? "click", ...probe.form });
+    if (!ok) throw new Error(`the user stopped the submit to ${host} (${probe.form.method.toUpperCase()} ${probe.form.action}). Do not retry it; ask what to do instead.`);
+  };
 
   return createSdkMcpServer({
     name: "browser",
@@ -501,9 +515,9 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         { tabId, url: z.string().describe("Absolute URL"), newTab: z.boolean().optional() },
         async (a) => { await ensure(hostOfUrl(a.url), "navigate", a.url); return text(stamp(await bridge.send("navigate", a, prefer()), { host: hostOfUrl(a.url) })); }),
 
-      tool("click", "Click an element, by ref from snapshot or by CSS selector.",
+      tool("click", "Click an element, by ref from snapshot or by CSS selector. A click that submits a form with filled fields is shown to the user first, who can stop it.",
         { tabId, ref: z.string().optional(), selector: z.string().optional() },
-        gated("click", (a) => bridge.send("click", a, prefer()))),
+        gated("click", async (a) => { await guardSubmit(a, { ref: a.ref, selector: a.selector }); return bridge.send("click", a, prefer()); })),
 
       tool("fill", "Set one form control: text/textarea/contenteditable (value + input/change events), select (option by text or value), checkbox (true/false), radio (by value or label).",
         { tabId, ref: z.string().optional(), selector: z.string().optional(), value: z.union([z.string(), z.boolean()]) },
@@ -514,9 +528,9 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         { tabId, fields: z.array(z.object({ ref: z.string().optional(), selector: z.string().optional(), value: z.union([z.string(), z.boolean()]) })).min(1).max(100) },
         gated("fill_form", (a) => { if (!a.fields?.length) throw new Error("fill_form needs at least one field"); return bridge.send("fill_form", a, prefer()); })),
 
-      tool("press", "Send a key to the focused element (Enter, Tab, Escape, ArrowDown, …).",
+      tool("press", "Send a key to the focused element (Enter, Tab, Escape, ArrowDown, …). Enter in a form's text field submits the form like the real key would; a submit with filled fields is shown to the user first, who can stop it.",
         { tabId, key: z.string() },
-        gated("press", (a) => bridge.send("press", a, prefer()))),
+        gated("press", async (a) => { await guardSubmit(a, { key: a.key }); return bridge.send("press", a, prefer()); })),
 
       tool("console_read",
         "Read what the page has logged since it loaded: console.log/info/warn/error, uncaught errors and unhandled rejections (with file:line where known). Newest last; counts per level. For testing a web app: check for errors after an action. Buffer resets on navigation; clear:true empties it after reading.",

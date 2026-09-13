@@ -1059,3 +1059,60 @@ def test_extension_reads_console_and_network(playwright):
         assert call(sw, "console_read", {"tabId": tab})["r"]["total"] == 0
     finally:
         ctx.close(); srv.shutdown()
+
+
+def test_submit_card(page, server):
+    open_ui(page, server)
+    send(page, "submit-me")
+    page.wait_for_selector(".card.submit", timeout=10000)
+    assert page.text_content(".card.submit h4") == "Submit this form on shop.example?"
+    assert page.text_content(".card.submit pre") == 'POST /checkout?step=2 · button "Place order"\nname: Yvan\ncard: •••'
+    assert page.evaluate("() => [...document.querySelectorAll('.card.submit .row button')].map(b => b.textContent)") == ["Submit", "Stop"]
+    assert page.text_content("#statustext") == "waiting for you — a form submit"
+    page.click(".card.submit button[data-decision=deny]"); wait_reply(page, "submit: deny")
+    send(page, "submit-me"); page.wait_for_selector(".card.submit:not(:has(button[disabled]))", timeout=10000)
+    cards = page.locator(".card.submit"); cards.nth(cards.count() - 1).locator("button[data-decision=allow]").click(); wait_reply(page, "submit: allow")
+
+
+def test_extension_probes_submits(playwright):
+    """The real extension: the probe says what a click/Enter would submit
+    (fields, masked password, button, method), says no for a plain button,
+    a search box with nothing typed, or another key; and press Enter in a
+    form field now really submits (a synthetic key alone never did)."""
+    import tempfile, threading, http.server, socketserver
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    html = b"""<form id=login method=post action="/login"><input name=user value=yvan><input name=pw type=password value=secret>
+        <label><input type=checkbox name=remember checked> remember</label><button>Sign in</button></form>
+      <form id=search action="/s"><input name=q></form>
+      <form id=js method=post action="/js"><input name=a value=1><button type=button id=plain>Not a submit</button><button type=submit id=go>Go</button></form>
+      <script>window.subs = []; for (const f of document.querySelectorAll('form')) f.addEventListener('submit', e => { e.preventDefault(); subs.push(f.id); });</script>"""
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp(prefix="ct-sub-prof-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
+    try:
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        r = call(sw, "submit_probe", {"tabId": tab, "selector": "#login button"})
+        assert r["submit"] is True and r["via"] == "click" and r["form"]["method"] == "post" and r["form"]["action"].endswith("/login") and r["form"]["button"] == "Sign in", r
+        assert r["form"]["fields"] == [{"name": "user", "value": "yvan"}, {"name": "pw", "value": "•••"}, {"name": "remember", "value": "checked"}], r["form"]
+        assert call(sw, "submit_probe", {"tabId": tab, "selector": "#plain"})["submit"] is False, "a type=button is not a submit"
+        assert call(sw, "submit_probe", {"tabId": tab, "selector": "#go"})["submit"] is True
+        page.focus("#search input")
+        assert call(sw, "submit_probe", {"tabId": tab, "key": "Enter"})["submit"] is False, "GET with nothing typed: no card"
+        page.fill("#search input", "jobs")
+        r = call(sw, "submit_probe", {"tabId": tab, "key": "Enter"}); assert r["submit"] is True and r["via"] == "enter" and r["form"]["fields"] == [{"name": "q", "value": "jobs"}], r
+        assert call(sw, "submit_probe", {"tabId": tab, "key": "Tab"})["submit"] is False
+        assert call(sw, "press", {"tabId": tab, "key": "Enter"}).get("submitted") is True
+        page.focus("#login input[name=user]")
+        assert call(sw, "press", {"tabId": tab, "key": "Enter"}).get("submitted") is True
+        assert call(sw, "click", {"tabId": tab, "selector": "#go"})["clicked"] == "button"
+        assert page.evaluate("() => window.subs") == ["search", "login", "js"]
+    finally:
+        ctx.close(); srv.shutdown()

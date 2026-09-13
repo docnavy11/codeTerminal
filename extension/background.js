@@ -784,11 +784,28 @@ async function handle(action, p) {
       await ensureDebugger(t.id);
       return await run(t.id, (key) => {
         const el = document.activeElement || document.body;
+        let prevented = false;
         for (const type of ["keydown", "keypress", "keyup"]) {
-          el.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }));
+          if (!el.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }))) prevented = true;
         }
-        return { pressed: key, on: el.tagName.toLowerCase() };
+        // A synthetic Enter has no default action (measured: no submit), so
+        // do what the real key would: implicit submission of the form the
+        // focused text field belongs to, unless the page cancelled the key.
+        let submitted = false;
+        if (/^(Enter|NumpadEnter)$/.test(key) && !prevented && el.form && el.tagName === "INPUT" && !/^(checkbox|radio|button|submit|reset|file|image)$/i.test(el.type)) {
+          const btn = el.form.querySelector('button[type=submit],input[type=submit],input[type=image],button:not([type])');
+          const texts = [...el.form.querySelectorAll("input")].filter((i) => !/^(checkbox|radio|button|submit|reset|file|image|hidden|range|color)$/i.test(i.type));
+          if (btn || texts.length === 1) { try { btn ? el.form.requestSubmit(btn) : el.form.requestSubmit(); submitted = true; } catch { /* invalid form: the browser shows its message */ } }
+        }
+        return { pressed: key, on: el.tagName.toLowerCase(), ...(submitted ? { submitted: true } : {}) };
       }, [p.key]);
+    }
+
+    // Would a click / Enter submit a form, and what — for the confirm card.
+    case "submit_probe": {
+      const t = await resolveTab(p.tabId);
+      await inject(t.id);
+      return await run(t.id, (o) => globalThis.ctSubmitProbe(o), [{ ref: p.ref ?? null, selector: p.selector ?? null, key: p.key ?? null }]);
     }
 
     case "eval": {

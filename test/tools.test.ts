@@ -267,6 +267,31 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("confirm before submit: a submitting click/Enter is put in front of the user; stop fails the tool without clicking; non-submits and other keys never ask", async () => {
+    const asked: Record<string, unknown>[] = []; const clicks: number[] = []; const probes: Record<string, unknown>[] = [];
+    let answer = true;
+    let probe: Record<string, unknown> = { submit: true, via: "click", form: { action: "https://shop.example/checkout", method: "post", button: "Place order", fields: [{ name: "name", value: "Yvan" }, { name: "card", value: "•••" }], filled: 2 } };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://shop.example/cart", title: "Cart" }), submit_probe: (p) => { probes.push(p); return probe; }, click: () => { clicks.push(1); return { clicked: "button" }; }, press: (p) => ({ pressed: p.key }) });
+    const srv = browserTools(bridge, () => undefined, undefined, undefined, undefined, undefined, async (d) => { asked.push(d); return answer; });
+    assert.match(await call(srv, "click", { tabId: 1, selector: "#order" }), /clicked/);
+    assert.deepEqual(asked[0], { host: "shop.example", via: "click", action: "https://shop.example/checkout", method: "post", button: "Place order", fields: [{ name: "name", value: "Yvan" }, { name: "card", value: "•••" }], filled: 2 });
+    assert.deepEqual(probes[0], { tabId: 1, selector: "#order" });
+    answer = false;
+    await assert.rejects(call(srv, "click", { tabId: 1, selector: "#order" }), /the user stopped the submit to shop\.example \(POST https:\/\/shop\.example\/checkout\)/);
+    assert.equal(clicks.length, 1, "a stopped submit is not clicked");
+    probe = { submit: false };
+    assert.match(await call(srv, "click", { tabId: 1, selector: "a.more" }), /clicked/); assert.equal(asked.length, 2);
+    probe = { submit: true, via: "enter", form: { action: "https://shop.example/search", method: "post", fields: [{ name: "q", value: "x" }], filled: 1 } };
+    answer = true;
+    await call(srv, "press", { tabId: 1, key: "Enter" }); assert.equal(asked.length, 3); assert.equal(asked[2].via, "enter"); assert.deepEqual(probes.at(-1), { tabId: 1, key: "Enter" });
+    // no confirm callback (CODETERM_CONFIRM_SUBMIT=0): no probe at all
+    const off = browserTools(bridge, () => undefined);
+    const before = probes.length; await call(off, "click", { tabId: 1, selector: "#order" }); assert.equal(probes.length, before);
+    // an older extension without submit_probe: the click still goes through
+    const { bridge: old } = bridged({ tab_url: () => ({ tabId: 1, url: "https://a.example/" }), click: () => ({ clicked: "button" }) });
+    assert.match(await call(browserTools(old, () => undefined, undefined, undefined, undefined, undefined, async () => false), "click", { selector: "#x" }), /clicked/);
+  });
+
   test("console_read and network_read are read-level, forward their filters, and may run in a batch", async () => {
     const asks: string[] = []; const seen: [string, Record<string, unknown>][] = [];
     const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };

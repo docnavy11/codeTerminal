@@ -260,3 +260,43 @@ globalThis.ctSetField = function ctSetField({ ref, selector, value }) {
     return { field: key, ok: true, length: String(value).length };
   } catch (e) { return { field: key, ok: false, error: String(e?.message ?? e) }; }
 };
+
+/* Would this click / Enter submit a form? For the confirm-before-submit card.
+   click: the element is a submit control of a form (button[type=submit],
+   a <button> with no type, input[type=submit|image]). Enter: the focused
+   element is a text-like input in a form that submits implicitly (it has a
+   submit button, or a single text field). Reports the form's action, method,
+   the button's text and the visible fields with their values (passwords
+   masked), so the card can show what is about to be sent. A GET form with
+   nothing filled (a search box) is not worth a card. */
+globalThis.ctSubmitProbe = function ctSubmitProbe({ ref, selector, key }) {
+  const submitControl = (el) => !!el && !!el.form && (el.type === "submit" || el.type === "image");
+  const textLike = (el) => el && el.tagName === "INPUT" && !/^(checkbox|radio|button|submit|reset|file|image|hidden|range|color)$/i.test(el.type || "text");
+  let el, form, button, via;
+  if (key) {
+    if (!/^(Enter|NumpadEnter)$/.test(key)) return { submit: false };
+    el = document.activeElement; via = "enter";
+    if (!textLike(el) || !el.form) return { submit: false };
+    form = el.form;
+    button = form.querySelector('button[type=submit],input[type=submit],input[type=image],button:not([type])');
+    const texts = [...form.querySelectorAll("input")].filter(textLike);
+    if (!button && texts.length !== 1) return { submit: false };
+  } else {
+    el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : selector ? document.querySelector(selector) : null;
+    if (!submitControl(el)) return { submit: false };
+    form = el.form; button = el; via = "click";
+  }
+  const mask = (f) => (f.type === "password" ? "•••" : String(f.value ?? "").slice(0, 80));
+  const fields = [...form.querySelectorAll("input,select,textarea")]
+    .filter((f) => !/^(hidden|submit|button|reset|image)$/i.test(f.type || "") && (f.offsetParent !== null || f.type === "checkbox" || f.type === "radio"))
+    .map((f) => {
+      const name = f.getAttribute("name") || f.id || (globalThis.ctLabelOf ? globalThis.ctLabelOf(f) : "") || f.tagName.toLowerCase();
+      if (f.type === "checkbox" || f.type === "radio") return f.checked ? { name, value: f.value === "on" ? "checked" : f.value } : null;
+      const value = mask(f); return value ? { name, value } : null;
+    }).filter(Boolean).slice(0, 30);
+  const method = (form.getAttribute("method") || "get").toLowerCase();
+  if (!fields.length && method === "get") return { submit: false };
+  let action = form.getAttribute("action") || location.href;
+  try { action = new URL(action, location.href).href; } catch { /* keep as is */ }
+  return { submit: true, via, form: { action, method, button: (button?.innerText || button?.value || button?.getAttribute("aria-label") || "").trim().slice(0, 60) || undefined, fields, filled: fields.length } };
+};

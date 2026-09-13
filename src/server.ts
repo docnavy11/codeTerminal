@@ -44,6 +44,8 @@ export type ServerConfig = {
   /** Standing list of sites the browser tools may use without asking; null disables the gate. */
   browserAllowPath: string | null;
   browserAllowSeed: string[];
+  /** Confirm-before-submit cards for browser clicks/Enter that submit a form (default true). */
+  confirmSubmit?: boolean;
   maxUpload: number;
   maxZip: number;
   extraOrigins: string[];
@@ -82,6 +84,7 @@ export function envConfig(): ServerConfig {
     usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : join(ROOT, "browser-allow.json"),
     browserAllowSeed: csv(process.env.CODETERM_BROWSER_ALLOW, /,/),
+    confirmSubmit: process.env.CODETERM_CONFIRM_SUBMIT !== "0",
     maxUpload: Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024),
     maxZip: Number(process.env.CODETERM_MAX_ZIP ?? 500 * 1024 * 1024),
     extraOrigins: csv(process.env.CODETERM_ORIGINS, /,/),
@@ -197,7 +200,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     cfg.chatsDir,
     cfg.projectsRoot,
     // prefer is replaced per-chat by LiveChat, which knows its own browser.
-    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT,
+    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false,
       ...(cfg.spawnQuery ? { spawnQuery: cfg.spawnQuery } : {}),
       ...(cfg.titler ? { titler: cfg.titler } : {}) },
   );

@@ -686,6 +686,23 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**Confirm before submit.** A `click` on a form's submit control, or
+`press Enter` in a form's text field, first asks the page what it would
+send: the form's action and method, the button, and the visible fields
+with their values (passwords masked). If there is something in it — any
+filled field, or a POST — a red card shows exactly that and waits:
+**Submit** or **Stop**. No "always"; every submit is worth a look. A GET
+form with nothing filled (a search box) gets no card. Stopped, the tool
+fails with a message telling the agent not to retry. Independent of the
+site gate, on by default, `CODETERM_CONFIRM_SUBMIT=0` turns it off. What
+counts as "would submit" is a heuristic (a real submit control, or implicit
+submission on Enter); a page that submits from its own click handler on a
+plain button is not caught. Along the way `press Enter` gained a default
+action: a synthetic key event never submitted anything (measured), so Enter
+in a form's text field now submits the form the way the real key does,
+unless the page cancelled the keydown. Measured in real Chromium
+(`test_extension_probes_submits`).
+
 **`console_read` and `network_read`.** For testing a web app: after an
 action, read what the page logged (console.log/warn/error, uncaught errors
 with file:line, unhandled rejections; `level: "error"` for just the
