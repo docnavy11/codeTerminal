@@ -4,7 +4,7 @@ import { mkdtemp, rm, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import { terminalTools, watchTools, promptTools, browserTools } from "../src/tools.js";
+import { terminalTools, watchTools, promptTools, browserTools, downloadName } from "../src/tools.js";
 import { BrowserBridge } from "../src/browser.js";
 import { WatchRegistry } from "../src/watches.js";
 import { PromptStore } from "../src/prompts.js";
@@ -237,6 +237,42 @@ describe("browser tools", () => {
       fetch_bytes: () => { throw new Error("fetch failed: HTTP 403"); },
     });
     await assert.rejects(call(browserTools(b2, () => undefined), "read_page", { tabId: 7 }), /Cannot access contents/);
+  });
+
+  test("download: the tab's bytes land in <cwd>/downloads with a safe name, never overwriting; a URL can be given", async () => {
+    const { mkdtemp, readFile, readdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const cwd = await mkdtemp(join(tmpdir(), "ct-dl-"));
+    const pdf = makePdf([["Invoice 0039"]]);
+    const { bridge } = bridged({
+      tab_url: () => ({ tabId: 5, url: "https://files.example/inv/0039.pdf?dl=1" }),
+      fetch_bytes: (p) => p.url
+        ? { url: String(p.url), contentType: "text/csv", disposition: 'attachment; filename="export.csv"', bytes: 5, data: Buffer.from("a,b\n1,2").toString("base64") }
+        : { tabId: 5, url: "https://files.example/inv/0039.pdf?dl=1", contentType: "application/pdf", bytes: pdf.length, data: pdf.toString("base64") },
+    });
+    const srv = browserTools(bridge, () => undefined, undefined, undefined, () => cwd);
+    try {
+      const a = JSON.parse(await call(srv, "download", { tabId: 5 })) as { path: string; name: string; bytes: number };
+      assert.equal(a.name, "0039.pdf"); assert.equal(a.path, join(cwd, "downloads", "0039.pdf")); assert.equal(a.bytes, pdf.length);
+      assert.ok((await readFile(a.path)).equals(pdf));
+      const b = JSON.parse(await call(srv, "download", { tabId: 5 })) as { name: string };
+      assert.equal(b.name, "0039-2.pdf", "a repeat never overwrites");
+      const c = JSON.parse(await call(srv, "download", { url: "https://app.example/export?id=9" })) as { name: string };
+      assert.equal(c.name, "export.csv", "the server's suggested name wins over a nameless URL");
+      const d = JSON.parse(await call(srv, "download", { tabId: 5, name: "../../evil.pdf" })) as { name: string };
+      assert.equal(d.name, "evil.pdf", "basename'd");
+      assert.deepEqual((await readdir(join(cwd, "downloads"))).sort(), ["0039-2.pdf", "0039.pdf", "evil.pdf", "export.csv"]);
+      await assert.rejects(call(browserTools(bridge, () => undefined), "download", { tabId: 5 }), /not available/);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
+  test("downloadName", () => {
+    assert.equal(downloadName(undefined, "https://x/a/b/report.PDF", "", "application/pdf"), "report.PDF");
+    assert.equal(downloadName(undefined, "https://x/dl?id=1", "", "application/pdf"), "dl.pdf");
+    assert.equal(downloadName(undefined, "https://x/", "", "image/png"), "download.png");
+    assert.equal(downloadName(undefined, "https://x/f", "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf", ""), "r%C3%A9sum%C3%A9.pdf");
+    assert.equal(downloadName("my file<1>.txt", "https://x/", "", ""), "my file_1_.txt");
+    assert.equal(downloadName(undefined, "https://x/a%20b.csv", "", "text/csv"), "a b.csv");
   });
 
   test("a preferred browser that is gone fails rather than acting elsewhere", async () => {

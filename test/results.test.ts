@@ -46,6 +46,7 @@ describe("summariseResult", () => {
     assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "0039.pdf", kind: "pdf", pages: 3, text: "x".repeat(900) })).summary, "0039.pdf · PDF · 3 pages · 900 chars");
     assert.equal(r("mcp__browser__screenshot", JSON.stringify({ path: "/p.png", width: 1280, height: 720, bytes: 1_300_000 })).summary, "image · 1280×720 · 1.2 MB");
     assert.equal(r("mcp__browser__list_tabs", JSON.stringify([{ id: 1 }, { id: 2 }])).summary, "2 tabs");
+    assert.equal(r("mcp__browser__download", JSON.stringify({ path: "/w/downloads/a.pdf", name: "a.pdf", bytes: 1_300_000 })).summary, "saved a.pdf · 1.2 MB");
     assert.equal(r("mcp__browser__snapshot", JSON.stringify({ elements: [1, 2, 3] })).summary, "3 elements");
     assert.equal(r("mcp__browser__eval", "null").summary, "null");
     assert.equal(r("mcp__terminal__read", "Last 200 lines of the user's terminal:\n\n$ ls").summary, "200 lines");

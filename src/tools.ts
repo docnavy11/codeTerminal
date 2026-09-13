@@ -1,5 +1,5 @@
-import { mkdir, writeFile, chmod } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, writeFile, chmod, access } from "node:fs/promises";
+import { join, basename, extname } from "node:path";
 import { z } from "zod";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { BrowserBridge } from "./browser.js";
@@ -15,6 +15,28 @@ const text = (v: unknown) => ({
 });
 
 
+
+/** A safe file name for a download: the caller's, the server's suggestion, or the URL's last segment; extension from the type if none. */
+export function downloadName(given: string | undefined, url: string, disposition: string | undefined, contentType: string): string {
+  let name = given?.trim() || (disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)?.[1] ?? "");
+  if (!name) { try { name = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() ?? ""); } catch { name = ""; } }
+  name = basename(name).replace(/[\x00-\x1f<>:"|?*\\]/g, "_").slice(0, 120) || "download";
+  if (!extname(name)) {
+    const ext = /pdf/i.test(contentType) ? ".pdf" : /png/i.test(contentType) ? ".png" : /jpe?g/i.test(contentType) ? ".jpg" : /json/i.test(contentType) ? ".json" : /csv/i.test(contentType) ? ".csv" : /html/i.test(contentType) ? ".html" : /text\/plain/i.test(contentType) ? ".txt" : "";
+    name += ext;
+  }
+  return name;
+}
+
+/** name, name-2, name-3 … so a repeated download never overwrites. */
+async function unusedPath(dir: string, name: string): Promise<string> {
+  const ext = extname(name), stem = name.slice(0, name.length - ext.length);
+  for (let i = 1; i < 1000; i++) {
+    const p = join(dir, i === 1 ? name : `${stem}-${i}${ext}`);
+    try { await access(p); } catch { return p; }
+  }
+  throw new Error("too many files with that name");
+}
 
 /** Width/height straight out of the PNG IHDR, so we need no image dependency. */
 function pngSize(buf: Buffer): { width: number; height: number } | null {
@@ -217,7 +239,7 @@ export type BrowserPolicy = {
   evalAllowed(host: string): boolean;
 };
 
-export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined, budget?: () => { screenshots: number; maxScreenshots: number }, policy?: BrowserPolicy) {
+export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined, budget?: () => { screenshots: number; maxScreenshots: number }, policy?: BrowserPolicy, getCwd?: () => string) {
   const tabId = z.number().int().optional().describe("Target tab id; omit for the active tab");
 
   /**
@@ -303,6 +325,23 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
       tool("press", "Send a key to the focused element (Enter, Tab, Escape, ArrowDown, …).",
         { tabId, key: z.string() },
         gated("press", (a) => bridge.send("press", a, prefer()))),
+
+      tool("download",
+        "Save what a tab shows (or a URL) as a file in the working directory's downloads/ folder, fetched with the browser's own cookies — a PDF, an image, an export. Returns the path; open it with Read.",
+        { tabId, url: z.string().optional().describe("Fetch this URL instead of the tab's own"), name: z.string().optional().describe("File name (default: from the URL or the server's suggestion)") },
+        async (a) => {
+          if (!getCwd) throw new Error("download is not available here");
+          const target = a.url ?? (await bridge.send("tab_url", { tabId: a.tabId }, prefer()) as { url?: string }).url ?? "";
+          await ensure(hostOfUrl(target), "download", target);
+          const f = await bridge.send("fetch_bytes", a.url ? { url: a.url } : { tabId: a.tabId }, prefer()) as { url: string; contentType: string; disposition?: string; bytes: number; data: string };
+          const bytes = Buffer.from(f.data, "base64");
+          const name = downloadName(a.name, f.url, f.disposition, f.contentType);
+          const dir = join(getCwd(), "downloads");
+          await mkdir(dir, { recursive: true });
+          const path = await unusedPath(dir, name);
+          await writeFile(path, bytes, { mode: 0o600 });
+          return text({ path, name: basename(path), bytes: bytes.length, contentType: f.contentType, url: f.url });
+        }),
 
       tool("eval",
         "Run JavaScript in the page and return its result. Arbitrary code in a logged-in tab — the user approves each call.",

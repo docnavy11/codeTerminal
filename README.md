@@ -654,6 +654,14 @@ against a real 11-page PDF tab: `read_page` returned `kind: "pdf", pages:
 — merged cells and superscript placement are lost, and an image-only scan
 has no text to extract (screenshots still cover that).
 
+**`download`.** "Save this as a file": the tab's bytes (or a URL's), fetched
+with your profile's cookies, land in the chat's working directory under
+`downloads/` — named from the URL, the server's suggestion or the agent's
+choice, basename'd, never overwriting (`0039-2.pdf`), 0600, 20 MB cap. The
+agent then reads the file like any other, which for a PDF means the
+rendered pages, not just the text layer. It goes through the site card
+like any read.
+
 **Gated per site, not per call.** The first time a chat touches a site —
 reads it, clicks, screenshots, navigates there — a card asks: *Let Claude
 use bank.example?* **Allow (this chat)**, **Always (this site)** or

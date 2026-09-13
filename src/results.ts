@@ -73,6 +73,7 @@ function describe(name: string, text: string, s: Record<string, unknown>, images
     case "mcp__terminal__read": { const m = text.match(/^Last (\d+) lines/); return m ? `${m[1]} lines` : firstLine(text); }
     case "mcp__browser__read_page": { const j = json(text) as { title?: string; text?: string; kind?: string; pages?: number } | null; return j ? `${clip(j.title || "(untitled)", 60)} · ${j.kind === "pdf" ? `PDF · ${j.pages} page${j.pages === 1 ? "" : "s"} · ` : ""}${(j.text ?? "").length.toLocaleString()} chars` : firstLine(text); }
     case "mcp__browser__screenshot": { const j = json(text) as { width?: number; height?: number; bytes?: number } | null; return j ? `image${j.width ? ` · ${j.width}×${j.height}` : ""}${j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""}` : firstLine(text); }
+    case "mcp__browser__download": { const j = json(text) as { name?: string; bytes?: number } | null; return j?.name ? `saved ${j.name}${j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""}` : firstLine(text); }
     case "mcp__browser__list_tabs": { const j = json(text); return Array.isArray(j) ? `${j.length} tabs` : firstLine(text); }
     case "mcp__browser__snapshot": { const j = json(text) as { elements?: unknown[] } | unknown[] | null; const n = Array.isArray(j) ? j.length : Array.isArray((j as { elements?: unknown[] })?.elements) ? (j as { elements: unknown[] }).elements.length : null; return n !== null ? `${n} elements` : firstLine(text); }
     default: return images && !text.trim() ? "image" : (firstLine(text) || "(empty)");

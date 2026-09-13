@@ -418,7 +418,7 @@ async function handle(action, p) {
       const buf = new Uint8Array(await r.arrayBuffer());
       if (buf.length > max) throw new Error(`too large: ${buf.length} bytes (limit ${max})`);
       let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-      return { tabId: t?.id, title: t?.title, url, contentType: r.headers.get("content-type") ?? "", bytes: buf.length, data: btoa(bin) };
+      return { tabId: t?.id, title: t?.title, url: r.url || url, contentType: r.headers.get("content-type") ?? "", disposition: r.headers.get("content-disposition") ?? "", bytes: buf.length, data: btoa(bin) };
     }
 
     case "read_page": {

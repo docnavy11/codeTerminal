@@ -80,7 +80,7 @@ export type SessionDeps = {
  */
 const BROWSER_TOOLS = [
   "list_tabs", "read_page", "snapshot", "navigate",
-  "click", "fill", "press", "eval", "screenshot",
+  "click", "fill", "press", "eval", "screenshot", "download",
 ].map((n) => `mcp__browser__${n}`);
 
 // Reading the user's own terminal is inert, so it never needs a prompt.
@@ -175,7 +175,7 @@ export class Session {
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS],
         mcpServers: {
           terminal: terminalTools(this.#deps.getShell),
-          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy) } : {}),
+          ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy, () => this.#workspace) } : {}),
           // The chat id is this session's own, so a watch is always attributed
           // to the conversation that set it.
           ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
