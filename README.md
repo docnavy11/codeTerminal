@@ -686,6 +686,14 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**`eval` awaits.** A returned promise is awaited (30 s cap), so
+`fetch('/api').then(r => r.json())` or an async IIFE returns its value; code
+with a top-level `await` runs as an async function body and must `return`.
+An error thrown in the page comes back as the tool's error (measured: it
+used to read as `null`). Before this, async work had to be parked on
+`window.__x` and read back with a second call. Measured in real Chromium
+(`test_extension_eval_awaits_promises`).
+
 **Dialogs.** A page's `alert`, `confirm` or `prompt` used to hang every
 browser call until someone clicked it. Now the extension notices the moment
 one opens: the next call fails at once with *the tab is blocked by a

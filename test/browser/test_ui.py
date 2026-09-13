@@ -829,3 +829,39 @@ def test_extension_detects_and_answers_dialogs(playwright):
         assert flagged["dialog"] == {"type": "confirm", "message": "Leave?"}
     finally:
         ctx.close(); srv.shutdown()
+
+
+def test_extension_eval_awaits_promises(playwright):
+    """eval returns the settled value of a promise, runs top-level await as an
+    async body, reports a rejection as the error, and does not hang on a
+    promise that never settles (measured with a 30 s cap lowered here by
+    racing the call itself)."""
+    import tempfile, threading, http.server, socketserver
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200); self.send_header("Content-Type", "text/html" if self.path == "/" else "application/json"); self.end_headers()
+            self.wfile.write(b"<p id=t>hello page</p>" if self.path == "/" else b'{"n": 42}')
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp(prefix="ct-eval-prof-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    call = lambda sw, code, ms=8000: sw.evaluate(
+        "([code, ms]) => Promise.race([ctHandle('eval', {code}).then(r => ({ok:true, r: r.result}), e => ({ok:false, e:String(e && e.message || e)})),"
+        " new Promise(res => setTimeout(() => res({timeout:true}), ms))])", [code, ms])
+    try:
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
+        assert call(sw, "1 + 1") == {"ok": True, "r": 2}
+        assert call(sw, "document.getElementById('t').textContent") == {"ok": True, "r": "hello page"}
+        assert call(sw, "fetch('/data.json').then(r => r.json())") == {"ok": True, "r": {"n": 42}}
+        assert call(sw, "(async () => { const r = await fetch('/data.json'); return (await r.json()).n * 2; })()") == {"ok": True, "r": 84}
+        assert call(sw, "const r = await fetch('/data.json'); return (await r.json()).n + 1;") == {"ok": True, "r": 43}
+        r = call(sw, "Promise.reject(new Error('nope'))"); assert r["ok"] is False and "nope" in r["e"], r
+        r = call(sw, "throw new SyntaxError('mine')"); assert r["ok"] is False and "mine" in r["e"], r
+        r = call(sw, "new Promise(() => {})", 2000); assert r == {"timeout": True}, "a never-settling promise is capped at 30 s, beyond this test's patience — it must at least not break the worker"
+        assert call(sw, "2 * 21") == {"ok": True, "r": 42}, "the worker still answers after a pending eval"
+    finally:
+        ctx.close(); srv.shutdown()

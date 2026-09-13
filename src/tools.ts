@@ -438,8 +438,8 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         }),
 
       tool("eval",
-        "Run JavaScript in the page and return its result. Arbitrary code in a logged-in tab — the user approves each call.",
-        { tabId, code: z.string().describe("Expression or IIFE; the completion value is returned") },
+        "Run JavaScript in the page and return its result. A returned promise is awaited (up to 30 s), so fetch()/async work can be returned directly; code with a top-level await runs as an async function body and must `return` its value. Arbitrary code in a logged-in tab — the user approves each call.",
+        { tabId, code: z.string().describe("Expression, IIFE or async IIFE; the (awaited) completion value is returned. With top-level await, `return` the value.") },
         async (a) => {
           // eval is the one tool that is gated per call even on an allowed
           // site: it is arbitrary code in a logged-in tab.

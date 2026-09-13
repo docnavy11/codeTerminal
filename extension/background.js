@@ -674,11 +674,29 @@ async function handle(action, p) {
     case "eval": {
       const t = await resolveTab(p.tabId);
       await ensureDebugger(t.id);
-      const v = await run(t.id, (code) => {
-        const r = eval(code);
-        try { return JSON.parse(JSON.stringify(r ?? null)); } catch { return String(r); }
-      }, [p.code]);
-      return { tabId: t.id, result: v };
+      // A promise is awaited (executeScript resolves a returned promise), with
+      // a cap so a promise that never settles does not hang the call. Code
+      // with a top-level `await` is not a valid eval expression; it is rerun
+      // as an async function body, so it must `return` its value.
+      // An error thrown in the page comes back as a value: executeScript
+      // reports a throwing function as result undefined (measured), which used
+      // to read as "null" instead of the error.
+      const v = await run(t.id, async (code, capMs) => {
+        try {
+          let r;
+          try { r = eval(code); }
+          catch (e) {
+            if (!(e instanceof SyntaxError) || !/await/.test(code)) throw e;
+            r = new (Object.getPrototypeOf(async function () {}).constructor)(code)();
+          }
+          if (r && typeof r.then === "function") {
+            r = await Promise.race([r, new Promise((_, rej) => setTimeout(() => rej(new Error(`promise still pending after ${capMs / 1000}s`)), capMs))]);
+          }
+          try { return { value: JSON.parse(JSON.stringify(r ?? null)) }; } catch { return { value: String(r) }; }
+        } catch (e) { return { error: String(e?.message ?? e) }; }
+      }, [p.code, 30000]);
+      if (v && typeof v === "object" && "error" in v) throw new Error(v.error);
+      return { tabId: t.id, result: v?.value ?? null };
     }
 
     case "screenshot": {
