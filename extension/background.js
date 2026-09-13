@@ -404,8 +404,10 @@ const withGrace = (tabId, promise) => new Promise((resolve, reject) => {
    Read-level calls never attach; a dialog the page raises on its own is still
    detected by the hook, just not answerable — the user clicks it. */
 const debugged = new Set();
+const declined = new Set();   // tabs where the user clicked Cancel on Chrome's bar: stay off until release
 async function ensureDebugger(tabId) {
   if (debugged.has(tabId)) return true;
+  if (declined.has(tabId)) return false;
   try {
     await chrome.debugger.attach({ tabId }, "1.3");
     await chrome.debugger.sendCommand({ tabId }, "Page.enable");
@@ -414,11 +416,18 @@ async function ensureDebugger(tabId) {
   } catch { return false; }   // DevTools or another extension has it: fall back to the hook
 }
 async function releaseDebugger(tabId) {
+  if (typeof tabId === "number") declined.delete(tabId); else declined.clear();
   const ids = typeof tabId === "number" ? [tabId] : [...debugged];
   for (const id of ids) { debugged.delete(id); try { await chrome.debugger.detach({ tabId: id }); } catch { /* gone */ } }
   return { released: ids.length };
 }
-chrome.debugger.onDetach.addListener((src) => { if (typeof src.tabId === "number") debugged.delete(src.tabId); });
+chrome.debugger.onDetach.addListener((src, reason) => {
+  if (typeof src.tabId !== "number") return;
+  debugged.delete(src.tabId);
+  // The person clicked Cancel on the bar: do not re-attach behind their back
+  // for the rest of this turn (untested: headless has no bar to click).
+  if (reason === "canceled_by_user") declined.add(src.tabId);
+});
 chrome.debugger.onEvent.addListener((src, method, params) => {
   if (typeof src.tabId !== "number") return;
   if (method === "Page.javascriptDialogOpening") {
