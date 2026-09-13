@@ -14,7 +14,7 @@
  * because it is one. Sites that bind a session to a device or an IP may
  * still challenge a login from a VPS; only trying tells (see README).
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -37,6 +37,14 @@ export type ServerBrowserOptions = {
   serverWsUrl: string | (() => string);
   width?: number;
   height?: number;
+  /** Present as an ordinary Chrome (default): the UA without "Headless", no webdriver flag, a screen that matches the window. */
+  plain?: boolean;
+  /** IANA time zone for the browser (default: the server's). Sites compare it with the IP's. */
+  timezone?: string;
+  /** Accept-Language / navigator.languages, e.g. "en-US,en;q=0.9,nl;q=0.8". */
+  lang?: string;
+  /** A proxy for all of the browser's traffic, e.g. socks5://laptop.tailnet:1080 — a way round datacenter-IP blocks. */
+  proxy?: string;
   log?: (l: string) => void;
   warn?: (l: string) => void;
 };
@@ -67,6 +75,13 @@ export function findChromium(env: NodeJS.ProcessEnv = process.env, home = homedi
     for (const b of builds) for (const sub of ["chrome-linux64/chrome", "chrome-linux/chrome"]) { const p = join(cache, b, sub); if (existsSync(p)) return p; }
   } catch { /* no cache */ }
   return null;
+}
+
+/** The binary's own version, as the UA an ordinary Chrome of that version sends. */
+export function userAgentFor(bin: string): string {
+  let major = "";
+  try { major = /(\d+)\.\d+\.\d+\.\d+/.exec(execFileSync(bin, ["--version"], { encoding: "utf8", timeout: 5000 }))?.[1] ?? ""; } catch { /* unknown build */ }
+  return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major || "120"}.0.0.0 Safari/537.36`;
 }
 
 /** A minimal DevTools-protocol client over the browser websocket: request ids, session routing, events. */
@@ -157,10 +172,19 @@ export class ServerBrowser {
       `--disable-extensions-except=${this.#o.extensionDir}`, `--load-extension=${this.#o.extensionDir}`,
       "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox",
       `--window-size=${w},${h}`, "--hide-crash-restore-bubble", "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-      "about:blank",
+      ...(this.#o.lang ? [`--lang=${this.#o.lang.split(",")[0]}`, `--accept-lang=${this.#o.lang}`] : []),
+      ...(this.#o.proxy ? [`--proxy-server=${this.#o.proxy}`] : []),
     ];
+    if (this.#o.plain !== false) {
+      // Measured before this: UA "HeadlessChrome/151", navigator.webdriver true,
+      // screen 800×600 under a 1280-wide viewport — three ways to say
+      // "automation", and sites answered with blocks. This is your own
+      // browser for your own logins; let it look like one.
+      args.push(`--user-agent=${userAgentFor(bin)}`, "--disable-blink-features=AutomationControlled", `--screen-info={${w}x${h}}`);
+    }
+    args.push("about:blank");
     this.#lastError = undefined;
-    const proc = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const proc = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, ...(this.#o.timezone ? { TZ: this.#o.timezone } : {}) } });
     this.#proc = proc;
     const wsUrl = await new Promise<string>((resolve, reject) => {
       let buf = "";

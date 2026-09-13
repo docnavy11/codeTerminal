@@ -11,12 +11,21 @@ import { FakeWs } from "./fakes/ws.js";
 const CHROMIUM = findChromium();
 const ROOT = join(import.meta.dirname, "..");
 
+describe("server browser: presenting as an ordinary Chrome", () => {
+  test("the UA is built from the binary's version without 'Headless'", { skip: !CHROMIUM }, async () => {
+    const { userAgentFor } = await import("../src/server-browser.js");
+    const ua = userAgentFor(CHROMIUM!);
+    assert.match(ua, /^Mozilla\/5\.0 \(X11; Linux x86_64\) AppleWebKit\/537\.36 \(KHTML, like Gecko\) Chrome\/\d+\.0\.0\.0 Safari\/537\.36$/);
+    assert.doesNotMatch(ua, /Headless/);
+  });
+});
+
 describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Playwright's cache or CODETERM_CHROMIUM)" }, () => {
   let s: TestServer; let profile: string; let sb: ServerBrowser;
   before(async () => {
     s = await startTestServer();
     profile = await mkdtemp(join(tmpdir(), "ct-sb-profile-"));
-    sb = new ServerBrowser({ profileDir: profile, extensionDir: join(ROOT, "extension"), serverWsUrl: `ws://127.0.0.1:${s.port}/ext` });
+    sb = new ServerBrowser({ profileDir: profile, extensionDir: join(ROOT, "extension"), serverWsUrl: `ws://127.0.0.1:${s.port}/ext`, timezone: "Europe/Brussels" });
   });
   after(async () => { await sb?.stop(); await s?.stop(); await rm(profile, { recursive: true, force: true }); });
 
@@ -31,6 +40,13 @@ describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Pl
     await until(async () => (await setup()).extension.connected.includes(SERVER_BROWSER_ID), 10_000, "the server browser's extension connects to /ext");
     await sb.start();   // idempotent
     assert.equal((await sb.status()).pid, st.pid);
+  });
+
+  test("what a site sees: an ordinary Chrome UA, no webdriver flag, a screen matching the window, the configured time zone", async () => {
+    await sb.navigate(`${s.base}/setup.html`);
+    await until(async () => /setup/i.test(String(await sb.evaluate("document.title"))), 10_000, "a page to evaluate in");
+    const seen = await sb.evaluate("({ ua: navigator.userAgent, webdriver: navigator.webdriver, screen: [screen.width, screen.height], tz: Intl.DateTimeFormat().resolvedOptions().timeZone })") as { ua: string; webdriver: boolean; screen: number[]; tz: string };
+    assert.doesNotMatch(seen.ua, /Headless/); assert.equal(seen.webdriver, false); assert.deepEqual(seen.screen, [1280, 800]); assert.equal(seen.tz, "Europe/Brussels");
   });
 
   test("navigate and evaluate work on the tab", async () => {

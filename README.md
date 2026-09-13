@@ -680,6 +680,19 @@ ends the process and the extension drops off. Not measured: which of your
 sites accept a login from this machine's IP without a challenge, and frame
 rate over your tailnet.
 
+**What a site sees.** Measured before: the UA said `HeadlessChrome/151`,
+`navigator.webdriver` was `true`, the screen was 800×600 under a
+1280-wide viewport, the time zone UTC — and sites answered with blocks.
+Now, by default: the UA of an ordinary Chrome of the same version, no
+webdriver flag, a screen that matches the window, the time zone and
+language you set (`CODETERM_SERVER_BROWSER_TZ`, `_LANG`), all measured in
+`test/server-browser.test.ts`. Still visible to a careful site: the
+client-hint brand reads "Chromium", the WebGL renderer is SwiftShader, and
+the IP is a datacenter's — for that last one `CODETERM_SERVER_BROWSER_PROXY`
+routes the browser through a SOCKS/HTTP proxy, for instance one on your
+laptop reached over the tailnet. `CODETERM_SERVER_BROWSER_PLAIN=0` keeps
+the headless tell-tales.
+
 **Notes.** Chromium runs with `--no-sandbox` (a VPS without user namespaces
 cannot start it otherwise); the profile holds real logins, so it is in
 `.gitignore` and belongs to the server's user only. The extension inside

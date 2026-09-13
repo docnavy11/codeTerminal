@@ -57,7 +57,7 @@ export type ServerConfig = {
   denyExtra: string[];
   home: string;
   /** The server browser: a headless Chromium on this machine with a persistent profile (see src/server-browser.ts). */
-  serverBrowser?: { profileDir: string; chromium?: string; extensionDir?: string; autostart?: boolean };
+  serverBrowser?: { profileDir: string; chromium?: string; extensionDir?: string; autostart?: boolean; timezone?: string; lang?: string; proxy?: string; plain?: boolean };
   /** Injection points for tests: tailscale calls and the SDK entry point. */
   authDeps?: AuthConfig["deps"];
   spawnQuery?: SessionDeps["spawnQuery"];
@@ -87,7 +87,11 @@ export function envConfig(): ServerConfig {
     usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : join(ROOT, "browser-allow.json"),
     serverBrowser: { profileDir: process.env.CODETERM_SERVER_BROWSER_PROFILE ?? join(ROOT, "server-browser", "profile"),
-      ...(process.env.CODETERM_CHROMIUM ? { chromium: process.env.CODETERM_CHROMIUM } : {}), autostart: process.env.CODETERM_SERVER_BROWSER === "1" },
+      ...(process.env.CODETERM_CHROMIUM ? { chromium: process.env.CODETERM_CHROMIUM } : {}), autostart: process.env.CODETERM_SERVER_BROWSER === "1",
+      ...(process.env.CODETERM_SERVER_BROWSER_TZ ? { timezone: process.env.CODETERM_SERVER_BROWSER_TZ } : {}),
+      ...(process.env.CODETERM_SERVER_BROWSER_LANG ? { lang: process.env.CODETERM_SERVER_BROWSER_LANG } : {}),
+      ...(process.env.CODETERM_SERVER_BROWSER_PROXY ? { proxy: process.env.CODETERM_SERVER_BROWSER_PROXY } : {}),
+      plain: process.env.CODETERM_SERVER_BROWSER_PLAIN !== "0" },
     browserAllowSeed: csv(process.env.CODETERM_BROWSER_ALLOW, /,/),
     confirmSubmit: process.env.CODETERM_CONFIRM_SUBMIT !== "0",
     maxUpload: Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024),
@@ -258,6 +262,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const serverBrowser = new ServerBrowser({
     profileDir: sbCfg.profileDir, chromium: sbCfg.chromium, extensionDir: sbCfg.extensionDir ?? join(ROOT, "extension"),
     serverWsUrl: () => `ws://${HOST}:${port}/ext`, log, warn,
+    timezone: sbCfg.timezone, lang: sbCfg.lang, proxy: sbCfg.proxy, plain: sbCfg.plain,
   });
   const auth = await createAuth({
     host: HOST, port: PORT, extraOrigins: cfg.extraOrigins,
