@@ -223,6 +223,17 @@ describe("browser tools", () => {
     async function bridged_click(s: typeof srv) { try { await call(s, "click", { tabId: 2, selector: "a" }); } catch { /* the fake ext has no click handler; the ask is what matters */ } }
   });
 
+  test("results are stamped with where they happened; navigate with its destination; no tab_url is not an error", async () => {
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://bank.example/pay", title: "Transfer — My Bank" }), click: () => ({ ok: true }), navigate: (p) => ({ tabId: 1, url: p.url }), list_tabs: () => [] });
+    const srv = browserTools(bridge, () => undefined);
+    const clicked = JSON.parse(await call(srv, "click", { tabId: 1, selector: "a" }));
+    assert.deepEqual(clicked.at, { host: "bank.example", title: "Transfer — My Bank" });
+    const nav = JSON.parse(await call(srv, "navigate", { url: "https://other.example/x" }));
+    assert.deepEqual(nav.at, { host: "other.example" });
+    const { bridge: old } = bridged({ click: () => ({ ok: true }) });
+    assert.deepEqual(JSON.parse(await call(browserTools(old, () => undefined), "click", { selector: "a" })), { ok: true }, "older extension: no stamp, still works");
+  });
+
   test("find and scroll are read-level and forward their arguments", async () => {
     const asks: string[] = []; const seen: Record<string, unknown>[] = [];
     const policy = { allowed: (_h: string, level: string) => level === "read", evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };

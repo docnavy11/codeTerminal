@@ -524,6 +524,8 @@ function toolResult(m) {
   if (!d) { d = toolRow(null, m.name, {}, m.parent); d.classList.add("orphan"); }   // its call is gone (truncated, or a mid-turn attach)
   const res = d.querySelector(".tr");
   res.textContent = m.summary; res.className = "tr " + (m.ok ? "ok" : "err");
+  // Browser tools say where they acted: "→ click  bank.example · Transfer"
+  if (m.where && !d.querySelector(".where")) { const w = document.createElement("span"); w.className = "where"; w.textContent = m.where; w.title = m.where; d.querySelector(".tl").append(" ", w); }
   if (m.name === "mcp__browser__download" && m.ok) { try { const j = JSON.parse(m.text); if (typeof j.path === "string") void fileChip(d, j.path); } catch { /* not json */ } }
   res.title = m.bytes ? `${m.bytes.toLocaleString()} bytes${m.truncated ? ", truncated" : ""}` : "";
   const body = m.text || (m.ok ? "" : m.summary);

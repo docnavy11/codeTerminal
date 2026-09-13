@@ -721,7 +721,11 @@ host only, no title or URL. **`eval` asks every call** even on an allowed
 site — arbitrary JavaScript in a logged-in tab deserves a look at the code
 — with "Allow on this site (this chat)" to stop asking for that host until
 the chat ends. Once allowed, the tools do not stop again, and each call is
-still written to the transcript. `CODETERM_BROWSER_GATE=0` turns the gate
+still written to the transcript — with where it landed: every browser tool
+row ends in `@ host · page title` (the tab's URL is looked up before each
+call anyway; `navigate` shows its destination), so a transcript can be
+audited at a glance, and the export carries the same. The result the model
+sees carries it too, as a small `at` field. `CODETERM_BROWSER_GATE=0` turns the gate
 off (the old behaviour: any site, no questions); the setup page says which
 you are running.
 

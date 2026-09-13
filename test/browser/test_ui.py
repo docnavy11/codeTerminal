@@ -732,3 +732,15 @@ def test_each_tab_keeps_its_own_chat(page, server):
     assert page.evaluate("() => ACTIVE") == mine, "reload must reattach to this tab's chat, not the other tab's newer one"
     assert other.evaluate("() => ACTIVE") == theirs
     other.close()
+
+
+def test_browser_tool_rows_say_where(page, server):
+    open_ui(page, server)
+    page.evaluate("""() => {
+        handle({kind:'tool', id:'w1', name:'mcp__browser__click', input:{tabId: 3, selector: 'button.pay'}});
+        handle({kind:'tool_result', id:'w1', name:'mcp__browser__click', ok:true, summary:'clicked', text:'{}', bytes:2, truncated:false, where:'bank.example · Transfer'});
+        handle({kind:'tool', id:'w2', name:'Read', input:{file_path:'/tmp/x'}});
+        handle({kind:'tool_result', id:'w2', name:'Read', ok:true, summary:'3 lines', text:'a', bytes:1, truncated:false}); }""")
+    page.wait_for_selector("#log .tool .where", timeout=5000)
+    assert page.text_content("#log .tool .where") == "bank.example · Transfer"
+    assert page.evaluate("() => document.querySelectorAll('#log .tool .where').length") == 1

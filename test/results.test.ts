@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { summariseResult, RESULT_TEXT_CAP } from "../src/results.js";
+import { whereOf, summariseResult, RESULT_TEXT_CAP } from "../src/results.js";
 
 /** One line per tool, from the design's table — and the edge cases listed there. */
 const r = (name: string, content: unknown, structured?: unknown, is_error = false) =>
@@ -87,5 +87,17 @@ describe("summariseResult", () => {
     const e = r("Read", "File does not exist.\nmore", { type: "text", file: { numLines: 0 } }, true);
     assert.equal(e.summary, "✗ File does not exist."); assert.equal(e.ok, false);
     assert.equal(r("Bash", "", undefined, true).summary, "✗ failed");
+  });
+});
+
+describe("whereOf", () => {
+  test("host · title from the at stamp, browser tools only", () => {
+    assert.equal(whereOf("mcp__browser__click", JSON.stringify({ ok: true, at: { host: "bank.example", title: "Transfer" } })), "bank.example · Transfer");
+    assert.equal(whereOf("mcp__browser__scroll", JSON.stringify({ percent: 3, at: { host: "x.example" } })), "x.example");
+    assert.equal(whereOf("mcp__browser__click", JSON.stringify({ ok: true })), undefined);
+    assert.equal(whereOf("Bash", JSON.stringify({ at: { host: "x" } })), undefined);
+    assert.equal(whereOf("mcp__browser__read_page", "not json"), undefined);
+    const r = summariseResult("mcp__browser__click", { tool_use_id: "t", content: JSON.stringify({ ok: true, at: { host: "bank.example", title: "T".repeat(80) } }) }, undefined);
+    assert.equal(r.where, "bank.example · " + "T".repeat(49) + "…");
   });
 });

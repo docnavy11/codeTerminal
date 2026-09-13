@@ -303,11 +303,23 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     return { tabId: a.tabId, title: fetched.title, url: fetched.url, kind: "pdf", pages: pdf.pages, text: pdf.text, chars: pdf.chars, truncated: pdf.truncated };
   };
 
+  /** Where a call lands: the tab's host and title. Best-effort — an older
+      extension has no tab_url, and the gate (not this) decides what is allowed. */
+  type Where = { host: string; title?: string };
+  const whereFor = async (id: number | undefined): Promise<Where> => {
+    try {
+      const t = (await bridge.send("tab_url", { tabId: id }, prefer())) as { url?: string; title?: string };
+      return { host: hostOfUrl(t?.url), ...(t?.title ? { title: t.title.slice(0, 80) } : {}) };
+    } catch { return { host: "" }; }
+  };
   /** The host a call is about: the tab's current URL, or a navigation's destination. */
   const hostFor = async (id: number | undefined): Promise<string> => {
     const t = (await bridge.send("tab_url", { tabId: id }, prefer())) as { url?: string };
     return hostOfUrl(t?.url);
   };
+  /** Stamp a result with where it happened (`at`), so the transcript row can say. */
+  const stamp = (r: unknown, at: Where): unknown =>
+    r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at } : r;
   /** What each tool needs: looking, or changing. */
   const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
@@ -320,7 +332,11 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     if (answer !== "allow") throw new Error(`browser.${action} on ${host}: the user did not allow it. Do not retry; ask what to do instead.`);
   };
   const gated = <A extends { tabId?: number }>(action: string, run: (a: A) => Promise<unknown>) =>
-    async (a: A) => { if (policy) await ensure(await hostFor(a.tabId), action); return text(await run(a)); };
+    async (a: A) => {
+      const at = await whereFor(a.tabId);
+      if (policy) await ensure(at.host, action);
+      return text(stamp(await run(a), at));
+    };
 
   return createSdkMcpServer({
     name: "browser",
@@ -371,14 +387,15 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           timeoutMs: z.number().int().optional() },
         async (a) => {
           if (!a.text && !a.gone && !a.selector && !a.url && !a.load && !a.networkIdle) throw new Error("wait_for needs at least one condition");
-          if (policy) await ensure(await hostFor(a.tabId), "wait_for");
+          const at = await whereFor(a.tabId);
+          if (policy) await ensure(at.host, "wait_for");
           const r = await bridge.send("wait_for", a, prefer()) as { ok: boolean; elapsedMs: number };
-          return text(r);
+          return text(stamp(r, at));
         }),
 
       tool("navigate", "Navigate a tab to a URL, or open a new tab.",
         { tabId, url: z.string().describe("Absolute URL"), newTab: z.boolean().optional() },
-        async (a) => { await ensure(hostOfUrl(a.url), "navigate", a.url); return text(await bridge.send("navigate", a, prefer())); }),
+        async (a) => { await ensure(hostOfUrl(a.url), "navigate", a.url); return text(stamp(await bridge.send("navigate", a, prefer()), { host: hostOfUrl(a.url) })); }),
 
       tool("click", "Click an element, by ref from snapshot or by CSS selector.",
         { tabId, ref: z.string().optional(), selector: z.string().optional() },

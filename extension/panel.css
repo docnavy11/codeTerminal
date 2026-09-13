@@ -223,6 +223,8 @@
   .tool[data-body] { cursor:pointer; } .tool[data-body]:hover { background:var(--btn); }
   .tool .tl { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tool b { color:var(--warn); font-weight:600; }
+  .tool .where { color:var(--accent); opacity:0.85; }
+  .tool .where::before { content:"@ "; opacity:0.6; }
   .tool .tr { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; font-variant-numeric:tabular-nums; text-align:right; }
   .tool .tr.pending { color:var(--dim); opacity:0.6; } .tool .tr.ok { color:var(--dim); } .tool .tr.err { color:var(--bad); }
   .tool .chev { font-size:0.7rem; color:var(--dim); transition:transform 0.12s; }

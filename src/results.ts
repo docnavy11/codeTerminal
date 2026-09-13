@@ -14,7 +14,16 @@ export const RESULT_TEXT_CAP = 8 * 1024;
 const LINE_CAP = 120;
 
 export type ResultBlock = { tool_use_id: string; content?: unknown; is_error?: boolean };
-export type Summarised = { ok: boolean; summary: string; text: string; bytes: number; truncated: boolean; interrupted: boolean };
+export type Summarised = { ok: boolean; summary: string; text: string; bytes: number; truncated: boolean; interrupted: boolean; where?: string };
+
+/** Where a browser tool acted — "host · title" from the `at` stamp on its result. */
+export function whereOf(name: string, text: string): string | undefined {
+  if (!name.startsWith("mcp__browser__")) return undefined;
+  const j = json(text) as { at?: { host?: string; title?: string } } | null;
+  const at = j?.at;
+  if (!at || typeof at.host !== "string" || !at.host) return undefined;
+  return at.title ? `${at.host} · ${clip(at.title, 50)}` : at.host;
+}
 
 export function summariseResult(name: string, block: ResultBlock, structured: unknown): Summarised {
   const s = (structured && typeof structured === "object" ? structured : {}) as Record<string, unknown>;
@@ -30,7 +39,8 @@ export function summariseResult(name: string, block: ResultBlock, structured: un
 
   const bytes = Buffer.byteLength(text, "utf8");
   const truncated = text.length > RESULT_TEXT_CAP;
-  return { ok, summary: clip(summary, LINE_CAP), text: truncated ? text.slice(0, RESULT_TEXT_CAP) : text, bytes, truncated, interrupted };
+  const where = whereOf(name, text);
+  return { ok, summary: clip(summary, LINE_CAP), text: truncated ? text.slice(0, RESULT_TEXT_CAP) : text, bytes, truncated, interrupted, ...(where ? { where } : {}) };
 }
 
 function describe(name: string, text: string, s: Record<string, unknown>, images: number): string {

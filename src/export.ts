@@ -31,7 +31,7 @@ export function toMarkdown(rec: ChatRecord, projectName?: string): string {
         if (e.state !== "running") out.push(`  - ↳ agent ${e.state}${e.toolUses ? ` · ${e.toolUses} tool uses` : ""}${e.summary ? ` — ${e.summary.split("\n")[0]}` : ""}`);
         break;
       case "tool_result":
-        out.push(`  - ${e.ok ? "" : "✗ "}${e.summary.replace(/^✗ /, "")}`);
+        out.push(`  - ${e.ok ? "" : "✗ "}${e.summary.replace(/^✗ /, "")}${e.where ? ` @ ${e.where}` : ""}`);
         break;
       case "local":
         out.push(`> ${e.text.replace(/\n/g, "\n> ")}`, "");
