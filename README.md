@@ -692,6 +692,24 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**Typing that editors accept.** `type {text, ref | selector}` sends real
+keystrokes through the browser's debugger session (`Input.insertText`), and
+`press` sends real key events (`Input.dispatchKeyEvent`, with `Ctrl+A`,
+`Shift+Enter` and the like) — trusted input, which is what Monaco,
+CodeMirror, TradingView's Pine editor and many framework inputs require:
+synthetic events are `isTrusted: false` and they ignore them (measured on
+TradingView: `fill` and synthetic `press` typed nothing). `fill` stays the
+tool for plain inputs and selects; `type` appends at the caret, so
+`Ctrl+A` first to replace. **`eval` runs through the debugger too**
+(`Runtime.evaluate`), which a page CSP without `unsafe-eval` cannot block —
+measured on a fixture page with that CSP: the injected-script path fails,
+the debugger path returns the value; top-level `await` works, the last
+expression is the result, exceptions and rejections come back as errors.
+Both need the debugger session the extension attaches for act-level calls;
+with DevTools already attached to that tab they fall back to the synthetic
+paths and say so (`trusted: false`). Measured in real Chromium
+(`test_extension_trusted_input_and_csp_eval`).
+
 **Confirm before submit.** A `click` on a form's submit control, or
 `press Enter` in a form's text field, first asks the page what it would
 send: the form's action and method, the button, and the visible fields

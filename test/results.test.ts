@@ -156,3 +156,11 @@ describe("console_read / network_read summaries", () => {
     assert.equal(sum("network_read", { total: 1, failed: 0, entries: [{ url: "https://a/b", status: 200, method: "GET", ok: true }] }), "1 request");
   });
 });
+
+describe("type summary", () => {
+  test("count, target, and whether it was synthetic", () => {
+    const sum = (o: unknown) => summariseResult("mcp__browser__type", { tool_use_id: "t", content: JSON.stringify(o) }, undefined).summary;
+    assert.equal(sum({ typed: 17, trusted: true, tag: "div" }), "typed 17 chars into div");
+    assert.equal(sum({ typed: 1, trusted: false, tag: "input" }), "typed 1 char into input · synthetic");
+  });
+});

@@ -1048,10 +1048,70 @@ def test_extension_probes_submits(ext_pages):
         page.fill("#search input", "jobs")
         r = call(sw, "submit_probe", {"tabId": tab, "key": "Enter"}); assert r["submit"] is True and r["via"] == "enter" and r["form"]["fields"] == [{"name": "q", "value": "jobs"}], r
         assert call(sw, "submit_probe", {"tabId": tab, "key": "Tab"})["submit"] is False
-        assert call(sw, "press", {"tabId": tab, "key": "Enter"}).get("submitted") is True
+        r = call(sw, "press", {"tabId": tab, "key": "Enter"}); assert r.get("trusted") is True or r.get("submitted") is True, r   # a real key: the browser submits
         page.focus("#login input[name=user]")
-        assert call(sw, "press", {"tabId": tab, "key": "Enter"}).get("submitted") is True
+        r = call(sw, "press", {"tabId": tab, "key": "Enter"}); assert r.get("trusted") is True or r.get("submitted") is True, r
         assert call(sw, "click", {"tabId": tab, "selector": "#go"})["clicked"] == "button"
         assert page.evaluate("() => window.subs") == ["search", "login", "js"]
+    finally:
+        srv.shutdown()
+
+
+def test_extension_trusted_input_and_csp_eval(ext_pages):
+    """The real extension: type/press produce trusted events (an editor that
+    ignores untrusted input gets the text), modifiers and Enter work, eval
+    runs on a page whose CSP forbids eval (executeScript's eval cannot), with
+    top-level await and exceptions reported."""
+    html = b"""<div id=ed contenteditable=true></div><input id=plain><textarea id=ta></textarea>
+      <form id=f action="/go"><input id=q name=q><button>go</button></form>
+      <script>
+        window.ev = [];
+        // an editor that only reacts to trusted keyboard input, like Monaco
+        const ed = document.getElementById('ed');
+        ed.addEventListener('beforeinput', e => { if (!e.isTrusted) e.preventDefault(); });
+        ed.addEventListener('keydown', e => ev.push(['keydown', e.key, e.isTrusted, e.ctrlKey, e.shiftKey]));
+        document.getElementById('plain').addEventListener('input', e => ev.push(['input', e.isTrusted, e.target.value]));
+        document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); ev.push(['submit', document.getElementById('q').value]); });
+        // evaluated by the page itself at load: a call from Runtime.evaluate would be allowed eval by DevTools
+        try { window.direct = eval('1+1'); } catch (e) { window.direct = 'page eval blocked: ' + e.name; }
+      </script>"""
+    # the CSP: inline scripts allowed for the fixture, no unsafe-eval — like TradingView
+    srv = serve_html(lambda path: (200, "text/html", html, {"Content-Security-Policy": "script-src 'unsafe-inline'; object-src 'none'"}) if path == "/" else (200, "text/plain", b"x"))
+    ctx = ext_pages
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p).then(r => ({ok:true, r}), e => ({ok:false, e:String(e && e.message || e)}))", [action, params])
+    try:
+        sw = ctx.sw
+        page = ctx.new_page(); page.goto(srv.base + "/"); time.sleep(0.3)
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        assert page.evaluate("() => window.direct") == "page eval blocked: EvalError", "the fixture page must actually forbid eval"
+        # 1. an editor that ignores untrusted input: fill does nothing, type works
+        call(sw, "fill", {"tabId": tab, "selector": "#ed", "value": "via fill"})
+        assert page.evaluate("() => document.getElementById('ed').textContent") in ("", "via fill"), "fill on a contenteditable sets textContent directly (allowed); the trusted check is on typing"
+        page.evaluate("() => { document.getElementById('ed').textContent = ''; window.ev = []; }")
+        r = call(sw, "type", {"tabId": tab, "selector": "#ed", "text": "let x = 1\nplot(x)"})
+        assert r["ok"] and r["r"]["trusted"] is True and r["r"]["typed"] == 17, r
+        assert page.evaluate("() => document.getElementById('ed').innerText.replace(/\\n+$/, '')") == "let x = 1\nplot(x)"
+        assert ["keydown", "Enter", True, False, False] in page.evaluate("() => window.ev")
+        # 2. modifiers and keys are trusted with the right flags
+        page.evaluate("() => { window.ev = []; document.getElementById('ed').focus(); }")
+        r = call(sw, "press", {"tabId": tab, "key": "Ctrl+A"}); assert r["ok"] and r["r"]["trusted"] is True, r
+        call(sw, "press", {"tabId": tab, "key": "Shift+Enter"})
+        assert page.evaluate("() => window.ev") == [["keydown", "a", True, True, False], ["keydown", "Enter", True, False, True]]
+        r = call(sw, "press", {"tabId": tab, "key": "Hyper+Q"}); assert r["ok"] is False and "unknown modifier" in r["e"]
+        # 3. a plain input sees trusted input events with the value; Enter submits the form
+        r = call(sw, "type", {"tabId": tab, "selector": "#plain", "text": "hello"}); assert r["r"]["value"] == "hello"
+        assert ["input", True, "hello"] in page.evaluate("() => window.ev")
+        call(sw, "type", {"tabId": tab, "selector": "#q", "text": "jobs"}); call(sw, "press", {"tabId": tab, "key": "Enter"}); time.sleep(0.2)
+        assert ["submit", "jobs"] in page.evaluate("() => window.ev"), "a real Enter submits the form"
+        # 4. eval through the debugger on a no-unsafe-eval page
+        assert call(sw, "eval", {"tabId": tab, "code": "1 + 1"}) == {"ok": True, "r": {"tabId": tab, "result": 2}}
+        assert call(sw, "eval", {"tabId": tab, "code": "const r = await fetch('/x'); await r.text()"})["r"]["result"] == "x"
+        assert call(sw, "eval", {"tabId": tab, "code": "document.getElementById('plain').value"})["r"]["result"] == "hello"
+        r = call(sw, "eval", {"tabId": tab, "code": "nosuch()"}); assert r["ok"] is False and "nosuch is not defined" in r["e"], r
+        r = call(sw, "eval", {"tabId": tab, "code": "Promise.reject(new Error('nope'))"}); assert r["ok"] is False and "nope" in r["e"], r
+        assert call(sw, "eval", {"tabId": tab, "code": "undefined"})["r"]["result"] is None
+        assert call(sw, "eval", {"tabId": tab, "code": "({a: [1, {b: 2}]})"})["r"]["result"] == {"a": [1, {"b": 2}]}
+        # the executeScript path is what the CSP blocks (measured here, so the fallback's limit is known)
+        r = call(sw, "eval", {"tabId": tab, "code": "1 + 1", "synthetic": True}); assert r["ok"] is False and "unsafe-eval" in r["e"], r
     finally:
         srv.shutdown()

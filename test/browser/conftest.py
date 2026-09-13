@@ -156,9 +156,12 @@ def serve_html(html):
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             r = body(self.path)
-            if isinstance(r, tuple): code, ctype, data = r
+            headers = {}
+            if isinstance(r, tuple): code, ctype, data, *rest = r; headers = rest[0] if rest else {}
             else: code, ctype, data = 200, "text/html", r
-            self.send_response(code); self.send_header("Content-Type", ctype); self.end_headers(); self.wfile.write(data)
+            self.send_response(code); self.send_header("Content-Type", ctype)
+            for k, v in headers.items(): self.send_header(k, v)
+            self.end_headers(); self.wfile.write(data)
         do_POST = do_GET
         def do_PUT(self): self.send_response(500); self.end_headers()
         def log_message(self, *a): pass

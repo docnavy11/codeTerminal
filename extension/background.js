@@ -435,6 +435,41 @@ async function handleDialog(tabId, accept, text) {
     throw e;
   }
 }
+/* Trusted input through the debugger session. Synthetic KeyboardEvents are
+   untrusted: editors like Monaco/CodeMirror and many React inputs ignore
+   them (measured on TradingView's Pine editor: nothing typed). CDP's
+   Input.insertText and Input.dispatchKeyEvent produce real, trusted events. */
+const KEYS = {
+  Enter: [13, "Enter", "\r"], NumpadEnter: [13, "NumpadEnter", "\r"], Tab: [9, "Tab"], Escape: [27, "Escape"], Backspace: [8, "Backspace"], Delete: [46, "Delete"],
+  ArrowLeft: [37, "ArrowLeft"], ArrowUp: [38, "ArrowUp"], ArrowRight: [39, "ArrowRight"], ArrowDown: [40, "ArrowDown"],
+  Home: [36, "Home"], End: [35, "End"], PageUp: [33, "PageUp"], PageDown: [34, "PageDown"], Insert: [45, "Insert"],
+  " ": [32, "Space", " "], Space: [32, "Space", " "],
+  F1: [112, "F1"], F2: [113, "F2"], F3: [114, "F3"], F4: [115, "F4"], F5: [116, "F5"], F6: [117, "F6"], F7: [118, "F7"], F8: [119, "F8"], F9: [120, "F9"], F10: [121, "F10"], F11: [122, "F11"], F12: [123, "F12"],
+};
+const MODS = { alt: 1, ctrl: 2, control: 2, meta: 4, cmd: 4, command: 4, shift: 8 };
+/** "Ctrl+Shift+Enter" → { key, mods }; a single character is itself. */
+function parseKey(spec) {
+  const parts = String(spec).split("+");
+  const key = parts.length > 1 && parts[parts.length - 1] === "" ? "+" : parts.pop();   // "Ctrl++"
+  let mods = 0;
+  for (const m of parts) { const bit = MODS[m.toLowerCase()]; if (bit === undefined) throw new Error(`unknown modifier "${m}" in "${spec}"`); mods |= bit; }
+  return { key, mods };
+}
+async function cdpKey(tabId, spec) {
+  const { key, mods } = parseKey(spec);
+  const known = KEYS[key];
+  const single = !known && key.length === 1;
+  if (!known && !single) throw new Error(`unknown key "${key}" — use a character, Enter, Tab, Escape, Backspace, Delete, Arrow*, Home, End, PageUp/Down, F1–F12, with Ctrl/Alt/Shift/Meta+`);
+  const code = known ? known[1] : /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^[0-9]$/.test(key) ? `Digit${key}` : "";
+  const vk = known ? known[0] : key.toUpperCase().charCodeAt(0);
+  const text = known ? known[2] : (mods & ~8) ? undefined : key;   // Ctrl/Alt/Meta combos carry no text
+  // "Ctrl+A" means the a key with Ctrl (key "a"); with Shift the key reports upper-case
+  const keyName = known ? key : /^[a-z]$/i.test(key) ? ((mods & 8) ? key.toUpperCase() : key.toLowerCase()) : key;
+  const base = { key: keyName, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers: mods };
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...base, ...(text ? { text, unmodifiedText: text } : {}) });
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
+}
+
 /** Inject page-read.js (idempotent), with the dialog guard and grace. */
 async function inject(tabId) {
   if (dialogs.has(tabId)) throw dialogError(tabId);
@@ -781,7 +816,15 @@ async function handle(action, p) {
 
     case "press": {
       const t = await resolveTab(p.tabId);
-      await ensureDebugger(t.id);
+      if (dialogs.has(t.id)) throw dialogError(t.id);
+      const attached = await ensureDebugger(t.id);
+      if (attached && !p.synthetic) {
+        // Real key: the browser does what it always does with it — implicit
+        // form submission on Enter, focus moves on Tab, editors type.
+        const on = await run(t.id, () => (document.activeElement || document.body).tagName.toLowerCase());
+        await cdpKey(t.id, p.key);
+        return { pressed: p.key, on, trusted: true };
+      }
       return await run(t.id, (key) => {
         const el = document.activeElement || document.body;
         let prevented = false;
@@ -801,6 +844,45 @@ async function handle(action, p) {
       }, [p.key]);
     }
 
+    // Type text into the focused element (or the given one) as real
+    // keystrokes: Input.insertText through the debugger — Monaco, CodeMirror,
+    // contenteditables and framework inputs all accept it. Falls back to
+    // execCommand("insertText") when the debugger cannot attach.
+    case "type": {
+      const t = await resolveTab(p.tabId);
+      if (dialogs.has(t.id)) throw dialogError(t.id);
+      const attached = await ensureDebugger(t.id);
+      if (p.ref || p.selector) {
+        const r = await run(t.id, (ref, selector) => {
+          const el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : document.querySelector(selector);
+          if (!el) return { __err: "element not found: " + (ref || selector) };
+          el.focus(); if (typeof el.select === "function" && el.matches("input,textarea") && false) el.select();
+          return { tag: el.tagName.toLowerCase() };
+        }, [p.ref ?? null, p.selector ?? null]);
+        if (r?.__err) throw new Error(r.__err);
+      }
+      const text = String(p.text ?? "");
+      if (attached && !p.synthetic) {
+        // insertText handles newlines as line breaks in editors; in a plain
+        // input a "\n" is what Enter would do, so send those as keys.
+        const parts = text.split("\n");
+        for (let i = 0; i < parts.length; i++) {
+          if (parts[i]) await chrome.debugger.sendCommand({ tabId: t.id }, "Input.insertText", { text: parts[i] });
+          if (i < parts.length - 1) await cdpKey(t.id, "Enter");
+        }
+        const on = await run(t.id, () => { const el = document.activeElement; return { tag: el?.tagName.toLowerCase(), value: (el?.value ?? el?.innerText ?? "").slice(-200) }; });
+        return { typed: text.length, trusted: true, ...on };
+      }
+      const r = await run(t.id, (s) => {
+        const el = document.activeElement;
+        if (!el || el === document.body) return { __err: "nothing is focused — give a ref or selector" };
+        const ok = document.execCommand("insertText", false, s);
+        if (!ok) { const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; const set = Object.getOwnPropertyDescriptor(proto, "value")?.set; if (!set) return { __err: "cannot type here without the debugger (another debugger is attached?)" }; set.call(el, (el.value ?? "") + s); el.dispatchEvent(new Event("input", { bubbles: true })); }
+        return { tag: el.tagName.toLowerCase(), value: (el.value ?? el.innerText ?? "").slice(-200) };
+      }, [text]);
+      return { typed: text.length, trusted: false, ...r };
+    }
+
     // Would a click / Enter submit a form, and what — for the confirm card.
     case "submit_probe": {
       const t = await resolveTab(p.tabId);
@@ -810,7 +892,35 @@ async function handle(action, p) {
 
     case "eval": {
       const t = await resolveTab(p.tabId);
-      await ensureDebugger(t.id);
+      if (dialogs.has(t.id)) throw dialogError(t.id);
+      const attached = await ensureDebugger(t.id);
+      if (attached && !p.synthetic) {
+        // Runtime.evaluate is not subject to the page's CSP (executeScript's
+        // eval is: a script-src without unsafe-eval throws EvalError — measured
+        // on TradingView), supports top-level await (replMode), and reports
+        // exceptions as such.
+        const cdp = (m, params) => chrome.debugger.sendCommand({ tabId: t.id }, m, params);
+        const thrown = (d) => { const ex = d.exception; return new Error(ex?.description?.split("\n")[0] ?? d.text ?? "evaluation failed"); };
+        const cap = new Promise((_, rej) => setTimeout(() => rej(new Error("promise still pending after 30s")), 30000));
+        // replMode allows top-level await (measured: a rejected promise as the
+        // last value then comes back as the promise itself, so await it here).
+        const evaluate = (expression, replMode) => Promise.race([cdp("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: false, replMode, userGesture: true, allowUnsafeEvalBlockedByCSP: true }), cap]);
+        let r = await evaluate(p.code, /\bawait\b/.test(p.code));
+        // "const x = await f(); return x" — the older convention: run it as an async body
+        if (r.exceptionDetails && /Illegal return statement/.test(r.exceptionDetails.exception?.description ?? "")) r = await evaluate(`(async () => {\n${p.code}\n})()`, false);
+        if (r.exceptionDetails) throw thrown(r.exceptionDetails);
+        let v = r.result;
+        if (v.subtype === "promise" && v.objectId) {
+          r = await Promise.race([cdp("Runtime.awaitPromise", { promiseObjectId: v.objectId, returnByValue: true }), cap]);
+          if (r.exceptionDetails) throw thrown(r.exceptionDetails);
+          v = r.result;
+        } else if (v.objectId) {
+          r = await cdp("Runtime.callFunctionOn", { objectId: v.objectId, functionDeclaration: "function () { return this; }", returnByValue: true });
+          if (r.exceptionDetails) throw thrown(r.exceptionDetails);
+          v = r.result;
+        }
+        return { tabId: t.id, result: v.type === "undefined" ? null : v.value !== undefined ? v.value : (v.unserializableValue ?? v.description ?? null) };
+      }
       // A promise is awaited (executeScript resolves a returned promise), with
       // a cap so a promise that never settles does not hang the call. Code
       // with a top-level `await` is not a valid eval expression; it is rerun

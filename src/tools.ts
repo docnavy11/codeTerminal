@@ -335,7 +335,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", console_read: "read", network_read: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", upload: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", console_read: "read", network_read: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", upload: "act", type: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -528,9 +528,14 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         { tabId, fields: z.array(z.object({ ref: z.string().optional(), selector: z.string().optional(), value: z.union([z.string(), z.boolean()]) })).min(1).max(100) },
         gated("fill_form", (a) => { if (!a.fields?.length) throw new Error("fill_form needs at least one field"); return bridge.send("fill_form", a, prefer()); })),
 
-      tool("press", "Send a key to the focused element (Enter, Tab, Escape, ArrowDown, …). Enter in a form's text field submits the form like the real key would; a submit with filled fields is shown to the user first, who can stop it.",
-        { tabId, key: z.string() },
+      tool("press", "Press a key as a real keystroke: Enter, Tab, Escape, Backspace, Delete, Arrow*, Home, End, PageUp/Down, F1–F12, a single character, with modifiers like Ctrl+A or Shift+Enter. Trusted input: editors (Monaco, CodeMirror) and framework inputs react as to a person. Enter in a form's text field submits the form; a submit with filled fields is shown to the user first, who can stop it.",
+        { tabId, key: z.string().describe("e.g. Enter, Tab, ArrowDown, a, Ctrl+A, Shift+Enter") },
         gated("press", async (a) => { await guardSubmit(a, { key: a.key }); return bridge.send("press", a, prefer()); })),
+
+      tool("type",
+        "Type text into the focused element, or into ref/selector after focusing it, as real keystrokes (Input.insertText through the browser's debugger) — the way to put text into code editors (Monaco, CodeMirror, TradingView's Pine editor), contenteditables and inputs that ignore fill. Newlines are sent as Enter. Appends at the caret: to replace, press Ctrl+A first (then type). Use fill for plain inputs and selects.",
+        { tabId, text: z.string(), ref: z.string().optional(), selector: z.string().optional() },
+        gated("type", (a) => bridge.send("type", a, prefer()))),
 
       tool("console_read",
         "Read what the page has logged since it loaded: console.log/info/warn/error, uncaught errors and unhandled rejections (with file:line where known). Newest last; counts per level. For testing a web app: check for errors after an action. Buffer resets on navigation; clear:true empties it after reading.",
@@ -577,8 +582,8 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         }),
 
       tool("eval",
-        "Run JavaScript in the page and return its result. A returned promise is awaited (up to 30 s), so fetch()/async work can be returned directly; code with a top-level await runs as an async function body and must `return` its value. Arbitrary code in a logged-in tab — the user approves each call.",
-        { tabId, code: z.string().describe("Expression, IIFE or async IIFE; the (awaited) completion value is returned. With top-level await, `return` the value.") },
+        "Run JavaScript in the page and return its result. Runs through the browser's debugger, so a page CSP without unsafe-eval does not block it; a returned promise is awaited (up to 30 s) and top-level await works (the last expression is the value). Arbitrary code in a logged-in tab — the user approves each call.",
+        { tabId, code: z.string().describe("Expression, statements, or code with top-level await; the (awaited) value of the last expression is returned.") },
         async (a) => {
           // eval is the one tool that is gated per call even on an allowed
           // site: it is arbitrary code in a logged-in tab.

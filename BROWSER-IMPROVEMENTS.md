@@ -104,6 +104,22 @@ anyway for act-level calls) and fall back to `history.go()` in the page.
 A `back` issued while a navigation is still in flight would step over the
 page just asked for; the worker waits for the tab to finish loading first.
 
+## Trusted input and CSP-proof eval, 2026-09-13
+
+Reported by an agent on TradingView's Pine editor: `fill` and synthetic
+`press` typed nothing (Monaco ignores untrusted events), `eval` was blocked
+by the site's CSP. Both are solved by the debugger session already attached
+for act-level calls: `type` (`Input.insertText`) and `press`
+(`Input.dispatchKeyEvent`) are trusted; `eval` via `Runtime.evaluate` is
+outside the page CSP. Measured in `test_extension_trusted_input_and_csp_eval`:
+a contenteditable that cancels untrusted `beforeinput` receives the typed
+text with `isTrusted` keydowns; `Ctrl+A` / `Shift+Enter` carry the right
+flags; a real Enter submits a form; on a `script-src 'unsafe-inline'` page
+the page's own `eval` throws EvalError, the executeScript path fails with
+the CSP message, the debugger path returns 2. Note for measuring CSP: a
+call made from Playwright's `page.evaluate` is allowed eval by DevTools,
+so the page must evaluate at load time.
+
 ## Incident: every browser tool gone, 2026-09-13 08:30–
 
 `browser_batch` (`9d1fc91`) used `z.record()` in its schema. The SDK's

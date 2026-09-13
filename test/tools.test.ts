@@ -267,6 +267,16 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("type is act-level and forwards text and target; press forwards modifier specs", async () => {
+    const asks: string[] = []; const seen: [string, Record<string, unknown>][] = [];
+    const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://tv.example/chart", title: "Chart" }), type: (p) => { seen.push(["type", p]); return { typed: 9, trusted: true, tag: "div" }; }, press: (p) => { seen.push(["press", p]); return { pressed: p.key, trusted: true }; }, submit_probe: () => ({ submit: false }) });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    const r = JSON.parse(await call(srv, "type", { tabId: 1, selector: ".monaco", text: "plot(x)\n" }));
+    assert.deepEqual(asks, ["type:act"]); assert.deepEqual(seen[0], ["type", { tabId: 1, selector: ".monaco", text: "plot(x)\n" }]); assert.equal(r.trusted, true);
+    await call(srv, "press", { tabId: 1, key: "Ctrl+A" }); assert.deepEqual(seen[1], ["press", { tabId: 1, key: "Ctrl+A" }]);
+  });
+
   test("confirm before submit: a submitting click/Enter is put in front of the user; stop fails the tool without clicking; non-submits and other keys never ask", async () => {
     const asked: Record<string, unknown>[] = []; const clicks: number[] = []; const probes: Record<string, unknown>[] = [];
     let answer = true;
