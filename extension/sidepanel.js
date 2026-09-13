@@ -219,6 +219,7 @@ function handle(m) {
     }
     case "local":    el("local", m.text); lastText = null; break;
     case "watch":    el("local", `⌁ watch fired — ${m.description}: ${m.detail}`); lastText = null; break;
+    case "file":     fileCard(m); lastText = null; break;
     case "delta":
       if (!streaming) { streaming = el("msg md"); streamRaw = ""; }
       streamRaw += m.text;
@@ -309,6 +310,46 @@ function welcome() {
   const s = document.createElement("button"); s.textContent = "setup & status"; s.className = "dismiss";
   s.onclick = async () => PLATFORM.openUrl((await base()) + "/setup.html");
   w.append(x, document.createTextNode(" "), s);
+}
+
+/* ---------------- files the agent prepared ----------------
+   A card with a download button — the agent calls files.offer when the
+   result of the work is a file. Write rows and browser downloads get a small
+   ⬇ too, when the file sits under the browsable root. */
+function fileCard(m) {
+  const card = el("filecard");
+  const ic = document.createElement("span"); ic.className = "fi"; ic.textContent = "📎";
+  const body = document.createElement("div"); body.className = "fb";
+  const name = document.createElement("div"); name.className = "fn"; name.textContent = m.name;
+  const meta = document.createElement("div"); meta.className = "fm"; meta.textContent = `${fmtSize(m.bytes)}${m.note ? ` · ${m.note}` : ""} · ${m.path}`;
+  body.append(name, meta);
+  const row = document.createElement("div"); row.className = "row";
+  const dl = document.createElement("button"); dl.className = "allow"; dl.textContent = "Download";
+  dl.onclick = (e) => { e.stopPropagation(); download(m.path, m.name); };
+  const show = document.createElement("button"); show.textContent = "Show in files";
+  show.onclick = (e) => { e.stopPropagation(); showInFiles(m.path); };
+  row.append(dl, show); body.append(row);
+  card.append(ic, body);
+}
+function showInFiles(relPath) {
+  const dir = relPath.includes("/") ? relPath.slice(0, relPath.lastIndexOf("/")) : "";
+  document.querySelector('.tabs .tab[data-view="files"]')?.click();
+  browse(dir);
+}
+/** A ⬇ chip on a tool row, for a file under the browsable root. `abs` may be absolute or already relative. */
+async function fileChip(row, abs) {
+  const rel = await cwdRelOf(abs);
+  if (rel === null) return;
+  const chip = document.createElement("button"); chip.className = "dlchip"; chip.textContent = "⬇"; chip.title = `Download ${rel}`;
+  chip.onclick = (e) => { e.stopPropagation(); download(rel, rel.split("/").pop()); };
+  row.querySelector(".tl")?.append(" ", chip);
+}
+async function cwdRelOf(p) {
+  if (filesRootAbs === null) { try { filesRootAbs = (await fjson("/files/info")).root ?? ""; } catch { filesRootAbs = ""; } }
+  if (!p || !filesRootAbs) return null;
+  if (!p.startsWith("/")) return p;                       // already relative to the root
+  if (p === filesRootAbs) return "";
+  return p.startsWith(filesRootAbs + "/") ? p.slice(filesRootAbs.length + 1) : null;
 }
 
 /* ---------------- tool rows ----------------
@@ -450,6 +491,7 @@ function toolRow(id, name, input, parent) {
   d.append(line, res, chev);
   d.onclick = () => { if (d.dataset.body) d.classList.toggle("open"); };
   if (id) toolRows.set(id, d);
+  if ((name === "Write" || name === "Edit" || name === "MultiEdit") && typeof input?.file_path === "string") void fileChip(d, input.file_path);
   return d;
 }
 
@@ -459,6 +501,7 @@ function toolResult(m) {
   if (!d) { d = toolRow(null, m.name, {}, m.parent); d.classList.add("orphan"); }   // its call is gone (truncated, or a mid-turn attach)
   const res = d.querySelector(".tr");
   res.textContent = m.summary; res.className = "tr " + (m.ok ? "ok" : "err");
+  if (m.name === "mcp__browser__download" && m.ok) { try { const j = JSON.parse(m.text); if (typeof j.path === "string") void fileChip(d, j.path); } catch { /* not json */ } }
   res.title = m.bytes ? `${m.bytes.toLocaleString()} bytes${m.truncated ? ", truncated" : ""}` : "";
   const body = m.text || (m.ok ? "" : m.summary);
   if (body) {

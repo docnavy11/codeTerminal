@@ -69,6 +69,7 @@ function describe(name: string, text: string, s: Record<string, unknown>, images
     }
     case "Glob": return text.trim() === "" || /^no files/i.test(text) ? "no files" : `${lines} files`;
     case "TodoWrite": return "list updated";
+    case "mcp__files__offer": { const m = text.match(/^Offered (.+?) \(/); return m ? `offered ${m[1]}` : firstLine(text); }
     case "Agent": case "Task": return /launched successfully/i.test(text) ? "running in the background" : firstLine(text);
     case "mcp__terminal__read": { const m = text.match(/^Last (\d+) lines/); return m ? `${m[1]} lines` : firstLine(text); }
     case "mcp__browser__read_page": {

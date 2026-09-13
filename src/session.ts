@@ -1,6 +1,6 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate, type PermissionMode, type SlashCommand } from "@anthropic-ai/claude-agent-sdk";
 import { Pushable, deferred } from "./pushable.js";
-import { browserTools, terminalTools, watchTools, promptTools } from "./tools.js";
+import { browserTools, terminalTools, watchTools, promptTools, fileTools } from "./tools.js";
 import { composePrompt } from "./prompt.js";
 import { summariseResult } from "./results.js";
 import { previewDiff } from "./diff.js";
@@ -67,6 +67,8 @@ export type SessionDeps = {
   prefer: () => string | undefined;
   /** Sites the browser tools may use without asking; "Always" on the card adds to it. Absent = allow everything (tests). */
   browserAllow?: BrowserAllowlist | null;
+  /** The browsable root; files under it can be offered as downloads. */
+  filesRoot?: string;
   /** The SDK entry point. Tests inject a scripted one; production leaves it unset. */
   spawnQuery?: typeof query;
   /** Names a chat from its first message. Also an SDK call, also injectable. */
@@ -89,6 +91,8 @@ const WATCH_TOOLS = ["mcp__watch__page", "mcp__watch__list", "mcp__watch__stop"]
 // Reading the library is inert. Saving and deleting are not auto-approved:
 // a saved prompt is something the user clicks and runs later.
 const PROMPT_TOOLS = ["mcp__prompts__list"];
+// Offering a file only announces it; the file was already written through the gate.
+const FILE_TOOLS = ["mcp__files__offer"];
 
 /** Set CODETERM_ISOLATED=1 to run without your personal skills and CLAUDE.md. */
 const SETTING_SOURCES: ("user" | "project" | "local")[] =
@@ -172,7 +176,7 @@ export class Session {
         // Without this an assistant message only arrives complete, so a long
         // turn shows nothing at all until the model finishes its first block.
         includePartialMessages: true,
-        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS],
+        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS, ...FILE_TOOLS],
         mcpServers: {
           terminal: terminalTools(this.#deps.getShell),
           ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy, () => this.#workspace) } : {}),
@@ -180,6 +184,7 @@ export class Session {
           // to the conversation that set it.
           ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
           ...(d.prompts ? { prompts: promptTools(d.prompts) } : {}),
+          ...(d.filesRoot ? { files: fileTools(d.filesRoot, this.#workspace, (e) => this.#emit(e)) } : {}),
         },
         permissionMode: this.#mode,
         ...(model ? { model } : {}),

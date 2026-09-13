@@ -107,6 +107,12 @@ const sdk = fakeSdk({ setup: (q) => {
     q.ask("browser", { host: "bank.example", action: "eval", detail: "document.title" }).promise.then((r) => { q.text(`eval: ${r.behavior}`); q.result(); });
     return;
   }
+  if (content.includes("offer-me")) {
+    // the model would call files.offer; the fixture calls the tool itself
+    const reg = (q.options.mcpServers as Record<string, { instance: { _registeredTools: Record<string, { callback?: Function; handler?: Function }> } }>).files.instance._registeredTools;
+    (reg.offer.callback ?? reg.offer.handler)!({ path: "notes.txt", note: "your export" }, {}).then(() => { q.text("Here it is."); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) }); });
+    return;
+  }
   if (content.includes("ask-me")) {
     q.ask("AskUserQuestion", { questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] })
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });

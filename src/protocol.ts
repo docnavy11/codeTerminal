@@ -55,6 +55,8 @@ export type ClientEvent =
   | { kind: "model"; model: string | null }
   | { kind: "commands"; commands: SlashCommand[] }
   | { kind: "local"; text: string }
+  /** A file the agent prepared for you: path relative to the files root, so the client can offer a download. */
+  | { kind: "file"; path: string; name: string; bytes: number; note?: string }
   | { kind: "chats"; chats: unknown[]; activeId: string }
   | { kind: "cleared" }
   | { kind: "cwd"; path: string }
@@ -105,7 +107,7 @@ function parseImages(v: unknown): PromptImage[] | false {
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
-  "local", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model", "rewind",
+  "local", "file", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model", "rewind",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 

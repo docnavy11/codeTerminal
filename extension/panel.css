@@ -273,6 +273,13 @@
                      font-size:0.7rem; line-height:18px; border-radius:50%; text-align:center; }
   #attach { padding:0 8px; display:inline-flex; align-items:center; }
   #box.drop, #log.drop { outline:2px dashed var(--accent); outline-offset:-2px; }
+  .filecard { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--line); border-left:3px solid var(--ok); border-radius:8px; padding:9px 11px; background:var(--card); }
+  .filecard .fi { font-size:1.2rem; line-height:1; }
+  .filecard .fb { min-width:0; flex:1; }
+  .filecard .fn { font-weight:600; overflow-wrap:anywhere; }
+  .filecard .fm { color:var(--dim); font-size:0.792rem; overflow-wrap:anywhere; margin:2px 0 8px; }
+  .filecard .row { display:flex; gap:6px; flex-wrap:wrap; }
+  .tool .dlchip { font-size:0.7rem; padding:0 5px; line-height:1.4; vertical-align:baseline; }
   .end  { color:var(--dim); font-size:0.792rem; border-top:1px dashed var(--line); padding-top:4px; }
   .end.stopped { color:var(--bad); border-top-color:var(--bad); }
   #status .ctx { color:var(--dim); font-size:0.75rem; margin-left:8px; font-variant-numeric:tabular-nums; }

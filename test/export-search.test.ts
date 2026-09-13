@@ -24,6 +24,7 @@ describe("toMarkdown", () => {
       { kind: "thinking", text: "first thought\nsecond thought" },
       { kind: "text", text: "Here **you** go." },
       { kind: "local", text: "Working directory is now /w" },
+      { kind: "file", path: "ws/out/report.csv", name: "report.csv", bytes: 12345, note: "the export" },
       { kind: "error", message: "boom" },
       { kind: "turn_end", costUsd: 0.5, sessionCostUsd: 0.5, isError: false, denials: 1 },
       { kind: "user", text: "again" },
@@ -34,6 +35,7 @@ describe("toMarkdown", () => {
     assert.ok(md.includes("- → `Bash` `ls -la`\n- → `Read` `/x/y.ts`\n- → `mcp__browser__eval` `{\"code\":\"a'b'\"}`\n  - ✗ ReferenceError\n  - ↳ agent completed · 4 tool uses — All found."));
     assert.ok(md.includes("> 💭 first thought\n> second thought\n\nHere **you** go."));
     assert.ok(md.includes("> Working directory is now /w"));
+    assert.ok(md.includes("- 📎 report.csv (12,345 bytes) — the export"));
     assert.ok(md.includes("> ⚠ boom"));
     assert.ok(md.includes("_done · 1 denied · $0.5000 est._"));
     assert.ok(md.includes("_stopped: reached the turn limit · $0.7500 est._"));

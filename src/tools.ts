@@ -1,5 +1,8 @@
 import { mkdir, writeFile, chmod, access } from "node:fs/promises";
-import { join, basename, extname } from "node:path";
+import { join, basename, extname, resolve as resolvePath, dirname as dirOf } from "node:path";
+import { stat as statAsync } from "node:fs/promises";
+import { safePath, toRel } from "./files.js";
+import type { ClientEvent } from "./protocol.js";
 import { z } from "zod";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { BrowserBridge } from "./browser.js";
@@ -184,6 +187,33 @@ export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, curren
  * agent into saving a prompt would be planting something for the user to fire
  * later, so a write goes through the gate.
  */
+/**
+ * "Here is your file." When the agent has prepared an output — an export, a
+ * report, a converted document — it offers it, and the transcript shows a
+ * card with a download button. Only files under the browsable root can be
+ * offered, because that is what the file routes will serve.
+ */
+export function fileTools(filesRoot: string, workspace: string, emit: (e: ClientEvent) => void) {
+  return createSdkMcpServer({
+    name: "files",
+    version: "1.0.0",
+    alwaysLoad: true,
+    tools: [
+      tool("offer",
+        "Offer a file you prepared to the user as a download (an export, a report, a converted document). Call this when the result of the work is a file; the user gets a download button in the chat.",
+        { path: z.string().describe("Path of the file, absolute or relative to the working directory"), note: z.string().optional().describe("One line on what it is") },
+        async (a) => {
+          const absPath = resolvePath(workspace, a.path);
+          const rel = toRel(filesRoot, await safePath(filesRoot, toRel(filesRoot, absPath)));
+          const st = await statAsync(absPath).catch(() => null);
+          if (!st?.isFile()) throw new Error(`${a.path} is not a file that exists`);
+          emit({ kind: "file", path: rel, name: basename(absPath), bytes: st.size, ...(a.note ? { note: a.note.slice(0, 200) } : {}) });
+          return text(`Offered ${basename(absPath)} (${st.size} bytes) to the user as a download.`);
+        }),
+    ],
+  });
+}
+
 export function promptTools(prompts: PromptStore) {
   const line = (p: { id: string; title: string; domains: string[]; text: string }) =>
     `${p.id.slice(0, 8)}  ${p.title}  [${p.domains.length ? p.domains.join(" ") : "everywhere"}]\n    ${p.text.replace(/\s+/g, " ").slice(0, 110)}`;

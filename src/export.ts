@@ -36,6 +36,9 @@ export function toMarkdown(rec: ChatRecord, projectName?: string): string {
       case "local":
         out.push(`> ${e.text.replace(/\n/g, "\n> ")}`, "");
         break;
+      case "file":
+        out.push(`- 📎 ${e.name} (${e.bytes.toLocaleString()} bytes)${e.note ? ` — ${e.note}` : ""}`, "");
+        break;
       case "watch":
         out.push(`> ⌁ watch fired — ${e.description}: ${e.detail}`, "");
         break;

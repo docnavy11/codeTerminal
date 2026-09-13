@@ -607,3 +607,18 @@ def test_page_read_modes(page, server):
     assert page.evaluate("(r) => document.querySelector('[data-ct-ref=\"' + r + '\"]').name", q["ref"]) == "q", "the ref addresses the field, so fill can use it"
     text = page.evaluate("() => ctReadPage('text', 12)")
     assert text["text"].endswith("…[truncated]") and text["chars"] > 12
+
+
+def test_offered_file_has_a_download_button(page, server):
+    open_ui(page, server)
+    send(page, "offer-me"); wait_reply(page, "Here it is.")
+    page.wait_for_selector("#log .filecard", timeout=5000)
+    assert page.text_content("#log .filecard .fn") == "notes.txt"
+    assert "your export" in page.text_content("#log .filecard .fm") and "ws/notes.txt" in page.text_content("#log .filecard .fm")
+    with page.expect_download(timeout=10000) as dl:
+        page.click("#log .filecard button:has-text('Download')")
+    assert dl.value.suggested_filename == "notes.txt"
+    page.click("#log .filecard button:has-text('Show in files')")
+    page.wait_for_selector("#flist .row:has(.n:text-is('notes.txt'))", timeout=5000)
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    assert page.locator("#log .filecard").count() == 1, "the offer is part of the transcript"

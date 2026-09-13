@@ -4,7 +4,7 @@ import { mkdtemp, rm, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import { terminalTools, watchTools, promptTools, browserTools, downloadName } from "../src/tools.js";
+import { terminalTools, watchTools, promptTools, browserTools, fileTools, downloadName } from "../src/tools.js";
 import { BrowserBridge } from "../src/browser.js";
 import { WatchRegistry } from "../src/watches.js";
 import { PromptStore } from "../src/prompts.js";
@@ -136,6 +136,27 @@ describe("prompt tools", () => {
     assert.match(await call(srv, "delete", { id: "zzzz" }), /No prompt matching/);
     assert.match(await call(srv, "delete", { id: p.id.slice(0, 8) }), /Deleted "Zqx two"/);
     assert.equal(store.all().length, before);
+  });
+});
+
+describe("files.offer", () => {
+  test("announces a file under the root with its size; refuses outside, missing, and directories", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const root = await mkdtemp(join(tmpdir(), "ct-offer-")); await mkdir(join(root, "ws", "out"), { recursive: true });
+    await writeFile(join(root, "ws", "out", "report.csv"), "a,b\n1,2\n");
+    const events: unknown[] = [];
+    const srv = fileTools(root, join(root, "ws"), (e) => events.push(e));
+    try {
+      assert.match(await call(srv, "offer", { path: "out/report.csv", note: "the export" }), /Offered report\.csv \(8 bytes\)/);
+      assert.deepEqual(events, [{ kind: "file", path: "ws/out/report.csv", name: "report.csv", bytes: 8, note: "the export" }]);
+      await call(srv, "offer", { path: join(root, "ws", "out", "report.csv") });
+      assert.equal((events[1] as { path: string }).path, "ws/out/report.csv", "absolute paths work too");
+      await assert.rejects(call(srv, "offer", { path: "/etc/hostname" }), /outside/);
+      await assert.rejects(call(srv, "offer", { path: "out/nope.csv" }), /not a file/);
+      await assert.rejects(call(srv, "offer", { path: "out" }), /not a file/);
+      assert.equal(events.length, 2);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
 

@@ -1033,6 +1033,17 @@ so the mode menu follows. The plan is kept with the chat and exported under
 plan, approving with auto-accept switched the mode; the agent then ended
 its turn without acting — say "go" if you want it to start at once.
 
+## Files the agent prepares for you
+
+When the result of the work is a file — an export, a report, a converted
+document — the agent offers it (`files.offer`, auto-approved: it only
+announces a file already written through the gate) and the transcript
+shows a card: name, size, its note, **Download** and **Show in files**.
+Only files under the browsable root can be offered, because that is what
+the file routes serve. `Write`/`Edit` rows and browser downloads also get a
+small ⬇ when the file sits under the root. Offers are kept with the chat
+and exported as `📎 name (bytes) — note`.
+
 ## Images in the prompt
 
 Paste a screenshot (Ctrl/Cmd+V), drop an image on the composer or the

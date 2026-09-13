@@ -197,7 +197,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     cfg.chatsDir,
     cfg.projectsRoot,
     // prefer is replaced per-chat by LiveChat, which knows its own browser.
-    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow,
+    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT,
       ...(cfg.spawnQuery ? { spawnQuery: cfg.spawnQuery } : {}),
       ...(cfg.titler ? { titler: cfg.titler } : {}) },
   );
