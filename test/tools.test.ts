@@ -172,10 +172,12 @@ describe("browser tools", () => {
   });
 
   test("site policy: allowed sites pass, others ask; deny refuses; list_tabs hides what is not allowed; navigate checks the destination", async () => {
-    const asks: { host: string; action: string; detail?: string }[] = [];
+    const asks: { host: string; action: string; detail?: string; level?: string }[] = [];
     let answer: "allow" | "deny" = "allow";
-    const allowed = new Set(["ok.example"]);
-    const policy = { allowed: (h: string) => allowed.has(h), evalAllowed: () => false, ask: async (host: string, action: string, detail?: string) => { asks.push({ host, action, detail }); if (answer === "allow") allowed.add(host); return answer; } };
+    const allowed = new Map<string, "read" | "act">([["ok.example", "act"]]);
+    const covers = (g: string | undefined, n: string) => g === "act" || (g === "read" && n === "read");
+    const policy = { allowed: (h: string, level: "read" | "act") => covers(allowed.get(h), level), evalAllowed: () => false,
+      ask: async (host: string, action: string, detail: string | undefined, level: "read" | "act") => { asks.push({ host, action, detail, level }); if (answer === "allow") allowed.set(host, level); return answer; } };
     const { bridge } = bridged({
       tab_url: (p) => ({ tabId: p.tabId ?? 1, url: p.tabId === 2 ? "https://secret.example/acct" : p.tabId === 3 ? "chrome://newtab" : "https://ok.example/page" }),
       read_page: () => ({ text: "page" }), navigate: (p) => ({ tabId: 1, url: p.url }),
@@ -183,8 +185,10 @@ describe("browser tools", () => {
     });
     const srv = browserTools(bridge, () => undefined, undefined, policy);
     assert.match(await call(srv, "read_page", { tabId: 1 }), /page/); assert.equal(asks.length, 0, "an allowed site does not ask");
-    assert.match(await call(srv, "read_page", { tabId: 2 }), /page/); assert.deepEqual(asks, [{ host: "secret.example", action: "read_page", detail: undefined }]);
+    assert.match(await call(srv, "read_page", { tabId: 2 }), /page/); assert.deepEqual(asks, [{ host: "secret.example", action: "read_page", detail: undefined, level: "read" }]);
     assert.match(await call(srv, "read_page", { tabId: 2 }), /page/); assert.equal(asks.length, 1, "granted: not asked twice");
+    // read was granted; acting asks again, at level act
+    await bridged_click(srv); assert.deepEqual(asks.at(-1), { host: "secret.example", action: "click", detail: undefined, level: "act" });
     allowed.delete("secret.example"); answer = "deny";
     await assert.rejects(call(srv, "read_page", { tabId: 2 }), /secret\.example: the user did not allow it/);
     const tabs = JSON.parse(await call(srv, "list_tabs")) as { id: number; url?: string; host?: string; allowed?: boolean }[];
@@ -193,18 +197,19 @@ describe("browser tools", () => {
     assert.equal(tabs[2].allowed, false, "a chrome:// tab is not readable either");
     answer = "allow";
     await call(srv, "navigate", { url: "https://third.example/x" });
-    assert.deepEqual(asks.at(-1), { host: "third.example", action: "navigate", detail: "https://third.example/x" });
+    assert.deepEqual(asks.at(-1), { host: "third.example", action: "navigate", detail: "https://third.example/x", level: "act" });
     await assert.rejects(call(srv, "read_page", { tabId: 3 }), /no readable URL/);
+    async function bridged_click(s: typeof srv) { try { await call(s, "click", { tabId: 2, selector: "a" }); } catch { /* the fake ext has no click handler; the ask is what matters */ } }
   });
 
   test("eval asks every call on an allowed site until granted for the chat; without a policy nothing asks", async () => {
     const asks: string[] = [];
     const evalOk = new Set<string>();
-    const policy = { allowed: () => true, evalAllowed: (h: string) => evalOk.has(h), ask: async (host: string, action: string) => { asks.push(action); return "allow" as const; } };
+    const policy = { allowed: () => true, evalAllowed: (h: string) => evalOk.has(h), ask: async (host: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
     const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://ok.example/" }), eval: (p) => ({ value: `ran ${p.code}` }) });
     const srv = browserTools(bridge, () => undefined, undefined, policy);
     await call(srv, "eval", { code: "1" }); await call(srv, "eval", { code: "2" });
-    assert.deepEqual(asks, ["eval", "eval"], "per call");
+    assert.deepEqual(asks, ["eval:act", "eval:act"], "per call");
     evalOk.add("ok.example");
     await call(srv, "eval", { code: "3" }); assert.equal(asks.length, 2, "granted for this host");
     const { bridge: b2 } = bridged({ eval: (p) => ({ value: p.code }) });

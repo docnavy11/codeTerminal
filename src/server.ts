@@ -21,7 +21,7 @@ import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
 import { buildSetup } from "./setup.js";
 import { toMarkdown, exportFilename } from "./export.js";
-import { BrowserAllowlist, normaliseHost } from "./browser-allow.js";
+import { BrowserAllowlist, normaliseHost, LEVELS, type Level } from "./browser-allow.js";
 import { readFileSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -382,10 +382,15 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     res.json({ gated: browserAllow !== null, hosts: browserAllow?.all() ?? [] });
   });
   app.post("/browser-allow", guard, express.json({ limit: "4kb" }), (req, res) => {
-    const host = normaliseHost(String((req.body as { host?: unknown })?.host ?? ""));
+    const b = req.body as { host?: unknown; level?: unknown };
+    const host = normaliseHost(String(b?.host ?? ""));
     if (!host) { res.status(400).json({ error: "not a hostname (use example.com or *.example.com)" }); return; }
+    if (b.level !== undefined && !(LEVELS as readonly unknown[]).includes(b.level)) { res.status(400).json({ error: "level must be read or act" }); return; }
     if (!browserAllow) { res.status(400).json({ error: "the browser gate is disabled (CODETERM_BROWSER_GATE=0)" }); return; }
-    res.json({ added: browserAllow.add(host), hosts: browserAllow.all() });
+    const level = (b.level as Level | undefined) ?? "act";
+    // add raises; set lowers — the page wants "make it exactly this"
+    const changed = browserAllow.add(host, level) || browserAllow.set(host, level);
+    res.json({ added: changed, hosts: browserAllow.all() });
   });
   app.delete("/browser-allow/:host", guard, (req, res) => {
     res.json({ removed: browserAllow?.remove(String(req.params.host)) ?? false, hosts: browserAllow?.all() ?? [] });

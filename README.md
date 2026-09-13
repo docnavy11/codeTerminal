@@ -673,12 +673,17 @@ agent then reads the file like any other, which for a PDF means the
 rendered pages, not just the text layer. It goes through the site card
 like any read.
 
-**Gated per site, not per call.** The first time a chat touches a site —
-reads it, clicks, screenshots, navigates there — a card asks: *Let Claude
-use bank.example?* **Allow (this chat)**, **Always (this site)** or
-**Deny**. "Always" puts the host on the standing list (`browser-allow.json`,
-edited on the manage page's *Browser sites* tab; seed it with
-`CODETERM_BROWSER_ALLOW=github.com,*.atlassian.net`); "Allow" lasts for
+**Gated per site, at two levels.** The first time a chat *reads* a site
+(`read_page`, `snapshot`, `screenshot`, `download`) a card asks *Let Claude
+read bank.example?*; the first time it *acts* there (`click`, `fill`,
+`press`, `navigate`, `eval`) a second card asks *Let Claude act on
+bank.example?* — "let it read my bank" is not "let it click Transfer". Each
+card offers **Allow (this chat)**, **Always (this site)** or **Deny**, and
+an act answer covers reading. "Always" puts the host on the standing list at that level
+(`browser-allow.json`, edited on the manage page's *Browser sites* tab,
+where a site can be switched between read-only and read + act; seed it
+with `CODETERM_BROWSER_ALLOW=github.com,*.atlassian.net:read` — a bare
+host means act, as before the levels existed); "Allow" lasts for
 that chat's live session. `list_tabs` shows a not-yet-allowed tab as its
 host only, no title or URL. **`eval` asks every call** even on an allowed
 site — arbitrary JavaScript in a logged-in tab deserves a look at the code

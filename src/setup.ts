@@ -86,7 +86,7 @@ export function buildSetup(i: SetupInput) {
       : { ok: false, level: "warn", text: "A configured directory is missing", hint: "See the paths below; set CODETERM_WORKSPACE / CODETERM_FILES_ROOT / CODETERM_PROJECTS_ROOT in .env." },
     browser: i.browserSites === null
       ? { ok: true, level: "warn", text: "Browser tools act on any site without asking (CODETERM_BROWSER_GATE=0)" }
-      : { ok: true, level: "ok", text: `Browser tools ask before a new site; ${i.browserSites ?? 0} site${i.browserSites === 1 ? "" : "s"} allowed without asking`, hint: "Manage the list on the manage page; eval asks every time." },
+      : { ok: true, level: "ok", text: `Browser tools ask before a new site; ${i.browserSites ?? 0} site${i.browserSites === 1 ? "" : "s"} allowed without asking`, hint: "Read and act are separate answers; manage the list on the manage page; eval asks every time." },
     permissions: i.bypassAllowed
       ? { ok: true, level: "warn", text: "\"Never ask\" (bypassPermissions) is enabled — the agent can run and edit with nobody approving" }
       : { ok: true, level: "ok", text: "Every change asks for approval; \"Never ask\" is disabled", hint: "CODETERM_ALLOW_BYPASS=1 enables it." },

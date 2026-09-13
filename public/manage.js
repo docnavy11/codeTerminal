@@ -324,22 +324,26 @@ async function loadBrowser() {
   const { gated, hosts } = await api("/browser-allow");
   const host = $("browser"); host.replaceChildren();
   host.append(el("p", "hint", gated
-    ? "Claude asks once per chat before reading or acting on a site not listed here; eval asks every time. \"Always\" on that card adds the site. Patterns: example.com or *.example.com."
+    ? "Claude asks once per chat before reading a site not listed here, and again before acting on it (click, type, navigate); eval asks every time. \"Always\" on that card adds the site at that level. Patterns: example.com or *.example.com."
     : "The site gate is off (CODETERM_BROWSER_GATE=0): browser tools act on any site without asking."));
   const bar = el("div", "bar");
   const input = Object.assign(el("input"), { placeholder: "example.com or *.example.com" });
+  const lvl = el("select"); lvl.append(new Option("read", "read"), new Option("read + act", "act")); lvl.value = "read";
   const add = el("button", "", "add");
-  add.onclick = async () => { try { await api("/browser-allow", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host: input.value }) }); input.value = ""; await loadBrowser(); } catch (e) { show(e.message); } };
+  const setLevel = async (h, level) => { try { await api("/browser-allow", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host: h, level }) }); await loadBrowser(); } catch (e) { show(e.message); } };
+  add.onclick = async () => { await setLevel(input.value, lvl.value); input.value = ""; };
   input.onkeydown = (e) => { if (e.key === "Enter") add.click(); };
-  bar.append(input, add, el("span", "count", `${hosts.length} site${hosts.length === 1 ? "" : "s"}`));
+  bar.append(input, lvl, add, el("span", "count", `${hosts.length} site${hosts.length === 1 ? "" : "s"}`));
   host.append(bar);
   if (!hosts.length) { host.append(el("div", "empty", "No sites yet — every site asks the first time a chat uses it.")); return; }
-  for (const h of hosts) {
+  for (const { host: h, level } of hosts) {
     const row = el("div", "row");
-    const main = el("div", "main"); main.append(el("div", "title", h)); row.append(main);
+    const main = el("div", "main"); main.append(el("div", "title", h)); main.append(el("div", "meta", level === "act" ? "read + act — may click, type, navigate" : "read only — acting asks")); row.append(main);
+    const sw = el("button", "", level === "act" ? "make read-only" : "allow acting");
+    sw.onclick = () => setLevel(h, level === "act" ? "read" : "act");
     const rm = el("button", "danger", "remove");
     rm.onclick = async () => { try { await api(`/browser-allow/${encodeURIComponent(h)}`, { method: "DELETE" }); await loadBrowser(); } catch (e) { show(e.message); } };
-    row.append(rm); host.append(row);
+    row.append(sw, rm); host.append(row);
   }
 }
 

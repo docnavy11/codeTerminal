@@ -574,11 +574,14 @@ function renderApproval(m) {
   card.dataset.approval = m.id; card.dataset.tool = m.tool;
   const h = document.createElement("h4");
   h.textContent = site
-    ? (m.input?.action === "eval" ? `Run JavaScript on ${m.input.host}?` : `Let Claude use ${m.input?.host || "this site"}?`)
+    ? (m.input?.action === "eval" ? `Run JavaScript on ${m.input.host}?`
+      : m.input?.level === "act" ? `Let Claude act on ${m.input?.host || "this site"}?`
+      : `Let Claude read ${m.input?.host || "this site"}?`)
     : `Approve ${m.tool}?`;
   const pre = m.diff ? renderDiff(m.diff) : document.createElement("pre");
   if (!m.diff) pre.textContent = site
-    ? (m.input?.action === "eval" ? String(m.input.detail ?? "") : `${m.input?.action}${m.input?.detail ? ` → ${m.input.detail}` : ""} — reads or acts on the page in your logged-in browser`)
+    ? (m.input?.action === "eval" ? String(m.input.detail ?? "")
+      : `${m.input?.action}${m.input?.detail ? ` → ${m.input.detail}` : ""} — ${m.input?.level === "act" ? "clicks, types or navigates in your logged-in browser (reading is included)" : "reads the page in your logged-in browser; acting on it will ask again"}`)
     : typeof m.input?.command === "string" ? m.input.command : JSON.stringify(m.input, null, 2);
   const row = document.createElement("div");
   row.className = "row";

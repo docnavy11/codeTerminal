@@ -533,7 +533,7 @@ def test_site_and_eval_cards(page, server):
     open_ui(page, server)
     send(page, "site-me")
     page.wait_for_selector(".card.site", timeout=10000)
-    assert page.text_content(".card.site h4") == "Let Claude use bank.example?"
+    assert page.text_content(".card.site h4") == "Let Claude read bank.example?"
     labels = page.evaluate("() => [...document.querySelectorAll('.card.site .row button')].map(b => b.textContent)")
     assert labels == ["Allow (this chat)", "Always (this site)", "Deny"], labels
     assert page.text_content("#statustext") == "waiting for you — a site"
@@ -552,5 +552,9 @@ def test_manage_page_browser_sites(page, server):
     page.wait_for_selector("#browser .bar input", timeout=5000)
     page.fill("#browser .bar input", "*.corp.example"); page.press("#browser .bar input", "Enter")
     wait(page, "() => [...document.querySelectorAll('#browser .row .title')].some(t => t.textContent === '*.corp.example')", what="added")
-    page.click("#browser .row:has(.title:text-is('*.corp.example')) button")
+    row = "#browser .row:has(.title:text-is('*.corp.example'))"
+    assert "read only" in page.text_content(row + " .meta")
+    page.click(row + " button:has-text('allow acting')")
+    wait(page, "() => { const r = [...document.querySelectorAll('#browser .row')].find(r => r.querySelector('.title')?.textContent === '*.corp.example'); return !!r && r.querySelector('.meta').textContent.includes('read + act'); }", what="raised to act")
+    page.click("#browser .row:has(.title:text-is('*.corp.example')) button.danger")
     wait(page, "() => ![...document.querySelectorAll('#browser .row .title')].some(t => t.textContent === '*.corp.example')", what="removed")

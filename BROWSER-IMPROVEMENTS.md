@@ -36,7 +36,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 
 | # | improvement | why | status |
 |---|---|---|---|
-| 8 | **Read vs act on the site card.** Two levels — *read* (`read_page`, `snapshot`, `screenshot`, `find`) and *act* (`click`, `fill`, `press`, `navigate`, `eval`) — the card asks for the level the call needs. | A site is allowed wholesale today: "let it read my bank" also means "let it click Transfer". Small change on top of the gate. | ☐ |
+| 8 | **Read vs act on the site card.** Two levels — *read* (`read_page`, `snapshot`, `screenshot`, `find`) and *act* (`click`, `fill`, `press`, `navigate`, `eval`) — the card asks for the level the call needs. | A site is allowed wholesale today: "let it read my bank" also means "let it click Transfer". Small change on top of the gate. | ☑ |
 | 9 | **Tool rows say where.** The tab's URL is already fetched before every call; show it on the row (`→ click  bank.example · Transfer`). | Makes the transcript auditable at a glance; costs nothing. | ☐ |
 | 10 | **Confirm before submit.** A card when `press Enter` or a click lands on a submit control in a form with filled fields. | Prevents the expensive mistake. Heuristic (what counts as submit), hence last. | ☐ |
 

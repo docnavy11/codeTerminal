@@ -100,7 +100,7 @@ const sdk = fakeSdk({ setup: (q) => {
     return;
   }
   if (content.includes("site-me")) {
-    q.ask("browser", { host: "bank.example", action: "read_page" }).promise.then((r) => { q.text(`site: ${r.behavior}`); q.result(); });
+    q.ask("browser", { host: "bank.example", action: "read_page", level: "read" }).promise.then((r) => { q.text(`site: ${r.behavior}`); q.result(); });
     return;
   }
   if (content.includes("eval-me")) {

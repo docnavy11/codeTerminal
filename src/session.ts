@@ -4,7 +4,7 @@ import { browserTools, terminalTools, watchTools, promptTools } from "./tools.js
 import { composePrompt } from "./prompt.js";
 import { summariseResult } from "./results.js";
 import { previewDiff } from "./diff.js";
-import type { BrowserAllowlist } from "./browser-allow.js";
+import { levelCovers, type BrowserAllowlist, type Level } from "./browser-allow.js";
 import type { BrowserPolicy } from "./tools.js";
 import type { BrowserBridge } from "./browser.js";
 import type { Shell } from "./shell.js";
@@ -110,8 +110,8 @@ type Pending = {
   resolve: (r: PermissionResult) => void;
   tool: string;
   suggestions: PermissionUpdate[];
-  /** Set for a browser-site ask: which host and action; "always" adds the host to the standing list. */
-  browser?: { host: string; action: string };
+  /** Set for a browser-site ask: which host, action and level; "always" adds the host to the standing list at that level. */
+  browser?: { host: string; action: string; level: Level };
   /** Set for AskUserQuestion, whose answer rides back in updatedInput. */
   question?: { input: Record<string, unknown>; questions: AskQuestion[] };
 };
@@ -229,18 +229,18 @@ export class Session {
   get dead() { return this.#dead; }
 
   /* ---- browser sites: a card per new site per chat, eval per call ---- */
-  #hostGrants = new Set<string>();      // allowed for this chat (this live session)
-  #evalGrants = new Set<string>();      // eval allowed on this host for this chat
+  #hostGrants = new Map<string, Level>();   // allowed for this chat (this live session), by level
+  #evalGrants = new Set<string>();           // eval allowed on this host for this chat
   #browserPolicy: BrowserPolicy = {
-    allowed: (host) => this.#hostGrants.has(host) || (this.#deps.browserAllow?.has(host) ?? false),
+    allowed: (host, level) => { const g = this.#hostGrants.get(host); return (g !== undefined && levelCovers(g, level)) || (this.#deps.browserAllow?.has(host, level) ?? false); },
     evalAllowed: (host) => this.#evalGrants.has(host),
-    ask: (host, action, detail) => this.#askBrowser(host, action, detail),
+    ask: (host, action, detail, level) => this.#askBrowser(host, action, detail, level),
   };
-  #askBrowser(host: string, action: string, detail?: string): Promise<"allow" | "deny"> {
+  #askBrowser(host: string, action: string, detail: string | undefined, level: Level): Promise<"allow" | "deny"> {
     const id = randomUUID();
     const { promise, resolve } = deferred<PermissionResult>();
-    this.#pending.set(id, { resolve, tool: "browser", suggestions: [], browser: { host, action } });
-    this.#emit({ kind: "approval", id, tool: "browser", input: { host, action, ...(detail ? { detail } : {}) }, canAlways: true });
+    this.#pending.set(id, { resolve, tool: "browser", suggestions: [], browser: { host, action, level } });
+    this.#emit({ kind: "approval", id, tool: "browser", input: { host, action, level, ...(detail ? { detail } : {}) }, canAlways: true });
     this.#pushStatus();
     return promise.then((r) => r.behavior);
   }
@@ -303,10 +303,16 @@ export class Session {
 
     if (p.browser) {
       // allow: this chat. always: this site from now on (eval: this host, this chat — never standing).
-      const { host, action } = p.browser;
+      const { host, action, level } = p.browser;
       if (decision !== "deny") {
-        if (action === "eval") { if (decision === "always") this.#evalGrants.add(host); }
-        else { this.#hostGrants.add(host); if (decision === "always") this.#deps.browserAllow?.add(host); }
+        // eval's per-call card on an already act-allowed site grants only eval; otherwise the level
+        if (action === "eval" && this.#browserPolicy.allowed(host, "act")) { if (decision === "always") this.#evalGrants.add(host); }
+        else {
+          const cur = this.#hostGrants.get(host);
+          if (!cur || !levelCovers(cur, level)) this.#hostGrants.set(host, level);
+          if (decision === "always") this.#deps.browserAllow?.add(host, level);
+          if (action === "eval" && decision === "always") this.#evalGrants.add(host);
+        }
         p.resolve({ behavior: "allow" });
       } else p.resolve({ behavior: "deny", message: "declined" });
       this.#emit({ kind: "approval_closed", id, decision });

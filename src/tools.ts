@@ -7,7 +7,7 @@ import type { Shell } from "./shell.js";
 import { SHOT_DIR, pruneScreenshots } from "./screenshots.js";
 import type { WatchRegistry, WatchCondition } from "./watches.js";
 import type { PromptStore } from "./prompts.js";
-import { hostOfUrl } from "./browser-allow.js";
+import { hostOfUrl, type Level } from "./browser-allow.js";
 import { extractPdfText, looksLikePdf } from "./pdf.js";
 
 const text = (v: unknown) => ({
@@ -233,9 +233,10 @@ export function promptTools(prompts: PromptStore) {
  * deployment that opts out) everything is allowed, as before.
  */
 export type BrowserPolicy = {
-  allowed(host: string): boolean;
-  /** action: the tool name; detail: e.g. the code for eval. */
-  ask(host: string, action: string, detail?: string): Promise<"allow" | "deny">;
+  /** Allowed at this level? `act` covers `read`. */
+  allowed(host: string, level: Level): boolean;
+  /** action: the tool name; detail: e.g. the code for eval; level: what the action needs. */
+  ask(host: string, action: string, detail: string | undefined, level: Level): Promise<"allow" | "deny">;
   /** eval is gated per call unless the user granted it on this host for this chat. */
   evalAllowed(host: string): boolean;
 };
@@ -276,12 +277,15 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     const t = (await bridge.send("tab_url", { tabId: id }, prefer())) as { url?: string };
     return hostOfUrl(t?.url);
   };
-  /** Refuse, or ask, before touching a site that is not on the list. */
+  /** What each tool needs: looking, or changing. */
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act" };
+  /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
     if (!host) throw new Error(`browser.${action}: the tab has no readable URL (a chrome:// or restricted page); nothing to do here.`);
-    if (policy.allowed(host)) return;
-    const answer = await policy.ask(host, action, detail);
+    const level = LEVEL[action] ?? "act";
+    if (policy.allowed(host, level)) return;
+    const answer = await policy.ask(host, action, detail, level);
     if (answer !== "allow") throw new Error(`browser.${action} on ${host}: the user did not allow it. Do not retry; ask what to do instead.`);
   };
   const gated = <A extends { tabId?: number }>(action: string, run: (a: A) => Promise<unknown>) =>
@@ -297,7 +301,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           if (!policy) return text(tabs);
           return text(tabs.map((t) => {
             const host = hostOfUrl(t.url);
-            return policy.allowed(host) ? t : { id: t.id, host, active: t.active, windowId: t.windowId, allowed: false };
+            return policy.allowed(host, "read") ? t : { id: t.id, host, active: t.active, windowId: t.windowId, allowed: false };
           }));
         }),
 
@@ -353,7 +357,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           const host = policy ? await hostFor(a.tabId) : "";
           await ensure(host, "eval", a.code);
           if (policy && !policy.evalAllowed(host)) {
-            const answer = await policy.ask(host, "eval", a.code);
+            const answer = await policy.ask(host, "eval", a.code, "act");
             if (answer !== "allow") throw new Error(`browser.eval on ${host}: the user did not allow it. Do not retry; ask what to do instead.`);
           }
           return text(await bridge.send("eval", a, prefer()));

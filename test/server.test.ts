@@ -136,10 +136,14 @@ describe("/chats/search and export", () => {
 
 describe("/browser-allow", () => {
   test("lists the seed, adds and removes, refuses junk; the setup page counts it", async () => {
-    assert.deepEqual((await s.json("/browser-allow")).body, { gated: true, hosts: ["allowed.example"] });
-    assert.equal((await s.post("/browser-allow", { host: "https://Docs.Example.com/x" })).body!.added, true);
+    assert.deepEqual((await s.json("/browser-allow")).body, { gated: true, hosts: [{ host: "allowed.example", level: "act" }] });
+    assert.equal((await s.post("/browser-allow", { host: "https://Docs.Example.com/x", level: "read" })).body!.added, true);
     assert.equal((await s.post("/browser-allow", { host: "bad host" })).status, 400);
-    assert.deepEqual((await s.json("/browser-allow")).body!.hosts, ["allowed.example", "docs.example.com"]);
+    assert.equal((await s.post("/browser-allow", { host: "docs.example.com", level: "root" })).status, 400);
+    assert.deepEqual((await s.json("/browser-allow")).body!.hosts, [{ host: "allowed.example", level: "act" }, { host: "docs.example.com", level: "read" }]);
+    assert.equal((await s.post("/browser-allow", { host: "docs.example.com", level: "act" })).body!.added, true, "raised");
+    assert.equal((await s.post("/browser-allow", { host: "docs.example.com", level: "read" })).body!.added, true, "lowered via set");
+    assert.deepEqual(((await s.json("/browser-allow")).body!.hosts as { level: string }[])[1].level, "read");
     assert.equal((await s.json("/browser-allow/docs.example.com", { method: "DELETE" })).body!.removed, true);
     assert.equal((await s.json("/browser-allow/docs.example.com", { method: "DELETE" })).body!.removed, false);
     assert.match(((await s.json("/setup")).body!.checks as Record<string, { text: string }>).browser.text, /1 site allowed without asking/);
