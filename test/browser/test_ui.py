@@ -953,3 +953,47 @@ def test_extension_fills_forms(playwright):
         assert page.evaluate("() => [f.country.value, f.gift.checked]") == ["be", False]
     finally:
         ctx.close(); srv.shutdown()
+
+
+def test_extension_uploads_files(playwright):
+    """The real extension: bytes sent to the worker become a File in the
+    page's <input type=file>; the change handler sees name, size, type and
+    content; append keeps earlier files on a multiple input; a non-file
+    input is refused."""
+    import base64, tempfile, threading, http.server, socketserver
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    html = b"""<input type=file id=one accept=".pdf"><input type=file id=many multiple><input type=text id=txt>
+      <script>window.seen = []; for (const id of ['one','many']) document.getElementById(id).addEventListener('change', async (e) => {
+        for (const f of e.target.files) seen.push({ id, name: f.name, size: f.size, type: f.type, head: await f.slice(0, 8).text() }); });</script>"""
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp(prefix="ct-up-prof-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p).then(r => ({ok:true, r}), e => ({ok:false, e:String(e && e.message || e)}))", [action, params])
+    b64 = lambda b: base64.b64encode(b).decode()
+    try:
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        r = call(sw, "upload", {"tabId": tab, "selector": "#one", "name": "inv.pdf", "mime": "application/pdf", "data": b64(b"%PDF-1.4 fake")})
+        assert r["ok"] and r["r"]["uploaded"] == "inv.pdf" and r["r"]["bytes"] == 13 and r["r"]["accept"] == ".pdf", r
+        r = call(sw, "upload", {"tabId": tab, "selector": "#many", "name": "a.png", "mime": "image/png", "data": b64(b"\x89PNG\r\n\x1a\n1234")})
+        r = call(sw, "upload", {"tabId": tab, "selector": "#many", "name": "b.png", "mime": "image/png", "data": b64(b"\x89PNG\r\n\x1a\n5678"), "append": True})
+        assert r["r"]["files"] == ["a.png", "b.png"] and r["r"]["multiple"] is True, r
+        r = call(sw, "upload", {"tabId": tab, "selector": "#many", "name": "c.png", "mime": "image/png", "data": b64(b"x")})
+        assert r["r"]["files"] == ["c.png"], "without append the choice is replaced"
+        time.sleep(0.3)
+        seen = page.evaluate("() => window.seen")
+        assert seen[0] == {"id": "one", "name": "inv.pdf", "size": 13, "type": "application/pdf", "head": "%PDF-1.4"}, seen
+        assert [s["name"] for s in seen if s["id"] == "many"] == ["a.png", "a.png", "b.png", "c.png"], seen
+        assert page.evaluate("() => document.getElementById('one').files[0].name") == "inv.pdf"
+        r = call(sw, "upload", {"tabId": tab, "selector": "#txt", "name": "x", "mime": "text/plain", "data": b64(b"x")})
+        assert r["ok"] is False and "not a file input: input[type=text]" in r["e"], r
+        r = call(sw, "click", {"tabId": tab, "selector": "#nothing-here"})
+        assert r["ok"] is False and "element not found: #nothing-here" in r["e"], "a page-side miss is an error, not a null result"
+    finally:
+        ctx.close(); srv.shutdown()

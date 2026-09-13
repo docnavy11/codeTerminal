@@ -267,6 +267,28 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("upload: reads the file under the files root, ships name/mime/base64 to the extension, is act-level; outside the root, too big, or without a target it refuses", async () => {
+    const { mkdtemp, writeFile: wf, mkdir: md } = await import("node:fs/promises");
+    const root = await mkdtemp(join(tmpdir(), "ct-up-")); await md(join(root, "downloads"));
+    await wf(join(root, "downloads", "inv.pdf"), Buffer.from("%PDF-1.4 fake"));
+    await wf(join(root, "big.bin"), Buffer.alloc(10 * 1024 * 1024 + 1));
+    const asks: string[] = []; const seen: Record<string, unknown>[] = [];
+    const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://portal.example/claims", title: "Claims" }), upload: (p) => { seen.push(p); return { uploaded: p.name, bytes: 13, files: [p.name], multiple: false }; } });
+    const srv = browserTools(bridge, () => undefined, undefined, policy, undefined, root);
+    const r = JSON.parse(await call(srv, "upload", { tabId: 1, ref: "f3", path: "downloads/inv.pdf" }));
+    assert.deepEqual(asks, ["upload:act"]);
+    assert.equal(seen[0].name, "inv.pdf"); assert.equal(seen[0].mime, "application/pdf"); assert.equal(seen[0].data, Buffer.from("%PDF-1.4 fake").toString("base64")); assert.equal(seen[0].ref, "f3");
+    assert.equal(r.uploaded, "inv.pdf"); assert.equal(r.path, "downloads/inv.pdf"); assert.deepEqual(r.at, { host: "portal.example", title: "Claims" });
+    await assert.rejects(call(srv, "upload", { tabId: 1, ref: "f3", path: "../../etc/passwd" }), /outside|escape|not allowed|root/i);
+    await assert.rejects(call(srv, "upload", { tabId: 1, ref: "f3", path: "big.bin" }), /at most 10 MB/);
+    await assert.rejects(call(srv, "upload", { tabId: 1, path: "downloads/inv.pdf" }), /needs a ref or a selector/);
+    await assert.rejects(call(srv, "upload", { tabId: 1, ref: "f3", path: "downloads/nope.pdf" }), /ENOENT|no such/i);
+    assert.equal(seen.length, 1, "none of the refusals reached the extension");
+    const noRoot = browserTools(bridge, () => undefined);
+    await assert.rejects(call(noRoot, "upload", { ref: "f3", path: "x" }), /not available here/);
+  });
+
   test("browser_batch: read-only steps in order with one read-level gate; a failure is recorded and the rest run; act tools are refused up front", async () => {
     const asks: string[] = []; const calls: string[] = [];
     const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 0, 0, 13]), Buffer.from("IHDR"), Buffer.from([0, 0, 0, 5, 0, 0, 0, 7]), Buffer.alloc(9)]);

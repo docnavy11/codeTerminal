@@ -48,7 +48,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 | 12 | **`handle_dialog`** — detect a blocking `alert`/`confirm`/`prompt`, surface it, accept or dismiss. | A JavaScript dialog blocks every other command; Claude Code's docs list it as the top "browser not responding" cause. We hang the same way. | ☑ |
 | 13 | **`browser_batch`** — a list of read-only actions as one tool call. | Directly cuts the round-trip count in a spiral; read-only, so no extra gating. | ☑ |
 | 14 | **Console and network readers** (read-only). | The "test my local web app" workflow Claude Code's docs lead with. | ☐ |
-| 15 | **File upload** from the files root into an `<input type=file>`. | Data entry that ends in an attachment; cap at 10 MB like Claude Code. | ☐ |
+| 15 | **File upload** from the files root into an `<input type=file>`. | Data entry that ends in an attachment; cap at 10 MB like Claude Code. | ☑ |
 
 ## Reuse
 
@@ -103,6 +103,18 @@ landed on /one, so `back`/`forward` use the debugger session (attached
 anyway for act-level calls) and fall back to `history.go()` in the page.
 A `back` issued while a navigation is still in flight would step over the
 page just asked for; the worker waits for the tab to finish loading first.
+
+## Upload (#15) and a finding about page errors, 2026-09-13
+
+Real Chromium (`test_extension_uploads_files`): bytes sent to the worker
+become a `File` in the input via `DataTransfer`; the page's change handler
+sees name, size, type and content; `append` keeps earlier files on a
+`multiple` input; a text input is refused. Found on the way: **a function
+that throws inside `chrome.scripting.executeScript` comes back as
+`result: null` and nothing else** (Chromium 145, MAIN and isolated world),
+so `click` on a missing element had been returning `null` rather than
+"element not found". Page functions now return `{ __err }` and the worker
+rethrows it; the test asserts the click miss is an error.
 
 ## Measured basis
 

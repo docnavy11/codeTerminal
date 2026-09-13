@@ -1,7 +1,14 @@
 import { mkdir, writeFile, chmod, access } from "node:fs/promises";
 import { join, basename, extname, resolve as resolvePath, dirname as dirOf } from "node:path";
 import { stat as statAsync } from "node:fs/promises";
-import { safePath, toRel } from "./files.js";
+import { safePath, toRel, statFile } from "./files.js";
+import { readFile } from "node:fs/promises";
+
+const UPLOAD_MAX = 10 * 1024 * 1024;
+const MIME: Record<string, string> = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
+  txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json", xml: "application/xml", html: "text/html", zip: "application/zip",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", mp4: "video/mp4", mp3: "audio/mpeg" };
+export const mimeOf = (name: string) => MIME[extname(name).slice(1).toLowerCase()] ?? "application/octet-stream";
 import type { ClientEvent } from "./protocol.js";
 import { z } from "zod";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
@@ -271,7 +278,7 @@ export type BrowserPolicy = {
   evalAllowed(host: string): boolean;
 };
 
-export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined, budget?: () => { screenshots: number; maxScreenshots: number }, policy?: BrowserPolicy, getCwd?: () => string) {
+export function browserTools(bridge: BrowserBridge, prefer: () => string | undefined, budget?: () => { screenshots: number; maxScreenshots: number }, policy?: BrowserPolicy, getCwd?: () => string, filesRoot?: string) {
   const tabId = z.number().int().optional().describe("Target tab id; omit for the active tab");
 
   /**
@@ -325,7 +332,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", upload: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -504,6 +511,20 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
       tool("press", "Send a key to the focused element (Enter, Tab, Escape, ArrowDown, …).",
         { tabId, key: z.string() },
         gated("press", (a) => bridge.send("press", a, prefer()))),
+
+      tool("upload",
+        "Put a file from the files root into an <input type=file> (ref from read_page forms/snapshot, or a selector), as if picked in the file dialog; the page's change handler runs. Up to 10 MB. Does not submit.",
+        { tabId, ref: z.string().optional(), selector: z.string().optional(), path: z.string().describe("Path under the files root, e.g. downloads/invoice.pdf"),
+          append: z.boolean().optional().describe("Keep files already chosen (multiple inputs only)") },
+        gated("upload", async (a) => {
+          if (!filesRoot) throw new Error("upload is not available here (no files root)");
+          if (!a.ref && !a.selector) throw new Error("upload needs a ref or a selector");
+          const f = await statFile(filesRoot, a.path);
+          if (f.size > UPLOAD_MAX) throw new Error(`${f.name} is ${(f.size / 1048576).toFixed(1)} MB; upload takes at most ${UPLOAD_MAX / 1048576} MB`);
+          const data = (await readFile(f.abs)).toString("base64");
+          const r = await bridge.send("upload", { tabId: a.tabId, ref: a.ref, selector: a.selector, name: f.name, mime: mimeOf(f.name), data, append: a.append }, prefer()) as Record<string, unknown>;
+          return { ...r, path: a.path };
+        })),
 
       tool("download",
         "Save what a tab shows (or a URL) as a file in the working directory's downloads/ folder, fetched with the browser's own cookies — a PDF, an image, an export. Returns the path; open it with Read.",

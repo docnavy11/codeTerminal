@@ -446,6 +446,10 @@ async function run(tabId, fn, args = []) {
   if (dialogs.has(tabId)) throw dialogError(tabId);
   const [res] = await withGrace(tabId, chrome.scripting.executeScript({ target: { tabId }, func: fn, args, world: "MAIN" }));
   if (!res) throw new Error("script did not run (restricted page?)");
+  // A throw inside the page comes back as result null, nothing else
+  // (measured on Chromium 145, MAIN and isolated world alike). So page
+  // functions return { __err } instead of throwing, and it is rethrown here.
+  if (res.result && typeof res.result === "object" && "__err" in res.result) throw new Error(res.result.__err);
   return res.result;
 }
 
@@ -679,7 +683,7 @@ async function handle(action, p) {
       await ensureDebugger(t.id);
       return await run(t.id, (ref, selector) => {
         const el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : document.querySelector(selector);
-        if (!el) throw new Error("element not found: " + (ref || selector));
+        if (!el) return { __err: "element not found: " + (ref || selector) };
         el.scrollIntoView({ block: "center" });
         el.click();
         return { clicked: el.tagName.toLowerCase(), text: (el.innerText || "").trim().slice(0, 60) };
@@ -693,6 +697,30 @@ async function handle(action, p) {
       const r = await run(t.id, (f) => globalThis.ctSetField(f), [{ ref: p.ref ?? null, selector: p.selector ?? null, value: p.value }]);
       if (!r.ok) throw new Error(`${r.error}: ${r.field}${r.options ? ` (options: ${r.options.join(", ")})` : ""}`);
       return { filled: r.field, ...(r.length != null ? { length: r.length } : {}), ...(r.set != null ? { set: r.set } : {}) };
+    }
+
+    // Put a file into an <input type=file>: the bytes come from the server
+    // (the browser may be on another machine, so no local path), become a
+    // File in the page, and go in through a DataTransfer — the one way a
+    // script may set input.files. change/input fire like a picker would.
+    case "upload": {
+      const t = await resolveTab(p.tabId);
+      await ensureDebugger(t.id);
+      return await run(t.id, (ref, selector, name, mime, b64, append) => {
+        const el = ref ? document.querySelector(`[data-ct-ref="${ref}"]`) : document.querySelector(selector);
+        if (!el) return { __err: "element not found: " + (ref || selector) };
+        if (!(el instanceof HTMLInputElement) || el.type !== "file") return { __err: `not a file input: ${el.tagName.toLowerCase()}${el.type ? `[type=${el.type}]` : ""}` };
+        const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const file = new File([bytes], name, { type: mime });
+        const dt = new DataTransfer();
+        if (append && el.multiple) for (const f of el.files) dt.items.add(f);
+        dt.items.add(file);
+        el.files = dt.files;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return { uploaded: name, bytes: bytes.length, files: [...el.files].map((f) => f.name), multiple: el.multiple, accept: el.accept || undefined };
+      }, [p.ref ?? null, p.selector ?? null, p.name, p.mime, p.data, !!p.append]);
     }
 
     // Several fields in one call; misses are reported, not fatal.

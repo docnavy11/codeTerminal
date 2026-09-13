@@ -686,6 +686,17 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**`upload`.** Put a file from the files root into an `<input type=file>`:
+`upload {ref | selector, path: "downloads/invoice.pdf"}`. The bytes travel
+from the server to the extension (the browser may be on another machine,
+so no local path is used), become a `File` in the page and go in through a
+`DataTransfer`, the one way a script may set `input.files`; the page's
+change handler runs as if you had picked it. Act-level, 10 MB at most,
+only files under the files root, never submits; `append` keeps files
+already chosen on a `multiple` input. The result lists what the input now
+holds and its `accept` rule, so a wrong type shows up before the submit.
+Measured in real Chromium (`test_extension_uploads_files`).
+
 **`browser_batch`.** A list of read-only steps on one tab in one call:
 `steps: [{tool: "find", args: {text: "Invoice"}}, {tool: "scroll", args:
 {to: "bottom"}}, {tool: "read_page", args: {mode: "tables"}}, {tool:

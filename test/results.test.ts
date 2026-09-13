@@ -138,3 +138,11 @@ describe("browser_batch summary", () => {
     assert.equal(sum({ steps: 1, failed: 0, results: [{ tool: "screenshot", ok: true }] }), "1 step · screenshot");
   });
 });
+
+describe("upload summary", () => {
+  test("name, size, and how many files the input holds", () => {
+    const sum = (o: unknown) => summariseResult("mcp__browser__upload", { tool_use_id: "t", content: JSON.stringify(o) }, undefined).summary;
+    assert.equal(sum({ uploaded: "inv.pdf", bytes: 2048, files: ["inv.pdf"] }), "uploaded inv.pdf · 2 KB");
+    assert.equal(sum({ uploaded: "b.png", bytes: 10, files: ["a.png", "b.png"] }), "uploaded b.png · 10 B · 2 files chosen");
+  });
+});
