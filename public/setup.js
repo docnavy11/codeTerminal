@@ -29,7 +29,7 @@ async function load() {
     ? `Ready — code terminal ${s.version}, ${s.mode} mode, ${s.chats} chat${s.chats === 1 ? "" : "s"}.`
     : "Something needs fixing before this works — see the red item.";
 
-  const order = ["node", "login", "tools", "network", "extension", "mobile", "service", "paths", "permissions"];
+  const order = ["node", "login", "tools", "network", "extension", "schedules", "mobile", "service", "paths", "permissions"];
   const box = $("checks"); box.replaceChildren();
   for (const k of order) {
     const c = s.checks[k]; if (!c) continue;

@@ -1157,3 +1157,35 @@ def test_server_browser_live_view(page, server):
     t0 = time.time()
     while time.time() - t0 < 10 and "server-browser" in connected(): time.sleep(0.2)
     assert "server-browser" not in connected()
+
+
+def test_schedules_tab_create_run_now(page, server):
+    """The manage page's Schedules tab: the form previews the next times in
+    words, Create lists the schedule, Run now runs it (the fixture SDK
+    answers), and the row shows the outcome, cost and the reply's first
+    line with a link to the run's chat; the chat's transcript can be opened."""
+    page.goto(server.base + "/manage.html"); page.click("nav button[data-tab=schedules]")
+    page.wait_for_selector("#schedules button:text-is('New schedule')", timeout=5000)
+    page.click("#schedules button:text-is('New schedule')")
+    page.fill("#sf-title", "Morning check"); page.fill("#sf-text", "hello scheduler")
+    page.fill("#sf-when", "weekdays at 07:30"); page.fill("#sf-tz", "Europe/Brussels")
+    page.wait_for_function("() => /weekdays at 07:30 — next:/.test(document.getElementById('sf-preview').textContent)", timeout=5000)
+    page.fill("#sf-when", "nonsense")
+    page.wait_for_function("() => document.getElementById('sf-preview').classList.contains('bad')", timeout=5000)
+    page.fill("#sf-when", "every day at 08:00")
+    page.select_option("#sf-browser", "auto")
+    page.click("form.sched-form button[type=submit]")
+    page.wait_for_selector(".sched", timeout=5000)
+    assert page.text_content(".sched .top b") == "Morning check"
+    assert "every day at 08:00 (Europe/Brussels)" in page.text_content(".sched .when")
+    page.click(".sched button:text-is('Run now')")
+    page.wait_for_function("() => document.querySelector('.sched .last .o.done')", timeout=15000)
+    last = page.text_content(".sched .last")
+    assert "You said: hello scheduler" in last and "$0.00" in last, last
+    # the row's "open chat" link lands the web UI on the run's chat (a ?chat= link)
+    href = page.get_attribute(".sched .last a", "href")
+    chat = page.context.new_page(); chat.goto(server.base + href); chat.wait_for_selector("#log .msg.user", timeout=10000)
+    assert "hello scheduler" in chat.text_content("#log .msg.user")
+    chat.close()
+    page.click(".sched button:text-is('Pause')"); page.wait_for_selector(".sched.paused", timeout=5000)
+    page.click(".sched button:text-is('Resume')"); page.wait_for_selector(".sched:not(.paused)", timeout=5000)

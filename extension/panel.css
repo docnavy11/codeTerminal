@@ -320,6 +320,11 @@
   .card .diff .l.add { color:var(--ok); background:color-mix(in srgb, var(--ok) 12%, transparent); }
   .card .diff .l.del { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, transparent); }
   .card .diff .l.hunk { color:var(--dim); font-style:italic; opacity:0.8; }
+  #schedbar { flex-shrink:0; }
+  #schedbar .sb { display:flex; align-items:center; gap:8px; padding:6px 10px; font-size:0.85rem; background:var(--panel); border-bottom:1px solid var(--line); border-left:3px solid var(--accent); }
+  #schedbar .sb.done { border-left-color:var(--ok); } #schedbar .sb.failed, #schedbar .sb.missed { border-left-color:var(--bad); } #schedbar .sb.needed-you, #schedbar .sb.stopped { border-left-color:var(--warn); }
+  #schedbar .sb span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #schedbar .sb button { font-size:0.8rem; padding:1px 7px; }
   .card.submit { border-left-color:var(--bad); }
   .card.submit h4 { color:var(--bad); }
   .card.site { border-left-color:var(--accent); }

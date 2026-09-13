@@ -843,6 +843,53 @@ If that browser has closed, a browser tool **fails and says so** rather than
 falling back to another open browser — acting in the wrong browser silently is
 worse than not acting.
 
+## Scheduled prompts
+
+A prepared prompt runs by itself at the times you set — "every day at
+08:00", "weekdays at 07:30", "every monday at 9", "every 6 hours", or a
+cron line — in a chat of its own, in the server browser unless you say
+otherwise, and leaves you the result. Set it up on the manage page's
+**Schedules** tab: what (a prepared prompt or typed text; the text is
+stored with the schedule unless you tick "always use the prepared prompt's
+current text"), when (in your time zone, the next three times previewed),
+where (project, browser, mode, model), and the guard rails (budget per run,
+how long to wait for a person, maximum run time, runs to keep). **Run now**
+tries it before you trust it to 08:00.
+
+**Each run is an ordinary chat**, named "Search for jobs · 2026-09-14
+08:00", in the chat list under its project: open it, watch it, stop it,
+type into it. The row on the Schedules tab shows the last run's outcome,
+duration, cost, the reply's first line, files it offered, with links; older
+runs below it. When a run ends, every open client gets a strip above the
+transcript with the same line and an **open** button, and the extension
+shows a notification.
+
+**Nobody is there**, so the rules are fixed and shown on the form:
+
+- The site gate uses the standing allow list only. A site not on it is a
+  refusal, not a card; the row says "needed: jobsite.example (act)" so you
+  can add it on the Browser sites tab and run again.
+- Every other card — confirm-before-submit, eval, a question from Claude —
+  is shown as usual (for anyone watching), and answered "no" after the wait
+  (default 2 minutes); the row says which ones. Such a run's outcome is
+  **needed you**.
+- The per-run budget is the SDK's cost ceiling for that chat; the run stops
+  past it. The maximum run time interrupts the turn.
+
+**It deliberately does not** run two copies at once (the second is recorded
+as skipped), catch up on times missed while the server was down (recorded
+as missed — "Run now" is there for that), retry, or chain schedules. Run
+chats beyond "runs to keep" are deleted by the schedule itself, unless you
+renamed one. The scheduler ticks every 30 s inside the server; the setup
+page shows how many schedules exist and the next time. Storage is
+`schedules.json` beside `prompts.json`. Design notes:
+[docs/design-scheduled-prompts.md](docs/design-scheduled-prompts.md);
+measured in `test/schedule.test.ts` (words, cron, next-run across the
+Brussels DST switches, the store, the scheduler's due/skip/miss/pause
+rules), `test/schedule-run.test.ts` (a run through the server with a
+scripted SDK: naming, outcome, cost, summary, the unattended answers,
+pruning) and the browser suite (the tab end to end).
+
 ## Chats
 
 Conversations are kept as one JSON file each under `chats/`, listed newest

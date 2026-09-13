@@ -120,7 +120,7 @@ globalThis.PLATFORM = {
   async instanceId() { return null; },
   openUrl(url) { location.href = url; },
   /* Per tab: sessionStorage, so two tabs keep two chats and a reload keeps this one. */
-  async recallChat() { try { return sessionStorage.getItem("ct.chat"); } catch { return null; } },
+  async recallChat() { try { const q = new URLSearchParams(location.search).get("chat"); if (q) { history.replaceState(null, "", location.pathname); return q; } return sessionStorage.getItem("ct.chat"); } catch { return null; } },
   async rememberChat(id) { try { sessionStorage.setItem("ct.chat", id); } catch {} },
   tabLabel(on) { return on ? "desktop tab" : "tab off"; },
   tabTitle: "Attach your desktop browser's active tab to each prompt",

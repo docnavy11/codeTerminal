@@ -1,6 +1,6 @@
 # Scheduled prompts — design
 
-Status: design, 2026-09-13. Nothing built yet.
+Status: built 2026-09-13 (README "Scheduled prompts"); this is the design it was built from.
 
 ## What it is, in one sentence
 

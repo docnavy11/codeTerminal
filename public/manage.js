@@ -381,12 +381,106 @@ async function loadServer() {
   }
 }
 
+/* ---------------- schedules ---------------- */
+/* A prepared prompt that runs by itself: what, when (in words), where
+   (project, browser), and what happened last time. Design:
+   docs/design-scheduled-prompts.md. */
+const fmtWhen = (ms, tz) => { try { return new Date(ms).toLocaleString(undefined, { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return new Date(ms).toISOString(); } };
+let schedData = null;
+async function loadSchedules() {
+  schedData = await api("/schedules");
+  const host = $("schedules"); host.replaceChildren();
+  const p = document.createElement("p"); p.className = "hint";
+  p.textContent = "A prepared prompt runs by itself at the times you set, in a chat of its own, in the server browser unless you say otherwise. Nobody answers cards during a run: a site not on the allowed list is refused and recorded; any other card is answered “no” after the wait. Every run is a chat in the list, named after the schedule and the time.";
+  host.append(p);
+  const add = document.createElement("button"); add.textContent = "New schedule"; add.onclick = () => schedForm(null);
+  host.append(add);
+  const formHost = document.createElement("div"); formHost.id = "schedform"; host.append(formHost);
+  if (!schedData.schedules.length) { const e = document.createElement("p"); e.className = "hint"; e.textContent = "No schedules yet."; host.append(e); }
+  for (const s of schedData.schedules) host.append(schedCard(s));
+}
+function schedCard(s) {
+  const card = document.createElement("div"); card.className = "sched" + (s.paused ? " paused" : "");
+  const top = document.createElement("div"); top.className = "top";
+  const b = document.createElement("b"); b.textContent = s.title;
+  const when = document.createElement("span"); when.className = "when";
+  when.textContent = `${s.words} (${s.when.tz})${s.paused ? " · paused" : s.nextAt ? ` · next ${fmtWhen(s.nextAt, s.when.tz)}` : ""} · ${s.browser === "server" ? "server browser" : "any browser"} · ${s.project}`;
+  const sp = document.createElement("span"); sp.className = "sp";
+  const run = document.createElement("button"); run.textContent = s.running ? "Running…" : "Run now"; run.disabled = !!s.running;
+  run.onclick = async () => { run.disabled = true; try { await api(`/schedules/${s.id}/run`, { method: "POST" }); } catch (e) { show(e.message); } setTimeout(loadSchedules, 400); };
+  const pause = document.createElement("button"); pause.textContent = s.paused ? "Resume" : "Pause";
+  pause.onclick = async () => { try { await api(`/schedules/${s.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused: !s.paused }) }); } catch (e) { show(e.message); } loadSchedules(); };
+  const ed = document.createElement("button"); ed.textContent = "Edit"; ed.onclick = () => schedForm(s);
+  const rm = document.createElement("button"); rm.textContent = "Delete"; rm.className = "danger";
+  rm.onclick = async () => { if (!confirm(`Delete the schedule "${s.title}"? Its run chats stay.`)) return; try { await api(`/schedules/${s.id}`, { method: "DELETE" }); } catch (e) { show(e.message); } loadSchedules(); };
+  top.append(b, when, sp, run, pause, ed, rm); card.append(top);
+  const last = s.runs[0];
+  if (last) {
+    const l = document.createElement("div"); l.className = "last";
+    const o = document.createElement("span"); o.className = "o " + last.outcome; o.textContent = last.outcome.replace("-", " ");
+    l.append(o, document.createTextNode(`${fmtWhen(last.startedAt, s.when.tz)}${last.endedAt && last.outcome !== "running" ? ` · ${Math.round((last.endedAt - last.startedAt) / 1000)}s` : ""}${last.costUsd != null ? ` · $${last.costUsd.toFixed(2)}` : ""} — ${last.summary || ""} `));
+    if (last.chatId) { const a = document.createElement("a"); a.href = `/?chat=${encodeURIComponent(last.chatId)}`; a.textContent = "open chat"; l.append(a); }
+    for (const f of last.files) { const a = document.createElement("a"); a.href = `/files/read?path=${encodeURIComponent(f)}`; a.textContent = ` ${f.split("/").pop()}`; a.style.marginLeft = "8px"; l.append(a); }
+    if (last.needed.length) { const n = document.createElement("div"); n.className = "hint"; n.textContent = "needed: " + last.needed.join(", ") + " — add on the Browser sites tab and run again"; l.append(n); }
+    if (last.cards.length) { const n = document.createElement("div"); n.className = "hint"; n.textContent = "answered “no” for you: " + last.cards.join(", "); l.append(n); }
+    card.append(l);
+    if (s.runs.length > 1) {
+      const ul = document.createElement("ul"); ul.className = "runs";
+      for (const r of s.runs.slice(1, 8)) { const li = document.createElement("li"); li.textContent = `${fmtWhen(r.startedAt, s.when.tz)} · ${r.outcome}${r.costUsd != null ? ` · $${r.costUsd.toFixed(2)}` : ""} — ${r.summary}`; ul.append(li); }
+      card.append(ul);
+    }
+  }
+  return card;
+}
+function schedForm(s) {
+  const host = $("schedform"); host.replaceChildren();
+  const f = document.createElement("form"); f.className = "sched-form";
+  const tz = s?.when.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const row = (label, el, full) => { const l = document.createElement("label"); l.textContent = label; if (full) { l.className = "full"; el.classList.add("full"); } f.append(l, el); return el; };
+  const title = row("Title", Object.assign(document.createElement("input"), { value: s?.title || "", placeholder: "Search for jobs", id: "sf-title" }));
+  const pick = document.createElement("select"); pick.id = "sf-prompt";
+  pick.append(new Option("— type the prompt below —", ""));
+  for (const p of schedData.prompts) pick.append(new Option(p.title, p.id));
+  pick.value = s?.promptId || ""; row("Prepared prompt", pick);
+  const text = row("Prompt", Object.assign(document.createElement("textarea"), { value: s?.prompt || "", id: "sf-text", placeholder: "What to do, as you would type it in a chat" }), true);
+  pick.onchange = async () => { if (!pick.value) return; const all = await api("/prompts"); const p = (all.all || []).find((x) => x.id === pick.value); if (p) { text.value = p.text; if (!title.value) title.value = p.title; } };
+  const latest = document.createElement("label"); const latestCb = document.createElement("input"); latestCb.type = "checkbox"; latestCb.checked = !!s?.useLatest; latestCb.id = "sf-latest";
+  latest.append(latestCb, document.createTextNode(" always use the prepared prompt's current text")); latest.className = "full"; f.append(latest);
+  const when = row("When", Object.assign(document.createElement("input"), { value: s?.when.text || "every day at 08:00", id: "sf-when", placeholder: "every day at 08:00 · weekdays at 07:30 · every monday at 9 · every 6 hours · 30 7 * * 1-5" }));
+  const tzIn = row("Time zone", Object.assign(document.createElement("input"), { value: tz, id: "sf-tz" }));
+  const preview = document.createElement("div"); preview.className = "preview"; preview.id = "sf-preview"; f.append(preview);
+  const showPreview = async () => { try { const r = await api(`/schedules/preview?when=${encodeURIComponent(when.value)}&tz=${encodeURIComponent(tzIn.value)}`); preview.className = "preview"; preview.textContent = `${r.words} — next: ${r.next.map((n) => fmtWhen(Date.parse(n), tzIn.value)).join(", ")}`; } catch (e) { preview.className = "preview bad"; preview.textContent = e.message; } };
+  when.oninput = tzIn.oninput = () => { clearTimeout(f._t); f._t = setTimeout(showPreview, 300); }; showPreview();
+  const proj = document.createElement("select"); proj.id = "sf-project"; for (const p of schedData.projects) proj.append(new Option(p.name, p.id)); proj.value = s?.project || "general"; row("Project", proj);
+  const br = document.createElement("select"); br.id = "sf-browser"; br.append(new Option("server browser (runs while your laptop is off)", "server"), new Option("whichever browser is connected", "auto")); br.value = s?.browser || "server"; row("Browser", br);
+  const mode = document.createElement("select"); mode.id = "sf-mode";
+  for (const [v, l] of [["acceptEdits", "Build, auto-accept edits"], ["default", "Build (asks — answered “no” unattended)"], ["auto", "Auto"], ["bypassPermissions", "Never ask"], ["plan", "Plan"]]) mode.append(new Option(l, v));
+  mode.value = s?.mode || "acceptEdits"; row("Mode", mode);
+  const model = row("Model", Object.assign(document.createElement("input"), { value: s?.model || "", id: "sf-model", placeholder: "default" }));
+  const budget = row("Budget per run ($)", Object.assign(document.createElement("input"), { value: s?.budgetUsd ?? "", id: "sf-budget", placeholder: "none", type: "number", step: "0.1", min: "0.01" }));
+  const wait = row("Wait for a person (min)", Object.assign(document.createElement("input"), { value: String((s?.waitMs ?? 120000) / 60000), id: "sf-wait", type: "number", min: "1", max: "60" }));
+  const maxm = row("Max run time (min)", Object.assign(document.createElement("input"), { value: String((s?.maxMs ?? 1800000) / 60000), id: "sf-max", type: "number", min: "1", max: "360" }));
+  const keep = row("Runs to keep", Object.assign(document.createElement("input"), { value: String(s?.keepRuns ?? 10), id: "sf-keep", type: "number", min: "1", max: "100" }));
+  const btns = document.createElement("div"); btns.className = "row";
+  const save = document.createElement("button"); save.type = "submit"; save.textContent = s ? "Save" : "Create";
+  const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel"; cancel.onclick = () => host.replaceChildren();
+  btns.append(save, cancel); f.append(btns);
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { title: title.value, prompt: text.value, promptId: pick.value || undefined, useLatest: latestCb.checked, when: { text: when.value, tz: tzIn.value }, project: proj.value, browser: br.value, mode: mode.value, model: model.value || undefined,
+      budgetUsd: budget.value ? Number(budget.value) : undefined, waitMs: Number(wait.value) * 60000, maxMs: Number(maxm.value) * 60000, keepRuns: Number(keep.value) };
+    try { await api(s ? `/schedules/${s.id}` : "/schedules", { method: s ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); host.replaceChildren(); loadSchedules(); }
+    catch (err) { show(err.message); }
+  };
+  host.append(f); title.focus();
+}
+
 /* ---------------- tabs ---------------- */
-const loaders = { chats: loadChats, prompts: loadPrompts, projects: loadProjects, browser: loadBrowser, server: loadServer };
+const loaders = { chats: loadChats, prompts: loadPrompts, projects: loadProjects, browser: loadBrowser, server: loadServer, schedules: loadSchedules };
 
 function tab(name) {
   for (const b of document.querySelectorAll("nav button")) b.classList.toggle("on", b.dataset.tab === name);
-  for (const id of ["chats", "prompts", "projects", "browser", "server"]) $(id).hidden = id !== name;
+  for (const id of ["chats", "prompts", "projects", "browser", "server", "schedules"]) $(id).hidden = id !== name;
   show("");
   loaders[name]().catch((e) => show(e.message));
 }

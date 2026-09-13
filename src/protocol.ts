@@ -55,6 +55,8 @@ export type ClientEvent =
   | { kind: "models"; models: { value: string; label: string }[] }
   /** Connected browsers (extension instances); server: the headless one on this machine. mine: this client's own, if it is an extension. */
   | { kind: "browsers"; list: { id: string; server: boolean }[] }
+  /** A scheduled run finished (to every client): what, how it went, where to look. */
+  | { kind: "schedule_done"; id: string; title: string; chatId: string | null; outcome: string; summary: string; costUsd: number | null; files: string[] }
   | { kind: "model"; model: string | null }
   | { kind: "commands"; commands: SlashCommand[] }
   | { kind: "local"; text: string }
@@ -110,7 +112,7 @@ function parseImages(v: unknown): PromptImage[] | false {
 /** Every `kind` a client can receive, for the coverage test. */
 export const CLIENT_EVENT_KINDS = [
   "ready", "user", "text", "tool", "tool_result", "approval", "approval_closed", "mode", "commands",
-  "local", "file", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model", "rewind", "browsers",
+  "local", "file", "chats", "cleared", "cwd", "project", "watch", "conversation_reset", "delta", "thinking_delta", "thinking", "task", "task_progress", "models", "model", "rewind", "browsers", "schedule_done",
   "replayed", "status", "question", "turn_end", "error", "ping",
 ] as const satisfies readonly ClientEvent["kind"][];
 

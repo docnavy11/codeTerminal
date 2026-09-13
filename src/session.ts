@@ -71,6 +71,8 @@ export type SessionDeps = {
   confirmSubmit?: boolean;
   /** Server log line for things a person should see in the journal. */
   warn?: (line: string) => void;
+  /** Cost ceiling for this session, overriding CODETERM_MAX_BUDGET_USD (scheduled runs). */
+  maxBudgetUsd?: number;
   /** The browsable root; files under it can be offered as downloads. */
   filesRoot?: string;
   /** The SDK entry point. Tests inject a scripted one; production leaves it unset. */
@@ -199,7 +201,7 @@ export class Session {
         // rewind the working tree to (rewindFiles below).
         enableFileCheckpointing: true,
         allowDangerouslySkipPermissions: ALLOW_BYPASS,
-        ...(MAX_BUDGET_USD ? { maxBudgetUsd: MAX_BUDGET_USD } : {}),
+        ...((d.maxBudgetUsd ?? MAX_BUDGET_USD) ? { maxBudgetUsd: d.maxBudgetUsd ?? MAX_BUDGET_USD } : {}),
         canUseTool: this.#canUseTool,
         ...(resumeId ? { resume: resumeId } : {}),
       },
@@ -248,6 +250,22 @@ export class Session {
     evalAllowed: (host) => this.#evalGrants.has(host),
     ask: (host, action, detail, level) => this.#askBrowser(host, action, detail, level),
   };
+  /* Unattended: a scheduled run with nobody there to answer cards. The site
+     gate refuses instead of asking (recorded as "needed"); every other card
+     is shown as usual and answered "no" after the wait (recorded as a card). */
+  #unattended: { waitMs: number; onEvent: (kind: "needed" | "card", detail: string) => void } | null = null;
+  setUnattended(cfg: { waitMs: number; onEvent: (kind: "needed" | "card", detail: string) => void } | null): void { this.#unattended = cfg; }
+  get unattended(): boolean { return this.#unattended !== null; }
+  #autoDeny(id: string, what: string): void {
+    const u = this.#unattended; if (!u) return;
+    const t = setTimeout(() => {
+      if (!this.#pending.has(id)) return;
+      u.onEvent("card", what);
+      this.decide(id, "deny");
+    }, u.waitMs);
+    t.unref?.();
+  }
+
   /** A form is about to be submitted with filled fields: show it, wait for the answer. */
   #askSubmit(detail: SubmitDetail): Promise<boolean> {
     const id = randomUUID();
@@ -255,10 +273,17 @@ export class Session {
     this.#pending.set(id, { resolve, tool: "submit", suggestions: [], submit: detail });
     this.#emit({ kind: "approval", id, tool: "submit", input: detail, canAlways: false });
     this.#pushStatus();
+    this.#autoDeny(id, `submit to ${detail.host}`);
     return promise.then((r) => r.behavior === "allow");
   }
 
   #askBrowser(host: string, action: string, detail: string | undefined, level: Level): Promise<"allow" | "deny"> {
+    if (this.#unattended) {
+      // No card: the standing list is the whole answer for a run nobody watches.
+      this.#unattended.onEvent("needed", `${host} (${level}${action === "eval" ? ", eval" : ""})`);
+      this.#emit({ kind: "local", text: `Unattended run: ${host} is not on the allowed sites list (${level} needed) — refused. Add it on the manage page and run again.` });
+      return Promise.resolve("deny");
+    }
     const id = randomUUID();
     const { promise, resolve } = deferred<PermissionResult>();
     this.#pending.set(id, { resolve, tool: "browser", suggestions: [], browser: { host, action, level } });
@@ -273,6 +298,13 @@ export class Session {
     input: Record<string, unknown>,
     { signal, suggestions }: { signal: AbortSignal; suggestions?: PermissionUpdate[] },
   ): Promise<PermissionResult> => {
+    // A site ask arriving this way (the fixture's shape of the site gate) follows the unattended rule too.
+    if (this.#unattended && tool === "browser") {
+      const host = String(input.host ?? "?"), level = String(input.level ?? "act");
+      this.#unattended.onEvent("needed", `${host} (${level})`);
+      this.#emit({ kind: "local", text: `Unattended run: ${host} is not on the allowed sites list (${level} needed) — refused. Add it on the manage page and run again.` });
+      return Promise.resolve({ behavior: "deny", message: "declined" });
+    }
     const id = randomUUID();
     const { promise, resolve } = deferred<PermissionResult>();
     const sugg = suggestions ?? [];
@@ -292,6 +324,7 @@ export class Session {
       this.#pending.set(id, { resolve, tool, suggestions: sugg, question: { input, questions } });
       this.#emit({ kind: "question", id, questions });
       this.#pushStatus();
+      this.#autoDeny(id, "a question");
       return promise;
     }
 
@@ -301,6 +334,7 @@ export class Session {
     const emitCard = (diff: Awaited<ReturnType<typeof previewDiff>>) => {
       if (!this.#pending.has(id)) return;
       this.#emit({ kind: "approval", id, tool, input, canAlways: sugg.length > 0, ...(diff ? { diff } : {}) });
+    this.#autoDeny(id, tool);
       this.#pushStatus();
     };
     if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {

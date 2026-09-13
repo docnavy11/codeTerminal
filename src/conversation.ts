@@ -54,7 +54,8 @@ export class LiveChat {
     this.#deps = deps;
     this.#mode = mode;
     const s = new Session(this.#rec.cwd ?? this.#workspace, this.#record,
-      { ...deps, chatId: this.#rec.id, prefer: () => this.#extInstance });
+      { ...deps, chatId: this.#rec.id, prefer: () => this.#extInstance, ...(this.#budgetUsd !== undefined ? { maxBudgetUsd: this.#budgetUsd } : {}) });
+    if (this.#unattended) s.setUnattended(this.#unattended);
     // Pass the mode into start() so the SDK launches with it. Setting it after
     // start (the old `void s.setMode(mode)`) raced the query into existence and
     // left the session running in "default".
@@ -84,6 +85,16 @@ export class LiveChat {
   useBrowser(instance: string | undefined): void {
     if (instance) this.#extInstance = instance;
   }
+
+  /** A scheduled run: nobody answers cards. Survives the session rebuilds a project/mode change causes. */
+  #unattended: Parameters<Session["setUnattended"]>[0] = null;
+  #budgetUsd: number | undefined;
+  setUnattended(cfg: Parameters<Session["setUnattended"]>[0], budgetUsd?: number): void {
+    this.#unattended = cfg; this.#budgetUsd = budgetUsd;
+    this.#session.setUnattended(cfg);
+    if (budgetUsd !== undefined && !this.#session.busy) this.#restart();
+  }
+  get unattended(): boolean { return this.#unattended !== null; }
 
   project(projects: Project[]): Project { return resolveProject(projects, this.#rec.project); }
 

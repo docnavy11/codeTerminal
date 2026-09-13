@@ -23,6 +23,8 @@ export type AttachContext = {
   clients: Set<() => void>;
   /** Every attached client's browsers-list sender, for when a browser connects or drops. */
   browserWatchers?: Set<() => void>;
+  /** Every attached client's raw sender, for events that concern everyone (a scheduled run finished). */
+  broadcast?: Set<(e: ClientEvent) => void>;
   /** Cross-connection state that is "whatever was most recent" by design. */
   state: {
     /** The chat most recently attached to; a shell pane opens in its cwd. */
@@ -64,6 +66,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
 
   const sendBrowsers = () => send({ kind: "browsers", list: bridge.instances.filter((i) => !i.startsWith("pending:")).map((id) => ({ id, server: id === SERVER_BROWSER_ID })) });
   ctx.browserWatchers?.add(sendBrowsers);
+  ctx.broadcast?.add(send);
   chat.attach(send, replay);
   listFor();
   sendBrowsers();
@@ -163,7 +166,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
 
   const refresh = () => listFor();
   ctx.clients.add(refresh);
-  const detach = () => { chat.detach(send); ctx.clients.delete(refresh); ctx.browserWatchers?.delete(sendBrowsers); };
+  const detach = () => { chat.detach(send); ctx.clients.delete(refresh); ctx.browserWatchers?.delete(sendBrowsers); ctx.broadcast?.delete(send); };
   ws.on("close", detach);
   ws.on("error", detach);
 }

@@ -14,7 +14,10 @@ import { UsageLog } from "./usage.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
 import { resolveProject } from "./projects.js";
-import { ServerBrowser } from "./server-browser.js";
+import { ServerBrowser, SERVER_BROWSER_ID } from "./server-browser.js";
+import type { ClientEvent } from "./protocol.js";
+import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe as describeCron } from "./schedule.js";
+import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
@@ -42,6 +45,10 @@ export type ServerConfig = {
   projectsRoot: string;
   promptsPath: string;
   usagePath: string;
+  /** schedules.json: the scheduled prompts (default beside prompts.json). */
+  schedulesPath?: string;
+  /** Scheduler tick (ms); tests shorten it. */
+  scheduleTickMs?: number;
   /** Standing list of sites the browser tools may use without asking; null disables the gate. */
   browserAllowPath: string | null;
   browserAllowSeed: string[];
@@ -84,6 +91,7 @@ export function envConfig(): ServerConfig {
     filesRoot: process.env.CODETERM_FILES_ROOT ?? home,
     projectsRoot: process.env.CODETERM_PROJECTS_ROOT ?? join(home, "projects"),
     promptsPath: process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"),
+    schedulesPath: process.env.CODETERM_SCHEDULES ?? join(ROOT, "schedules.json"),
     usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : join(ROOT, "browser-allow.json"),
     serverBrowser: { profileDir: process.env.CODETERM_SERVER_BROWSER_PROFILE ?? join(ROOT, "server-browser", "profile"),
@@ -394,6 +402,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       bypassAllowed: ALLOW_BYPASS, systemd: cfg.systemd ?? Boolean(process.env.INVOCATION_ID),
       browserSites: browserAllow ? browserAllow.all().length : null,
       mcpServers: convo.mcpServers,
+      schedules: (() => { const all = schedules.list().filter((s) => !s.paused); const next = all.map((s) => s.nextAt).filter((n): n is number => n !== null).sort((a, b) => a - b)[0]; return { count: schedules.list().length, next: next ?? null }; })(),
     }));
   });
 
@@ -590,7 +599,45 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
 
   const browserWatchers = new Set<() => void>();
-  const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state, browserWatchers };
+  const broadcast = new Set<(e: ClientEvent) => void>();
+  const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state, browserWatchers, broadcast };
+
+  /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
+  const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"));
+  const scheduler = new Scheduler({
+    store: schedules, log, warn,
+    runner: makeRunner({ convo, prompts, serverBrowserReady: () => serverBrowser.running && bridge.instances.includes(SERVER_BROWSER_ID) }),
+  });
+  scheduler.onDone = (s, run) => {
+    const removed = pruneRuns({ convo }, s);
+    if (removed.length) log(`[schedule] ${s.title}: removed ${removed.length} old run chat(s)`);
+    const e: ClientEvent = { kind: "schedule_done", id: s.id, title: s.title, chatId: run.chatId, outcome: run.outcome, summary: run.summary, costUsd: run.costUsd, files: run.files };
+    for (const send of broadcast) send(e);
+  };
+  const scheduleView = (s: ReturnType<ScheduleStore["get"]>) => s && ({ ...s, words: describeCron(s.when.cron), running: scheduler.isRunning(s.id), runs: s.runs.slice(0, 20) });
+  app.get("/schedules", guard, (_req, res) => { res.json({ schedules: schedules.list().map(scheduleView), prompts: prompts.all().map((p) => ({ id: p.id, title: p.title })), projects: convo.projects().map((p) => ({ id: p.id, name: p.name })) }); });
+  app.get("/schedules/preview", guard, (req, res) => {
+    try {
+      const tz = String(req.query.tz ?? "UTC"); if (!validTimeZone(tz)) throw new Error(`unknown time zone "${tz}"`);
+      const { cron, words } = parseWhen(String(req.query.when ?? ""));
+      const next: string[] = []; let from = new Date();
+      for (let i = 0; i < 3; i++) { const n = nextRun(cron, tz, from); if (!n) break; next.push(n.toISOString()); from = n; }
+      res.json({ cron, words, tz, next });
+    } catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
+  });
+  app.post("/schedules", guard, express.json({ limit: "64kb" }), (req, res) => {
+    try { const s = schedules.add(req.body); scheduler.replan(s.id); res.json(scheduleView(schedules.get(s.id))); }
+    catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
+  });
+  app.put("/schedules/:id", guard, express.json({ limit: "64kb" }), (req, res) => {
+    try { const s = schedules.update(String(req.params.id), req.body); if (!s) { res.status(404).json({ error: "no such schedule" }); return; } scheduler.replan(s.id); res.json(scheduleView(schedules.get(s.id))); }
+    catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
+  });
+  app.delete("/schedules/:id", guard, (req, res) => { res.json({ ok: schedules.remove(String(req.params.id)) }); });
+  app.post("/schedules/:id/run", guard, (req, res) => {
+    try { const run = scheduler.runNow(String(req.params.id)); res.status(202).json({ run }); }
+    catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
+  });
   bridge.onChange = () => { for (const f of browserWatchers) f(); };
 
   /* The server browser: status, start, stop, navigate. The live view is the /browser/live socket below. */
@@ -661,6 +708,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
 
   log(`code-terminal  http://${HOST}:${port}`);
   if (sbCfg.autostart) serverBrowser.start().catch((e) => warn(`[server-browser] autostart: ${e instanceof Error ? e.message : e}`));
+  scheduler.start(cfg.scheduleTickMs ?? 30_000);
   for (const line of auth.banner()) log(line);
   log(`workspace      ${WORKSPACE}`);
   log(`shell          /pty — real PTY, NO approval gate`);
@@ -681,6 +729,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     stopping = new Promise<void>((done) => {
       log(`[${signal}] shutting down`);
       clearInterval(sweeper);
+      scheduler.stop();
       try { convo.shutdown(); } catch (e) { warn(`shutdown: chats ${String(e)}`); }
       void serverBrowser.stop().catch((e) => warn(`shutdown: server browser ${String(e)}`));
       try { usage.save(); } catch (e) { warn(`shutdown: usage ${String(e)}`); }

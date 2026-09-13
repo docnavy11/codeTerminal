@@ -28,6 +28,8 @@ export type SetupInput = {
   browserSites?: number | null;
   /** In-process MCP servers as the last session start reported them; null before any session. */
   mcpServers?: { name: string; status: string }[] | null;
+  /** Scheduled prompts: how many, and the next run time (ms) if any. */
+  schedules?: { count: number; next: number | null };
   /** Set by systemd for every process it starts. */
   systemd: boolean;
   /** Test hook: how to look at the filesystem. */
@@ -80,6 +82,9 @@ export function buildSetup(i: SetupInput) {
         ? { ok: false, level: "bad", text: `Tool server${i.mcpServers.filter((s) => s.status !== "connected").length > 1 ? "s" : ""} not connected: ${i.mcpServers.filter((s) => s.status !== "connected").map((s) => `${s.name} (${s.status})`).join(", ")} — those tools are missing from every session`,
             hint: "Check the server log. The usual cause is a tool schema the CLI cannot convert; `npm run check` lists every server through a real MCP client and fails on it." }
         : { ok: true, level: "ok", text: `Tool servers connected: ${i.mcpServers.map((s) => s.name).join(", ")}` },
+    schedules: !i.schedules || i.schedules.count === 0
+      ? { ok: true, level: "ok", text: "No scheduled prompts", hint: "The manage page's Schedules tab runs a prepared prompt by itself at set times, in the server browser." }
+      : { ok: true, level: "ok", text: `${i.schedules.count} scheduled prompt${i.schedules.count === 1 ? "" : "s"}${i.schedules.next ? ` — next at ${new Date(i.schedules.next).toISOString().slice(0, 16).replace("T", " ")} UTC` : " — all paused"}` },
     extension: ext.length
       ? { ok: true, level: "ok", text: `Browser extension connected (${ext.length} browser${ext.length > 1 ? "s" : ""})` }
       : { ok: true, level: "warn", text: "No browser extension connected",

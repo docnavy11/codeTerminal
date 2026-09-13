@@ -214,6 +214,11 @@ function observeAgent() {
 
     // A watch firing is the whole reason notifications exist: by definition
     // you are not looking at the panel when it happens.
+    // A scheduled run ended: the whole point of scheduling is that you were not there.
+    if (m.kind === "schedule_done") {
+      notify(`${m.title} — ${m.outcome.replace("-", " ")}`, `${m.summary || ""}${m.costUsd != null ? ` · $${m.costUsd.toFixed(2)}` : ""}`.slice(0, 180));
+    }
+
     if (m.kind === "watch") {
       notify("Watch fired", `${m.description} — ${m.detail}`.slice(0, 180));
     }

@@ -408,6 +408,45 @@ describe("Session rewind", () => {
   });
 });
 
+describe("unattended runs", () => {
+  test("the site gate refuses without a card and records the site; a submit card is answered no after the wait and recorded", async () => {
+    const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+    const { BrowserAllowlist } = await import("../src/browser-allow.js");
+    const { BrowserBridge } = await import("../src/browser.js");
+    const { FakeWs } = await import("./fakes/ws.js");
+    const allow = new BrowserAllowlist(join(await mkdtemp(join(tmpdir(), "ct-unatt-")), "allow.json"));
+    const bridge = new BrowserBridge(() => {}, 500);
+    const ext = new FakeWs(); const clicks: number[] = [];
+    const origSend = ext.send.bind(ext);
+    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result:
+      msg.action === "tab_url" ? { tabId: 1, url: "https://shop.example/cart", title: "Cart" }
+      : msg.action === "submit_probe" ? { submit: true, via: "click", form: { action: "https://shop.example/checkout", method: "post", button: "Pay", fields: [{ name: "amount", value: "120" }], filled: 1 } }
+      : msg.action === "read_page" ? { text: "page" } : (clicks.push(1), { clicked: "button" }) })); };
+    bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
+    const sdk = fakeSdk(); const events: ClientEvent[] = []; const seen: string[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, browserAllow: allow });
+    s.setUnattended({ waitMs: 60, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    const done = s.start();
+    type Reg = Record<string, { callback?: Function; handler?: Function }>;
+    const tools = (sdk.last.options.mcpServers as Record<string, { instance: { _registeredTools: Reg } }>).browser.instance._registeredTools;
+    const call = (name: string, args: Record<string, unknown>) => (tools[name].callback ?? tools[name].handler)!(args, {}) as Promise<{ content: { text: string }[] }>;
+    // 1. the gate: refused at once, no card, recorded
+    await assert.rejects(call("read_page", { tabId: 1 }), /shop\.example: the user did not allow it/);
+    assert.deepEqual(seen, ["needed:shop.example (read)"]);
+    assert.ok(!events.some((e) => e.kind === "approval"), "no card");
+    assert.ok(events.some((e) => e.kind === "local" && /not on the allowed sites list/.test((e as { text: string }).text)));
+    // 2. allowed site, submitting click: the card shows, then is answered no after the wait
+    allow.add("shop.example", "act");
+    const t0 = Date.now();
+    await assert.rejects(call("click", { tabId: 1, selector: "#pay" }), /the user stopped the submit/);
+    assert.ok(Date.now() - t0 >= 50, "waited"); assert.equal(clicks.length, 0);
+    assert.deepEqual(seen, ["needed:shop.example (read)", "card:submit to shop.example"]);
+    assert.ok(events.some((e) => e.kind === "approval" && (e as { tool: string }).tool === "submit"), "the card was shown, for anyone watching");
+    assert.equal((events.filter((e) => e.kind === "approval_closed").at(-1) as { decision: string }).decision, "deny");
+    s.close(); await done.catch(() => {});
+  });
+});
+
 describe("MCP server status at session start", () => {
   test("a server that did not connect is logged, shown in the transcript, and carried on ready; all-connected is silent", async () => {
     const sdk = fakeSdk(); const events: ClientEvent[] = []; const warned: string[] = [];

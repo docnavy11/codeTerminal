@@ -204,6 +204,7 @@ function handle(m) {
       modeSel.querySelector('option[value="bypassPermissions"]').disabled = !m.canBypass;
       break;
     case "browsers": paintBrowsers(m.list ?? []); break;
+    case "schedule_done": scheduleBanner(m); break;
     case "models": {
       // the CLI's list; keep "default" first and whatever is selected selected
       const cur = modelSel.value;
@@ -693,6 +694,19 @@ function renderApproval(m) {
   }
   card.append(h, pre, row);
   log.scrollTop = log.scrollHeight;
+}
+
+/* A scheduled run finished while you were (probably) elsewhere: a strip
+   above the transcript, in every host, until dismissed or opened. */
+function scheduleBanner(m) {
+  let bar = document.getElementById("schedbar");
+  if (!bar) { bar = document.createElement("div"); bar.id = "schedbar"; log.parentElement.insertBefore(bar, log); }
+  const row = document.createElement("div"); row.className = "sb " + m.outcome;
+  const t = document.createElement("span"); t.innerHTML = ""; t.textContent = `${m.title}: ${m.outcome.replace("-", " ")}${m.costUsd != null ? ` · $${m.costUsd.toFixed(2)}` : ""} — ${m.summary || ""}`;
+  row.append(t);
+  if (m.chatId) { const open = document.createElement("button"); open.textContent = "open"; open.onclick = () => { ws?.send(JSON.stringify({ type: "open", id: m.chatId })); row.remove(); }; row.append(open); }
+  const x = document.createElement("button"); x.textContent = "✕"; x.title = "dismiss"; x.onclick = () => row.remove(); row.append(x);
+  bar.append(row);
 }
 
 /* Confirm before submit: a click or Enter is about to send a form with
