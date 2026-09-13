@@ -590,6 +590,7 @@ def test_page_read_modes(page, server):
     assert "**Totals**\n| Ref | Amount |\n| --- | --- |\n| 0039 | 1 250,00 |" in md["text"], md["text"]
     assert "```\nraw\n  text\n```" in md["text"], md["text"]
     assert "Nav link" not in md["text"] and "Privacy" not in md["text"] and "hidden text" not in md["text"], "nav, footer and hidden content are dropped"
+    assert "Query" not in md["text"] and "2025" not in md["text"], "form controls are not prose"
     links = page.evaluate("() => ctReadPage('links')")
     hrefs = [l["href"] for l in links["links"]]
     assert links["count"] == 4 and hrefs[0].endswith("/skip") and "https://x.example/t" in hrefs, links
