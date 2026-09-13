@@ -443,10 +443,10 @@ async function handle(action, p) {
     case "read_page": {
       const t = await resolveTab(p.tabId);
       const max = p.maxChars ?? 20000;
-      const body = await run(t.id, (m) => {
-        const txt = document.body?.innerText ?? "";
-        return { text: txt.length > m ? txt.slice(0, m) + "\n…[truncated]" : txt, chars: txt.length };
-      }, [max]);
+      const mode = ["text", "markdown", "links", "tables", "forms"].includes(p.mode) ? p.mode : "text";
+      // page-read.js defines ctReadPage in the page; inject once per call (idempotent), then ask it.
+      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+      const body = await run(t.id, (m, mx) => globalThis.ctReadPage(m, mx), [mode, max]);
       return { tabId: t.id, title: t.title, url: t.url, ...body };
     }
 

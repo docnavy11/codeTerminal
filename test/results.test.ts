@@ -44,6 +44,10 @@ describe("summariseResult", () => {
   test("browser and terminal tools read their own JSON", () => {
     assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "Invoices · upbudget", url: "u", text: "x".repeat(4100) })).summary, "Invoices · upbudget · 4,100 chars");
     assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "0039.pdf", kind: "pdf", pages: 3, text: "x".repeat(900) })).summary, "0039.pdf · PDF · 3 pages · 900 chars");
+    assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "Docs", mode: "markdown", text: "x".repeat(300) })).summary, "Docs · markdown · 300 chars");
+    assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "Docs", mode: "links", count: 12 })).summary, "Docs · 12 links");
+    assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "Docs", mode: "tables", count: 1 })).summary, "Docs · 1 table");
+    assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "Docs", mode: "forms", count: 2, forms: [{ fields: [1, 2] }, { fields: [3] }] })).summary, "Docs · 2 forms · 3 fields");
     assert.equal(r("mcp__browser__screenshot", JSON.stringify({ path: "/p.png", width: 1280, height: 720, bytes: 1_300_000 })).summary, "image · 1280×720 · 1.2 MB");
     assert.equal(r("mcp__browser__list_tabs", JSON.stringify([{ id: 1 }, { id: 2 }])).summary, "2 tabs");
     assert.equal(r("mcp__browser__download", JSON.stringify({ path: "/w/downloads/a.pdf", name: "a.pdf", bytes: 1_300_000 })).summary, "saved a.pdf · 1.2 MB");

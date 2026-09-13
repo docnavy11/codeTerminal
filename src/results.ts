@@ -71,7 +71,15 @@ function describe(name: string, text: string, s: Record<string, unknown>, images
     case "TodoWrite": return "list updated";
     case "Agent": case "Task": return /launched successfully/i.test(text) ? "running in the background" : firstLine(text);
     case "mcp__terminal__read": { const m = text.match(/^Last (\d+) lines/); return m ? `${m[1]} lines` : firstLine(text); }
-    case "mcp__browser__read_page": { const j = json(text) as { title?: string; text?: string; kind?: string; pages?: number } | null; return j ? `${clip(j.title || "(untitled)", 60)} · ${j.kind === "pdf" ? `PDF · ${j.pages} page${j.pages === 1 ? "" : "s"} · ` : ""}${(j.text ?? "").length.toLocaleString()} chars` : firstLine(text); }
+    case "mcp__browser__read_page": {
+      const j = json(text) as { title?: string; text?: string; kind?: string; pages?: number; mode?: string; count?: number; forms?: { fields?: unknown[] }[] } | null;
+      if (!j) return firstLine(text);
+      const t = clip(j.title || "(untitled)", 60);
+      if (j.mode === "links") return `${t} · ${j.count ?? 0} links`;
+      if (j.mode === "tables") return `${t} · ${j.count ?? 0} table${j.count === 1 ? "" : "s"}`;
+      if (j.mode === "forms") { const fields = (j.forms ?? []).reduce((n, f) => n + (f.fields?.length ?? 0), 0); return `${t} · ${j.count ?? 0} form${j.count === 1 ? "" : "s"} · ${fields} fields`; }
+      return `${t} · ${j.kind === "pdf" ? `PDF · ${j.pages} page${j.pages === 1 ? "" : "s"} · ` : j.mode === "markdown" ? "markdown · " : ""}${(j.text ?? "").length.toLocaleString()} chars`;
+    }
     case "mcp__browser__screenshot": { const j = json(text) as { width?: number; height?: number; bytes?: number } | null; return j ? `image${j.width ? ` · ${j.width}×${j.height}` : ""}${j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""}` : firstLine(text); }
     case "mcp__browser__download": { const j = json(text) as { name?: string; bytes?: number } | null; return j?.name ? `saved ${j.name}${j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""}` : firstLine(text); }
     case "mcp__browser__list_tabs": { const j = json(text); return Array.isArray(j) ? `${j.length} tabs` : firstLine(text); }

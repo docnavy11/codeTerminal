@@ -558,3 +558,51 @@ def test_manage_page_browser_sites(page, server):
     wait(page, "() => { const r = [...document.querySelectorAll('#browser .row')].find(r => r.querySelector('.title')?.textContent === '*.corp.example'); return !!r && r.querySelector('.meta').textContent.includes('read + act'); }", what="raised to act")
     page.click("#browser .row:has(.title:text-is('*.corp.example')) button.danger")
     wait(page, "() => ![...document.querySelectorAll('#browser .row .title')].some(t => t.textContent === '*.corp.example')", what="removed")
+
+
+PAGE = """
+<nav><a href="/skip">Nav link</a></nav>
+<main>
+  <h1>Invoices</h1>
+  <p>Open <a href="/inv/39">PUR1/2026/01/0039</a> and <code>check</code> it.</p>
+  <ul><li>one</li><li>two <a href="https://x.example/t">deep</a></li></ul>
+  <table><caption>Totals</caption><tr><th>Ref</th><th>Amount</th></tr><tr><td>0039</td><td>1 250,00</td></tr><tr><td>0040</td><td>80,00</td></tr></table>
+  <pre>raw\n  text</pre>
+  <form action="/search" method="get">
+    <label for="q">Query</label><input id="q" name="q" value="inv">
+    <select name="year"><option>2025</option><option selected>2026</option></select>
+    <input type="checkbox" name="paid" checked> <input type="password" name="pw" value="s3cret">
+    <input type="hidden" name="csrf" value="x"><button type="submit">Go</button>
+  </form>
+  <p style="display:none">hidden text</p>
+</main>
+<footer><a href="/privacy">Privacy</a></footer>
+"""
+
+
+def test_page_read_modes(page, server):
+    page.set_content(PAGE)
+    page.add_script_tag(path=os.path.join(os.path.dirname(__file__), "..", "..", "extension", "page-read.js"))
+    md = page.evaluate("() => ctReadPage('markdown', 20000)")
+    assert md["mode"] == "markdown"
+    assert md["text"].startswith("# Invoices\n\nOpen [PUR1/2026/01/0039](") and "`check`" in md["text"], md["text"]
+    assert "- one\n- two [deep](https://x.example/t)" in md["text"], md["text"]
+    assert "**Totals**\n| Ref | Amount |\n| --- | --- |\n| 0039 | 1 250,00 |" in md["text"], md["text"]
+    assert "```\nraw\n  text\n```" in md["text"], md["text"]
+    assert "Nav link" not in md["text"] and "Privacy" not in md["text"] and "hidden text" not in md["text"], "nav, footer and hidden content are dropped"
+    links = page.evaluate("() => ctReadPage('links')")
+    hrefs = [l["href"] for l in links["links"]]
+    assert links["count"] == 4 and hrefs[0].endswith("/skip") and "https://x.example/t" in hrefs, links
+    tables = page.evaluate("() => ctReadPage('tables')")
+    assert tables["count"] == 1 and tables["tables"][0] == {"caption": "Totals", "headers": ["Ref", "Amount"], "rows": [["0039", "1 250,00"], ["0040", "80,00"]]}, tables
+    forms = page.evaluate("() => ctReadPage('forms')")
+    f = forms["forms"][0]
+    assert forms["count"] == 1 and f["action"].endswith("/search") and f["method"] == "get" and f["submit"]["text"] == "Go", forms
+    names = [x["name"] for x in f["fields"]]
+    assert names == ["q", "year", "paid", "pw"], names                       # hidden and submit inputs are not fields
+    q = f["fields"][0]; assert q["label"] == "Query" and q["value"] == "inv" and q["ref"].startswith("f")
+    assert f["fields"][1]["options"] == ["2025", "2026"] and f["fields"][1]["value"] == "2026"
+    assert f["fields"][2]["checked"] is True and f["fields"][3]["value"] == "•••", "passwords are never read back"
+    assert page.evaluate("(r) => document.querySelector('[data-ct-ref=\"' + r + '\"]').name", q["ref"]) == "q", "the ref addresses the field, so fill can use it"
+    text = page.evaluate("() => ctReadPage('text', 12)")
+    assert text["text"].endswith("…[truncated]") and text["chars"] > 12

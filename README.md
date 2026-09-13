@@ -654,6 +654,19 @@ against a real 11-page PDF tab: `read_page` returned `kind: "pdf", pages:
 — merged cells and superscript placement are lost, and an image-only scan
 has no text to extract (screenshots still cover that).
 
+**Structured reads.** `read_page` takes a `mode`: `text` (as before),
+`markdown` (the main content — `<main>`/`<article>`, else the body — as
+compact markdown: headings, paragraphs, lists, links, code, pipe tables;
+navigation, headers, footers, asides and hidden elements dropped), `links`
+(`[{text, href}]`, deduped, absolute), `tables` (`[{caption, headers,
+rows}]`), `forms` (each form's action, method, submit control and fields
+with a ref `fill`/`click` accept, label, current value, options, checked;
+passwords come back as `•••`, hidden and submit inputs are not fields).
+Everything is capped. A table no longer needs `eval` — which asks every
+time — and markdown of an article is a fraction of its `innerText`. The
+serializer is one dependency-free file (`extension/page-read.js`) run
+inside the page, tested against a fixture page in the browser suite.
+
 **Screenshots come back inline.** The screenshot tool returns the image
 itself as part of its result, so the model looks at it directly — no
 `Read` of a path afterwards, which halves the calls in any visual task and
