@@ -648,9 +648,11 @@ screenshot per page — twenty of them in the 2026-09-11 turn. Now a tab
 named `.pdf`, or one the viewer refuses, has its bytes fetched by the
 extension with your profile's cookies and the text extracted on the server
 with pdf.js (pure JS, no canvas), page by page, capped at 20 000 characters
-by default. The result says `PDF · 3 pages`. Not measured against a real
-PDF tab yet — the extractor is tested on generated PDFs, the extension's
-fetch path only on the fake.
+by default. The result says `PDF · 3 pages`. Measured on 2026-09-13
+against a real 11-page PDF tab: `read_page` returned `kind: "pdf", pages:
+11` and a table's values matched the file read from disk. Text layer only
+— merged cells and superscript placement are lost, and an image-only scan
+has no text to extract (screenshots still cover that).
 
 **Gated per site, not per call.** The first time a chat touches a site —
 reads it, clicks, screenshots, navigates there — a card asks: *Let Claude
