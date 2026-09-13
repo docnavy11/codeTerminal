@@ -888,6 +888,22 @@ shows a notification.
   for approval, was answered "no" after two minutes, and the agent stopped
   with nothing done. Unattended, a mode that asks is a mode that fails.
 
+**Reaching your phone.** In the browser, a run reports three ways (the
+extension's notification, a strip in open chats, the Schedules tab); none
+reaches a closed laptop. For that, `.env` takes a **Telegram** bot
+(`CODETERM_TELEGRAM_TOKEN` + `CODETERM_TELEGRAM_CHAT`) and/or a **webhook**
+(`CODETERM_NOTIFY_WEBHOOK`): an ntfy topic (the ntfy app subscribes;
+detected from the URL or `CODETERM_NOTIFY_WEBHOOK_FORMAT=ntfy`) or any URL
+taking JSON `{title, message, url, tags, at}` — a Home Assistant webhook
+automation forwarding to the companion app, for instance. Each run sends
+"Search for jobs — done · $1.55", the reply's first line, what it needed,
+files, and a link to the run's chat. The setup page shows which targets are
+set; the Schedules tab has **send test**. A target that fails is logged and
+skipped, never blocks a run. Measured with a fake HTTP layer in
+`test/notify.test.ts` (request shapes for Telegram, JSON and ntfy;
+failures reported, not thrown); not measured against the real services —
+"send test" is the measurement.
+
 **It deliberately does not** run two copies at once (the second is recorded
 as skipped), catch up on times missed while the server was down (recorded
 as missed — "Run now" is there for that), retry, or chain schedules. Run

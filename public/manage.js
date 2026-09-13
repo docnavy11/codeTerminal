@@ -395,6 +395,12 @@ async function loadSchedules() {
   host.append(p);
   const add = document.createElement("button"); add.textContent = "New schedule"; add.onclick = () => schedForm(null);
   host.append(add);
+  // where results go besides this page
+  const nt = await api("/notify");
+  const nrow = document.createElement("p"); nrow.className = "hint"; nrow.id = "notify-row";
+  nrow.textContent = nt.targets.length ? `Phone notifications: ${nt.targets.join(", ")}. ` : "No phone notifications configured (CODETERM_TELEGRAM_TOKEN/CHAT or CODETERM_NOTIFY_WEBHOOK in .env). Results show here, as a strip in open chats, and as an extension notification. ";
+  if (nt.targets.length) { const t = document.createElement("button"); t.textContent = "send test"; t.onclick = async () => { t.disabled = true; try { const r = await api("/notify/test", { method: "POST" }); t.textContent = r.failed.length ? `failed: ${r.failed.map((f) => f.target + " " + f.error).join("; ")}` : `sent to ${r.sent.join(", ")}`; } catch (e) { t.textContent = e.message; } }; nrow.append(t); }
+  host.append(nrow);
   const formHost = document.createElement("div"); formHost.id = "schedform"; host.append(formHost);
   if (!schedData.schedules.length) { const e = document.createElement("p"); e.className = "hint"; e.textContent = "No schedules yet."; host.append(e); }
   for (const s of schedData.schedules) host.append(schedCard(s));

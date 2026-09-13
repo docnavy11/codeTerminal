@@ -10,10 +10,11 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
    what it needed. Plus the unattended rules: no site card, cards answered
    "no" after the wait. */
 let s: TestServer;
+const notified: { url: string; body: string }[] = [];
 const said = (m: SDKUserMessage) => String(typeof m.message.content === "string" ? m.message.content : JSON.stringify(m.message.content));
 before(async () => {
   s = await startTestServer({
-    cfg: { scheduleTickMs: 1e9 },
+    cfg: { scheduleTickMs: 1e9, notify: { webhook: { url: "https://hook.test/x", format: "json" }, fetch: (async (url: string | URL | Request, init?: RequestInit) => { notified.push({ url: String(url), body: String(init?.body ?? "") }); return new Response("ok"); }) as typeof fetch } },
     sdk: { onUser: (m, q: FakeQuery) => {
       const text = said(m);
       if (/find jobs/.test(text)) {
@@ -62,6 +63,11 @@ describe("scheduled prompts through the server", () => {
     assert.match(chat.title, /^Jobs · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
     const done = await ws.wait((m) => m.kind === "schedule_done", 3000);
     assert.equal(done.title, "Jobs"); assert.equal(done.outcome, "done"); assert.equal(done.chatId, run.chatId); assert.equal(done.summary, "Jobs today");
+    await settle(6);
+    const hook = notified.find((n) => n.url === "https://hook.test/x")!; assert.ok(hook, "the phone webhook was called");
+    const nb = JSON.parse(hook.body); assert.equal(nb.title, "Jobs — done · $0.31"); assert.match(nb.message, /^Jobs today/); assert.match(nb.url, new RegExp(`/\\?chat=${run.chatId}$`)); assert.deepEqual(nb.tags, ["white_check_mark"]);
+    assert.deepEqual((await s.json("/notify")).body, { targets: ["webhook"] });
+    const t = await s.post("/notify/test", {}); assert.equal(t.status, 200); assert.deepEqual(t.body!.sent, ["webhook"]);
     assert.match(String((await s.json("/setup")).body!.checks && ((await s.json("/setup")).body!.checks as Record<string, { text: string }>).schedules.text), /1 scheduled prompt — next at/);
     ws.ws.close();
   });

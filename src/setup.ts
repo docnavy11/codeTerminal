@@ -30,6 +30,8 @@ export type SetupInput = {
   mcpServers?: { name: string; status: string }[] | null;
   /** Scheduled prompts: how many, and the next run time (ms) if any. */
   schedules?: { count: number; next: number | null };
+  /** Phone notification targets configured (telegram, webhook, ntfy). */
+  notifyTargets?: string[];
   /** Set by systemd for every process it starts. */
   systemd: boolean;
   /** Test hook: how to look at the filesystem. */
@@ -85,6 +87,9 @@ export function buildSetup(i: SetupInput) {
     schedules: !i.schedules || i.schedules.count === 0
       ? { ok: true, level: "ok", text: "No scheduled prompts", hint: "The manage page's Schedules tab runs a prepared prompt by itself at set times, in the server browser." }
       : { ok: true, level: "ok", text: `${i.schedules.count} scheduled prompt${i.schedules.count === 1 ? "" : "s"}${i.schedules.next ? ` — next at ${new Date(i.schedules.next).toISOString().slice(0, 16).replace("T", " ")} UTC` : " — all paused"}` },
+    notifications: i.notifyTargets?.length
+      ? { ok: true, level: "ok", text: `Phone notifications: ${i.notifyTargets.join(", ")}`, hint: "The Schedules tab has a “send test” button." }
+      : { ok: true, level: "warn", text: "No phone notifications configured", hint: "Scheduled runs then report only in the browser: the extension's notification, a strip in open chats, the Schedules tab. For a phone, set CODETERM_TELEGRAM_TOKEN + CODETERM_TELEGRAM_CHAT, or CODETERM_NOTIFY_WEBHOOK (ntfy or a Home Assistant webhook), in .env and restart." },
     extension: ext.length
       ? { ok: true, level: "ok", text: `Browser extension connected (${ext.length} browser${ext.length > 1 ? "s" : ""})` }
       : { ok: true, level: "warn", text: "No browser extension connected",

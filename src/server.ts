@@ -18,6 +18,7 @@ import { ServerBrowser, SERVER_BROWSER_ID } from "./server-browser.js";
 import type { ClientEvent } from "./protocol.js";
 import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe as describeCron } from "./schedule.js";
 import { makeRunner, pruneRuns } from "./schedule-run.js";
+import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
@@ -49,6 +50,8 @@ export type ServerConfig = {
   schedulesPath?: string;
   /** Scheduler tick (ms); tests shorten it. */
   scheduleTickMs?: number;
+  /** Phone notifications (Telegram, webhook/ntfy); from the environment by default. */
+  notify?: Pick<NotifyConfig, "telegram" | "webhook" | "fetch">;
   /** Standing list of sites the browser tools may use without asking; null disables the gate. */
   browserAllowPath: string | null;
   browserAllowSeed: string[];
@@ -92,6 +95,7 @@ export function envConfig(): ServerConfig {
     projectsRoot: process.env.CODETERM_PROJECTS_ROOT ?? join(home, "projects"),
     promptsPath: process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"),
     schedulesPath: process.env.CODETERM_SCHEDULES ?? join(ROOT, "schedules.json"),
+    notify: notifyConfigFromEnv(),
     usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : join(ROOT, "browser-allow.json"),
     serverBrowser: { profileDir: process.env.CODETERM_SERVER_BROWSER_PROFILE ?? join(ROOT, "server-browser", "profile"),
@@ -402,6 +406,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       bypassAllowed: ALLOW_BYPASS, systemd: cfg.systemd ?? Boolean(process.env.INVOCATION_ID),
       browserSites: browserAllow ? browserAllow.all().length : null,
       mcpServers: convo.mcpServers,
+      notifyTargets: notifier.targets,
       schedules: (() => { const all = schedules.list().filter((s) => !s.paused); const next = all.map((s) => s.nextAt).filter((n): n is number => n !== null).sort((a, b) => a - b)[0]; return { count: schedules.list().length, next: next ?? null }; })(),
     }));
   });
@@ -608,12 +613,24 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     store: schedules, log, warn,
     runner: makeRunner({ convo, prompts, serverBrowserReady: () => serverBrowser.running && bridge.instances.includes(SERVER_BROWSER_ID) }),
   });
+  const notifier = new Notifier({ ...(cfg.notify ?? {}), log, warn });
+  const publicBase = `http://${HOST}:${port}`;
   scheduler.onDone = (s, run) => {
     const removed = pruneRuns({ convo }, s);
     if (removed.length) log(`[schedule] ${s.title}: removed ${removed.length} old run chat(s)`);
     const e: ClientEvent = { kind: "schedule_done", id: s.id, title: s.title, chatId: run.chatId, outcome: run.outcome, summary: run.summary, costUsd: run.costUsd, files: run.files };
     for (const send of broadcast) send(e);
+    const extra = [...(run.needed.length ? [`needed: ${run.needed.join(", ")}`] : []), ...(run.cards.length ? [`answered no: ${run.cards.join(", ")}`] : []), ...(run.files.length ? [`files: ${run.files.map((f) => f.split("/").pop()).join(", ")}`] : [])];
+    void notifier.send({ title: `${s.title} — ${run.outcome.replace("-", " ")}${run.costUsd != null ? ` · $${run.costUsd.toFixed(2)}` : ""}`, message: [run.summary, ...extra].filter(Boolean).join("\n"),
+      ...(run.chatId ? { url: `${publicBase}/?chat=${encodeURIComponent(run.chatId)}` } : {}), tags: [run.outcome === "done" ? "white_check_mark" : run.outcome === "failed" ? "x" : "warning"] });
   };
+  /** Which notification targets are set, and a test message so you know they work before 08:00. */
+  app.get("/notify", guard, (_req, res) => { res.json({ targets: notifier.targets }); });
+  app.post("/notify/test", guard, async (_req, res) => {
+    if (!notifier.targets.length) { res.status(400).json({ error: "no notification targets: set CODETERM_TELEGRAM_TOKEN + CODETERM_TELEGRAM_CHAT and/or CODETERM_NOTIFY_WEBHOOK in .env, then restart" }); return; }
+    const r = await notifier.send({ title: "code terminal — test", message: "Notifications reach this device. Scheduled runs will report here.", url: publicBase + "/manage.html", tags: ["bell"] });
+    res.status(r.failed.length && !r.sent.length ? 502 : 200).json(r);
+  });
   const scheduleView = (s: ReturnType<ScheduleStore["get"]>) => s && ({ ...s, words: describeCron(s.when.cron), running: scheduler.isRunning(s.id), runs: s.runs.slice(0, 20) });
   app.get("/schedules", guard, (_req, res) => { res.json({ schedules: schedules.list().map(scheduleView), prompts: prompts.all().map((p) => ({ id: p.id, title: p.title })), projects: convo.projects().map((p) => ({ id: p.id, name: p.name })) }); });
   app.get("/schedules/preview", guard, (req, res) => {
