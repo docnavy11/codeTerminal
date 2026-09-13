@@ -223,6 +223,17 @@ describe("browser tools", () => {
     async function bridged_click(s: typeof srv) { try { await call(s, "click", { tabId: 2, selector: "a" }); } catch { /* the fake ext has no click handler; the ask is what matters */ } }
   });
 
+  test("find and scroll are read-level and forward their arguments", async () => {
+    const asks: string[] = []; const seen: Record<string, unknown>[] = [];
+    const policy = { allowed: (_h: string, level: string) => level === "read", evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://ok.example/" }), find: (p) => { seen.push(p); return { count: 1, matches: [{ ref: "f1", text: "hit" }] }; }, scroll: (p) => { seen.push(p); return { percent: 50, atTop: false, atBottom: false }; } });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    assert.match(await call(srv, "find", { text: "hit", limit: 3 }), /"ref": "f1"/);
+    assert.match(await call(srv, "scroll", { ref: "f1" }), /"percent": 50/);
+    assert.deepEqual(asks, [], "read-allowed: neither asks");
+    assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
+  });
+
   test("eval asks every call on an allowed site until granted for the chat; without a policy nothing asks", async () => {
     const asks: string[] = [];
     const evalOk = new Set<string>();

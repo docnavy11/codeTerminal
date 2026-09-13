@@ -50,6 +50,11 @@ describe("summariseResult", () => {
     assert.equal(r("mcp__browser__read_page", JSON.stringify({ title: "Docs", mode: "forms", count: 2, forms: [{ fields: [1, 2] }, { fields: [3] }] })).summary, "Docs · 2 forms · 3 fields");
     assert.equal(r("mcp__browser__screenshot", JSON.stringify({ path: "/p.png", width: 1280, height: 720, bytes: 1_300_000 })).summary, "image · 1280×720 · 1.2 MB");
     assert.equal(r("mcp__browser__list_tabs", JSON.stringify([{ id: 1 }, { id: 2 }])).summary, "2 tabs");
+    assert.equal(r("mcp__browser__find", JSON.stringify({ count: 3, matches: [{ text: "…the invoice 0039 is…" }] })).summary, "3 matches · …the invoice 0039 is…");
+    assert.equal(r("mcp__browser__find", JSON.stringify({ count: 1, matches: [{ name: "Pay now" }] })).summary, "1 match · Pay now");
+    assert.equal(r("mcp__browser__find", JSON.stringify({ count: 0, matches: [], error: "give text, regex, or role/name" })).summary, "give text, regex, or role/name");
+    assert.equal(r("mcp__browser__scroll", JSON.stringify({ percent: 42, atTop: false, atBottom: false })).summary, "42%");
+    assert.equal(r("mcp__browser__scroll", JSON.stringify({ percent: 100, atTop: false, atBottom: true })).summary, "bottom");
     assert.equal(r("mcp__browser__download", JSON.stringify({ path: "/w/downloads/a.pdf", name: "a.pdf", bytes: 1_300_000 })).summary, "saved a.pdf · 1.2 MB");
     assert.equal(r("mcp__browser__snapshot", JSON.stringify({ elements: [1, 2, 3] })).summary, "3 elements");
     assert.equal(r("mcp__browser__eval", "null").summary, "null");

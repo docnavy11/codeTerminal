@@ -309,7 +309,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     return hostOfUrl(t?.url);
   };
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -346,6 +346,18 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         "List the interactive elements on a page (links, buttons, inputs) each with a ref usable by click/fill.",
         { tabId },
         gated("snapshot", (a) => bridge.send("snapshot", a, prefer()))),
+
+      tool("find",
+        "Find things on the page without reading all of it: text or a regex in the visible text, or an element by role (button, link, textbox, heading, …) and accessible name. Each match has a ref for click/fill/scroll, its text in context, and whether it is in view.",
+        { tabId, text: z.string().optional().describe("Text to look for (case-insensitive)"), regex: z.string().optional().describe("A regular expression instead of text"),
+          role: z.string().optional().describe("Element role: button, link, textbox, checkbox, heading, img, table, …"), name: z.string().optional().describe("Accessible name to match (substring)"),
+          limit: z.number().int().optional().describe("Max matches (default 25)") },
+        gated("find", (a) => bridge.send("find", a, prefer()))),
+
+      tool("scroll",
+        "Scroll the page: to an element (ref from find/snapshot, or a CSS selector), by pages up or down, or to the top/bottom. Returns where the viewport ended up (percent, atBottom).",
+        { tabId, ref: z.string().optional(), selector: z.string().optional(), direction: z.enum(["down", "up"]).optional(), pages: z.number().optional().describe("How many screens (default 1)"), to: z.enum(["top", "bottom"]).optional() },
+        gated("scroll", (a) => bridge.send("scroll", a, prefer()))),
 
       tool("navigate", "Navigate a tab to a URL, or open a new tab.",
         { tabId, url: z.string().describe("Absolute URL"), newTab: z.boolean().optional() },

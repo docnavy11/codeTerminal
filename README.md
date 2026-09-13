@@ -667,6 +667,16 @@ time — and markdown of an article is a fraction of its `innerText`. The
 serializer is one dependency-free file (`extension/page-read.js`) run
 inside the page, tested against a fixture page in the browser suite.
 
+**`find` and `scroll`.** `find` looks for text or a regex in the visible
+text, or for an element by role and accessible name (`role: button, name:
+"Pay"`), and returns each match with a ref that `click`, `fill` and
+`scroll` accept, its text in context, and whether it is in view — "is X on
+this page?" no longer costs a full `read_page`. `scroll` goes to a ref or
+selector, by pages up or down, or to the top or bottom, and reports where
+the viewport ended up (`42%`, `bottom`) so a long page can be read in
+passes. Both are read-level for the site gate. Tested against a fixture
+page in the browser suite.
+
 **Screenshots come back inline.** The screenshot tool returns the image
 itself as part of its result, so the model looks at it directly — no
 `Read` of a path afterwards, which halves the calls in any visual task and

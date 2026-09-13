@@ -622,3 +622,29 @@ def test_offered_file_has_a_download_button(page, server):
     page.wait_for_selector("#flist .row:has(.n:text-is('notes.txt'))", timeout=5000)
     page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
     assert page.locator("#log .filecard").count() == 1, "the offer is part of the transcript"
+
+
+def test_find_and_scroll_in_the_page(page, server):
+    filler = "".join(f"<p>paragraph {i}</p>" for i in range(150))
+    page.set_content(f"<h1>Top</h1>{filler}<p id=deep>The invoice PUR1/2026/01/0039 is <b>overdue</b>.</p><button aria-label='Pay now'>Pay</button><a href='/x'>Privacy policy</a>{filler}")
+    page.add_script_tag(path=os.path.join(os.path.dirname(__file__), "..", "..", "extension", "page-read.js"))
+    f = page.evaluate("() => ctFind({ text: 'pur1/2026' })")
+    assert f["count"] == 1 and f["matches"][0]["match"] == "PUR1/2026" and "overdue" not in f["matches"][0]["text"] or "0039" in f["matches"][0]["text"], f
+    m = f["matches"][0]
+    assert m["ref"].startswith("f") and m["inViewport"] is False and m["tag"] == "p", m
+    r = page.evaluate("() => ctFind({ regex: 'paragraph 1[0-9]$', limit: 5 })")
+    assert r["count"] == 5 and r["matches"][0]["match"] == "paragraph 10", r
+    b = page.evaluate("() => ctFind({ role: 'button', name: 'pay' })")
+    assert b["count"] == 1 and b["matches"][0]["name"] == "Pay now" and b["matches"][0]["role"] == "button", b
+    l = page.evaluate("() => ctFind({ role: 'link' })")
+    assert l["count"] == 1 and l["matches"][0]["name"] == "Privacy policy", l
+    assert page.evaluate("() => ctFind({})")["error"]
+    s0 = page.evaluate("() => ctScroll({ pages: 1 })")
+    assert s0["scrollY"] > 0 and s0["atTop"] is False and 0 < s0["percent"] < 100, s0
+    s1 = page.evaluate("(ref) => ctScroll({ ref })", m["ref"])
+    assert -50 <= s1["rect"]["y"] <= page.viewport_size["height"], s1
+    assert page.evaluate("(ref) => ctFind({ text: 'overdue' }).matches[0].inViewport", m["ref"]) is True
+    assert page.evaluate("() => ctScroll({ to: 'bottom' })")["atBottom"] is True
+    assert page.evaluate("() => ctScroll({ to: 'top' })")["atTop"] is True
+    assert page.evaluate("() => ctScroll({ selector: '#deep' }).rect.h") > 0
+    assert page.evaluate("() => ctScroll({ ref: 'nope' })")["error"].startswith("no element")

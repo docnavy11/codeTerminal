@@ -450,6 +450,22 @@ async function handle(action, p) {
       return { tabId: t.id, title: t.title, url: t.url, ...body };
     }
 
+    case "find": {
+      const t = await resolveTab(p.tabId);
+      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+      const r = await run(t.id, (o) => globalThis.ctFind(o), [{ text: p.text, regex: p.regex, role: p.role, name: p.name, limit: p.limit }]);
+      return { tabId: t.id, url: t.url, ...r };
+    }
+
+    case "scroll": {
+      const t = await resolveTab(p.tabId);
+      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["page-read.js"], world: "MAIN" });
+      const r = await run(t.id, (o) => globalThis.ctScroll(o), [{ ref: p.ref, selector: p.selector, direction: p.direction, pages: p.pages, to: p.to }]);
+      if (r?.error) throw new Error(r.error);
+      await new Promise((res) => setTimeout(res, 150));   // let lazy content paint before the next call
+      return { tabId: t.id, ...r };
+    }
+
     case "snapshot": {
       const t = await resolveTab(p.tabId);
       return { tabId: t.id, url: t.url, elements: await run(t.id, () => {

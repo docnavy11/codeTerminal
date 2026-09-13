@@ -83,6 +83,8 @@ function describe(name: string, text: string, s: Record<string, unknown>, images
     }
     case "mcp__browser__screenshot": { const j = json(text) as { width?: number; height?: number; bytes?: number } | null; return j ? `image${j.width ? ` · ${j.width}×${j.height}` : ""}${j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""}` : firstLine(text); }
     case "mcp__browser__download": { const j = json(text) as { name?: string; bytes?: number } | null; return j?.name ? `saved ${j.name}${j.bytes ? ` · ${fmtBytes(j.bytes)}` : ""}` : firstLine(text); }
+    case "mcp__browser__find": { const j = json(text) as { count?: number; matches?: { text?: string; name?: string }[]; error?: string } | null; if (!j) return firstLine(text); if (j.error) return j.error; const first = j.matches?.[0]; return `${j.count ?? 0} match${j.count === 1 ? "" : "es"}${first ? ` · ${clip(first.name || first.text || "", 60)}` : ""}`; }
+    case "mcp__browser__scroll": { const j = json(text) as { percent?: number; atBottom?: boolean; atTop?: boolean } | null; return j && typeof j.percent === "number" ? `${j.atBottom ? "bottom" : j.atTop ? "top" : `${j.percent}%`}` : firstLine(text); }
     case "mcp__browser__list_tabs": { const j = json(text); return Array.isArray(j) ? `${j.length} tabs` : firstLine(text); }
     case "mcp__browser__snapshot": { const j = json(text) as { elements?: unknown[] } | unknown[] | null; const n = Array.isArray(j) ? j.length : Array.isArray((j as { elements?: unknown[] })?.elements) ? (j as { elements: unknown[] }).elements.length : null; return n !== null ? `${n} elements` : firstLine(text); }
     default: return images && !text.trim() ? "image" : (firstLine(text) || "(empty)");

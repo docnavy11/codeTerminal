@@ -86,6 +86,69 @@
     return (t.caption ? `**${t.caption}**\n` : "") + [line(head), "| " + Array.from({ length: width }, () => "---").join(" | ") + " |", ...t.rows.map(line)].join("\n");
   }
 
+  /* ---- find: text or regex in the visible text, or an element by role and
+     accessible name. Each match gets a ref (data-ct-ref) on the nearest
+     useful ancestor, so click/fill/scroll can take it from here. ---- */
+  const INTERACTIVE = 'a[href],button,input,textarea,select,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="option"]';
+  const roleOf = (el) => {
+    const r = el.getAttribute("role"); if (r) return r;
+    const t = el.tagName;
+    if (t === "A" && el.getAttribute("href")) return "link";
+    if (t === "BUTTON") return "button";
+    if (t === "INPUT") { const ty = (el.getAttribute("type") || "text").toLowerCase(); return ty === "checkbox" ? "checkbox" : ty === "radio" ? "radio" : ty === "submit" || ty === "button" ? "button" : "textbox"; }
+    if (t === "TEXTAREA") return "textbox"; if (t === "SELECT") return "combobox";
+    if (/^H[1-6]$/.test(t)) return "heading"; if (t === "IMG") return "img"; if (t === "TABLE") return "table";
+    return "";
+  };
+  const nameOf = (el) => clean(el.getAttribute("aria-label") || labelOf(el) || el.innerText || el.getAttribute("alt") || el.getAttribute("title") || el.value || "");
+  const rectOf = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };
+  const inView = (r) => r.y + r.h > 0 && r.y < innerHeight && r.x + r.w > 0 && r.x < innerWidth;
+
+  globalThis.ctFind = function ctFind(o) {
+    const limit = Math.min(o.limit || 25, 100);
+    const out = [];
+    if (o.role || o.name) {
+      const want = (o.role || "").toLowerCase(), name = (o.name || "").toLowerCase();
+      for (const el of document.querySelectorAll(want ? `${INTERACTIVE},[role],h1,h2,h3,h4,h5,h6,img,table` : INTERACTIVE)) {
+        if (!visible(el)) continue;
+        const role = roleOf(el).toLowerCase(); if (want && role !== want) continue;
+        const n = nameOf(el); if (name && !n.toLowerCase().includes(name)) continue;
+        const rect = rectOf(el); if (!rect.w && !rect.h) continue;
+        out.push({ ref: refOf(el), role, name: n.slice(0, 120), tag: el.tagName.toLowerCase(), rect, inViewport: inView(rect) });
+        if (out.length >= limit) break;
+      }
+      return { count: out.length, matches: out };
+    }
+    const re = o.regex ? new RegExp(o.regex, "i") : o.text ? new RegExp(o.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
+    if (!re) return { count: 0, matches: [], error: "give text, regex, or role/name" };
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => {
+      const p = n.parentElement; if (!p || SKIP.has(p.tagName) && p.tagName !== "FORM" && p.tagName !== "LABEL" && p.tagName !== "BUTTON") return NodeFilter.FILTER_REJECT;
+      return re.test(n.nodeValue || "") && visible(p) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    } });
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const s = n.nodeValue || ""; const m = re.exec(s); if (!m) continue;
+      const el = n.parentElement.closest(INTERACTIVE) || n.parentElement;
+      const start = Math.max(0, m.index - 60), end = Math.min(s.length, m.index + m[0].length + 60);
+      const rect = rectOf(el);
+      out.push({ ref: refOf(el), tag: el.tagName.toLowerCase(), role: roleOf(el), match: m[0], text: clean((start ? "…" : "") + s.slice(start, end) + (end < s.length ? "…" : "")), rect, inViewport: inView(rect) });
+      if (out.length >= limit) break;
+    }
+    return { count: out.length, matches: out };
+  };
+
+  /* ---- scroll: to an element (ref or selector), by pages, or to top/bottom;
+     reports where the viewport ended up. ---- */
+  globalThis.ctScroll = function ctScroll(o) {
+    const target = o.ref ? document.querySelector(`[data-ct-ref="${CSS.escape(o.ref)}"]`) : o.selector ? document.querySelector(o.selector) : null;
+    if ((o.ref || o.selector) && !target) return { error: `no element for ${o.ref ? "ref " + o.ref : o.selector}` };
+    if (target) target.scrollIntoView({ block: "center", inline: "nearest" });
+    else if (o.to === "top") window.scrollTo(0, 0);
+    else if (o.to === "bottom") window.scrollTo(0, document.documentElement.scrollHeight);
+    else window.scrollBy(0, (o.direction === "up" ? -1 : 1) * (o.pages || 1) * innerHeight * 0.9);
+    const y = Math.round(scrollY), h = document.documentElement.scrollHeight, vh = innerHeight;
+    return { scrollY: y, scrollHeight: h, innerHeight: vh, atTop: y <= 0, atBottom: y + vh >= h - 2, percent: h > vh ? Math.round(y / (h - vh) * 100) : 100, ...(target ? { rect: rectOf(target) } : {}) };
+  };
+
   globalThis.ctReadPage = function ctReadPage(mode, maxChars) {
     const max = maxChars || 20000;
     const cap = (s) => (s.length > max ? s.slice(0, max) + "\n…[truncated]" : s);
