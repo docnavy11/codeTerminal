@@ -686,6 +686,14 @@ extension's worker rather than inside the page, so a reload mid-wait does
 not kill it. Read-level. This replaces the `eval(document.readyState)`
 loops that made up six of the spiral's calls.
 
+**Tabs.** `open_tab` (returns the new tab's id), `close_tab`, `focus_tab`
+(bring it to the front, so you see what the agent is looking at), `back`,
+`forward` and `reload` (`hard` bypasses the cache). Open is gated on the
+destination like `navigate`; close, back, forward and reload are act-level
+on the tab's site; focus is read-level. Back/forward/reload wait for the
+navigation to commit and return the URL landed on. Measured in real
+Chromium (`test_extension_manages_tabs`).
+
 **`eval` awaits.** A returned promise is awaited (30 s cap), so
 `fetch('/api').then(r => r.json())` or an async IIFE returns its value; code
 with a top-level `await` runs as an async function body and must `return`.

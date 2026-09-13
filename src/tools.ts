@@ -325,7 +325,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act", handle_dialog: "act" };
+  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", navigate: "act", click: "act", fill: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
   /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
   const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
     if (!policy) return;
@@ -403,6 +403,21 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         "Answer the JavaScript dialog (alert, confirm or prompt) that is blocking a tab: accept presses OK, dismiss presses Cancel, text answers a prompt. Other tools fail with the dialog's message while one is open. Only a dialog raised after this session started acting in the tab (click, fill, press, navigate, eval) can be answered; the result says when it cannot — then ask the user to click it.",
         { tabId, accept: z.boolean().describe("true = OK, false = Cancel"), text: z.string().optional().describe("The answer, for a prompt") },
         gated("handle_dialog", (a) => bridge.send("handle_dialog", a, prefer()))),
+
+      // Tab management (#6): open, close, focus, back, forward, reload.
+      tool("open_tab", "Open a URL in a new tab and return its id. Use close_tab when done with it.",
+        { url: z.string().describe("Absolute URL"), active: z.boolean().optional().describe("Bring it to the front (default true)") },
+        async (a) => { await ensure(hostOfUrl(a.url), "open_tab", a.url); return text(stamp(await bridge.send("open_tab", a, prefer()), { host: hostOfUrl(a.url) })); }),
+      tool("close_tab", "Close a tab — tidy up after a lookup instead of leaving tabs behind.",
+        { tabId }, gated("close_tab", (a) => bridge.send("close_tab", a, prefer()))),
+      tool("focus_tab", "Bring a tab to the front (and its window), so the user sees it and it becomes the active tab.",
+        { tabId }, gated("focus_tab", (a) => bridge.send("focus_tab", a, prefer()))),
+      tool("back", "Go back one step in a tab's history; returns the URL it landed on.",
+        { tabId }, gated("back", (a) => bridge.send("back", a, prefer()))),
+      tool("forward", "Go forward one step in a tab's history; returns the URL it landed on.",
+        { tabId }, gated("forward", (a) => bridge.send("forward", a, prefer()))),
+      tool("reload", "Reload a tab (hard: bypass the cache).",
+        { tabId, hard: z.boolean().optional() }, gated("reload", (a) => bridge.send("reload", a, prefer()))),
 
       tool("navigate", "Navigate a tab to a URL, or open a new tab.",
         { tabId, url: z.string().describe("Absolute URL"), newTab: z.boolean().optional() },

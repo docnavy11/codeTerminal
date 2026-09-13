@@ -109,3 +109,14 @@ describe("handle_dialog summary", () => {
     assert.equal(sum({ handled: false, reason: "no dialog is open" }), "✗ no dialog is open");
   });
 });
+
+describe("tab management summaries", () => {
+  test("open/close/focus/back say what happened", () => {
+    const sum = (n: string, o: unknown) => summariseResult(`mcp__browser__${n}`, { tool_use_id: "t", content: JSON.stringify(o) }, undefined).summary;
+    assert.equal(sum("open_tab", { tabId: 12, url: "https://a.example/x" }), "opened tab 12 · https://a.example/x");
+    assert.equal(sum("close_tab", { closed: true, title: "Old" }), "closed · Old");
+    assert.equal(sum("focus_tab", { focused: true, title: "Front" }), "focused · Front");
+    assert.equal(sum("back", { url: "https://a.example/" }), "https://a.example/");
+    assert.equal(sum("reload", { url: "https://a.example/", loading: true }), "loading https://a.example/");
+  });
+});

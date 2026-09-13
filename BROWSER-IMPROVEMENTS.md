@@ -29,7 +29,7 @@ call). Screenshots go to disk and come back as a path the model then reads.
 | # | improvement | why | status |
 |---|---|---|---|
 | 5 | **`wait_for`** — selector, text, or network-idle, with a timeout. | The agent guesses with `eval(document.readyState)` loops; six of the spiral's evals were exactly this. | ☑ |
-| 6 | **Tab management** — `open_tab`, `close_tab`, `focus_tab`, `back`, `reload`. | `navigate {newTab}` is the only tab operation; the agent cannot tidy up after itself or return to where it was. | ☐ |
+| 6 | **Tab management** — `open_tab`, `close_tab`, `focus_tab`, `back`, `reload`. | `navigate {newTab}` is the only tab operation; the agent cannot tidy up after itself or return to where it was. | ☑ |
 | 7 | **`download`** — save a link or the current document into the files root via `chrome.downloads` (or the `fetch_bytes` path #1 already has). | "Get me all the invoices as PDFs" should end in the file browser, not in screenshots. Observed 2026-09-13: asked about a PDF tab, the agent's own plan B for an auth-walled file was `eval(fetch(location.href))` + base64 + write to disk + `Read` — one gated eval per page-set. A `download` tool is that path without the gymnastics, and it gives the model the rendered pages (layout) that the text layer loses. | ☑ |
 
 ## Safety and legibility
@@ -89,6 +89,20 @@ and the probe it came from):
   chrome UI); documented Chrome behaviour, narrative. `beforeunload` dialogs
   (the hook cannot see them; the debugger session reports them while
   attached) — untested.
+
+## Tabs (#6): what was measured, 2026-09-13
+
+Real Chromium with the extension (`test_extension_manages_tabs` and the probes
+behind it): `open_tab` returns an id that `list_tabs` shows and `active:false`
+leaves the front tab alone; `focus_tab` makes it active; `close_tab` removes
+it. **`chrome.tabs.goBack` is not used**: measured on a history of
+[about:blank, /one, /two] it landed on about:blank (two entries back), both
+on the active and on a background tab, in 3 of 3 runs. The page's own
+`history.back()` and the debugger's `Page.navigateToHistoryEntry` both
+landed on /one, so `back`/`forward` use the debugger session (attached
+anyway for act-level calls) and fall back to `history.go()` in the page.
+A `back` issued while a navigation is still in flight would step over the
+page just asked for; the worker waits for the tab to finish loading first.
 
 ## Measured basis
 

@@ -267,6 +267,22 @@ describe("browser tools", () => {
     assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
   });
 
+  test("tab management: open is gated on the destination, close/back/reload are act-level on the tab, focus is read-level", async () => {
+    const asks: string[] = []; const seen: [string, Record<string, unknown>][] = [];
+    const policy = { allowed: (h: string, level: string) => h === "ok.example" && level === "read", evalAllowed: () => false, ask: async (host: string, action: string, _d: string | undefined, level: string) => { asks.push(`${action}:${host}:${level}`); return "allow" as const; } };
+    const rec = (name: string) => (p: Record<string, unknown>) => { seen.push([name, p]); return { tabId: 7, url: "https://ok.example/after", title: "After", closed: true, focused: true }; };
+    const { bridge } = bridged({ tab_url: () => ({ tabId: 7, url: "https://ok.example/page", title: "Page" }), open_tab: rec("open_tab"), close_tab: rec("close_tab"), focus_tab: rec("focus_tab"), back: rec("back"), forward: rec("forward"), reload: rec("reload") });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    const opened = JSON.parse(await call(srv, "open_tab", { url: "https://new.example/x", active: false }));
+    assert.deepEqual(asks, ["open_tab:new.example:act"]); assert.deepEqual(seen[0], ["open_tab", { url: "https://new.example/x", active: false }]);
+    assert.deepEqual(opened.at, { host: "new.example" });
+    await call(srv, "focus_tab", { tabId: 7 }); assert.equal(asks.length, 1, "focus on a read-allowed site does not ask");
+    await call(srv, "back", { tabId: 7 }); await call(srv, "forward", { tabId: 7 }); await call(srv, "reload", { tabId: 7, hard: true }); await call(srv, "close_tab", { tabId: 7 });
+    assert.deepEqual(asks.slice(1), ["back:ok.example:act", "forward:ok.example:act", "reload:ok.example:act", "close_tab:ok.example:act"]);
+    assert.deepEqual(seen.map(([n]) => n), ["open_tab", "focus_tab", "back", "forward", "reload", "close_tab"]);
+    assert.deepEqual(seen[4][1], { tabId: 7, hard: true });
+  });
+
   test("wait_for needs a condition, forwards the rest, and is read-level", async () => {
     const seen: Record<string, unknown>[] = [];
     const policy = { allowed: (_h: string, level: string) => level === "read", evalAllowed: () => false, ask: async () => "deny" as const };

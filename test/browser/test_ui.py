@@ -865,3 +865,39 @@ def test_extension_eval_awaits_promises(playwright):
         assert call(sw, "2 * 21") == {"ok": True, "r": 42}, "the worker still answers after a pending eval"
     finally:
         ctx.close(); srv.shutdown()
+
+
+def test_extension_manages_tabs(playwright):
+    """The real extension: open a tab (returns its id, listed), focus another,
+    back/forward/reload report the URL landed on, close removes it."""
+    import tempfile, threading, http.server, socketserver
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers()
+            self.wfile.write(f"<title>page {self.path}</title><a id=n href='/two'>two</a>".encode())
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]; base = f"http://127.0.0.1:{port}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp(prefix="ct-tabs-prof-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
+    try:
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        page = ctx.new_page(); page.goto(base + "/one"); time.sleep(0.2)
+        first = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        opened = call(sw, "open_tab", {"url": base + "/three", "active": False}); time.sleep(0.4)
+        ids = [t["id"] for t in call(sw, "list_tabs", {})]
+        assert opened["tabId"] in ids and opened["url"].endswith("/three")
+        assert [t for t in call(sw, "list_tabs", {}) if t["id"] == first][0]["active"] is True, "active:false leaves the first tab in front"
+        assert call(sw, "focus_tab", {"tabId": opened["tabId"]})["focused"] is True; time.sleep(0.2)
+        assert [t for t in call(sw, "list_tabs", {}) if t["id"] == opened["tabId"]][0]["active"] is True
+        call(sw, "navigate", {"tabId": first, "url": base + "/two"}); time.sleep(0.5)
+        assert call(sw, "back", {"tabId": first})["url"].endswith("/one")
+        assert call(sw, "forward", {"tabId": first})["url"].endswith("/two")
+        r = call(sw, "reload", {"tabId": first, "hard": True}); assert r["url"].endswith("/two") and r.get("title") == "page /two"
+        closed = call(sw, "close_tab", {"tabId": opened["tabId"]}); assert closed["closed"] is True and closed["url"].endswith("/three")
+        time.sleep(0.2); assert opened["tabId"] not in [t["id"] for t in call(sw, "list_tabs", {})]
+    finally:
+        ctx.close(); srv.shutdown()

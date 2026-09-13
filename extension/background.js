@@ -620,6 +620,52 @@ async function handle(action, p) {
       })};
     }
 
+    // Tab management: open, close, focus, back, forward, reload.
+    case "open_tab": {
+      const t = await chrome.tabs.create({ url: p.url, active: p.active !== false });
+      return { tabId: t.id, url: p.url, windowId: t.windowId };
+    }
+    case "close_tab": {
+      const t = await resolveTab(p.tabId);
+      await releaseDebugger(t.id); dialogs.delete(t.id);
+      await chrome.tabs.remove(t.id);
+      return { tabId: t.id, closed: true, title: t.title, url: t.url };
+    }
+    case "focus_tab": {
+      const t = await resolveTab(p.tabId);
+      await chrome.tabs.update(t.id, { active: true });
+      try { await chrome.windows.update(t.windowId, { focused: true }); } catch { /* no window focus in some hosts */ }
+      return { tabId: t.id, focused: true, title: t.title, url: t.url };
+    }
+    case "back": case "forward": case "reload": {
+      let t = await resolveTab(p.tabId);
+      // A navigation still in flight (a background tab loads slowly) would make
+      // "back" step over the page just asked for; let it commit first.
+      for (let i = 0; i < 30 && t.status !== "complete"; i++) { await new Promise((r) => setTimeout(r, 100)); t = await chrome.tabs.get(t.id); }
+      const attached = await ensureDebugger(t.id);
+      if (action === "reload") await chrome.tabs.reload(t.id, { bypassCache: !!p.hard });
+      else {
+        // Not chrome.tabs.goBack: measured landing two entries back (about:blank
+        // from [blank, one, two]). The page's own history.back() and the
+        // debugger's navigateToHistoryEntry both land on the previous entry.
+        const delta = action === "back" ? -1 : 1;
+        if (attached) {
+          const h = await chrome.debugger.sendCommand({ tabId: t.id }, "Page.getNavigationHistory");
+          const e = h.entries[h.currentIndex + delta];
+          if (!e) throw new Error(`nothing to go ${action} to`);
+          await chrome.debugger.sendCommand({ tabId: t.id }, "Page.navigateToHistoryEntry", { entryId: e.id });
+        } else await run(t.id, (d) => history.go(d), [delta]);
+      }
+      // the new URL is known once the navigation has committed; give it a moment
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        const now = await chrome.tabs.get(t.id);
+        if (now.status === "complete" && (action === "reload" || now.url !== t.url)) return { tabId: t.id, url: now.url, title: now.title };
+      }
+      const now = await chrome.tabs.get(t.id);
+      return { tabId: t.id, url: now.url, title: now.title, ...(now.status !== "complete" ? { loading: true } : {}) };
+    }
+
     case "navigate": {
       if (p.newTab) { const t = await chrome.tabs.create({ url: p.url }); return { tabId: t.id, url: p.url }; }
       const t = await resolveTab(p.tabId);
