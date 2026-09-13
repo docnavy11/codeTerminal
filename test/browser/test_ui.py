@@ -1,7 +1,7 @@
 """The shared client in a real browser against the fixture server: the paths
 that only exist in the DOM — reconnects, streaming, cards, downloads, layout."""
 import os, time
-from conftest import open_ui, send, wait, wait_reply, last_reply
+from conftest import serve_html, open_ui, send, wait, wait_reply, last_reply
 
 
 def test_prompt_round_trip(page, server):
@@ -218,11 +218,11 @@ def test_tool_rows_keep_their_height_when_the_log_overflows(browser, server):
 
 
 def test_extension_connects_once_its_address_is_set(server, playwright):
+    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     """The real extension in Chromium: it starts with no address (badge 'set'),
     and connecting must begin the moment the address is stored — not on the
     next worker restart."""
     import json, urllib.request, tempfile
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     prof = tempfile.mkdtemp(prefix="ct-ext-prof-")
     connected = lambda: json.load(urllib.request.urlopen(server.base + "/setup"))["extension"]["connected"]
     ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
@@ -539,8 +539,8 @@ def test_site_and_eval_cards(page, server):
     assert page.text_content("#statustext") == "waiting for you — a site"
     page.click(".card.site button[data-decision=deny]"); wait_reply(page, "site: deny")
     send(page, "eval-me")
-    page.wait_for_selector(".card.site", timeout=10000)
-    cards = page.locator(".card.site"); last = cards.nth(cards.count() - 1)
+    page.wait_for_selector(".card.site:not(.done)", timeout=10000)   # not the denied one still on screen
+    cards = page.locator(".card.site:not(.done)"); last = cards.nth(cards.count() - 1)
     assert last.locator("h4").text_content() == "Run JavaScript on bank.example?"
     assert last.locator("pre").text_content() == "document.title"
     assert last.locator(".row button").all_text_contents() == ["Allow once", "Allow on this site (this chat)", "Deny"]
@@ -777,32 +777,24 @@ def test_viewer_tables_sort_filter_resize(page, server):
     assert col(0) == ["apple", "fig", "pear", "kiwi"], "a drag on the handle must not change the (amount-sorted) order"
 
 
-def test_extension_detects_and_answers_dialogs(playwright):
+def test_extension_detects_and_answers_dialogs(ext_pages):
     """The real extension in Chromium: a confirm/prompt/alert raised by the
     agent's own click is reported with its message, blocks other calls at
     once instead of hanging, and is answered through the debugger session the
     worker attached before acting. After `release`, a dialog the page raises
     itself is still detected but reported as not answerable."""
-    import tempfile, threading, http.server, socketserver
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     html = (b"<button id=b onclick=\"window.r = confirm('Delete everything?')\">go</button>"
             b"<button id=pr onclick=\"window.p = prompt('Name?', 'anon')\">p</button>"
             b"<button id=al onclick=\"alert('Saved!'); window.a = 1\">a</button><p>hello page</p>")
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
-        def log_message(self, *a): pass
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp(prefix="ct-dlg-prof-")
-    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    srv = serve_html(html); port = srv.port
+    ctx = ext_pages
     call = lambda sw, action, params, ms=6000: sw.evaluate(
         "([a, p, ms]) => Promise.race([ctHandle(a, p).then(r => ({ok:true, r}), e => ({ok:false, e:String(e && e.message || e)})),"
         " new Promise(res => setTimeout(() => res({timeout:true}), ms))])", [action, params, ms])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.sw
         page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
-        page.on("dialog", lambda d: None)                      # Playwright must leave dialogs alone
+        leftovers = []; page.on("dialog", lambda d: leftovers.append(d))   # Playwright must leave dialogs alone
         tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
         assert call(sw, "dialog_state", {"tabId": tab})["r"]["open"] is False
         t0 = time.time(); r = call(sw, "click", {"tabId": tab, "selector": "#b"}, 12000)
@@ -828,31 +820,24 @@ def test_extension_detects_and_answers_dialogs(playwright):
         flagged = [t for t in call(sw, "list_tabs", {})["r"] if t["id"] == tab][0]
         assert flagged["dialog"] == {"type": "confirm", "message": "Leave?"}
     finally:
-        ctx.close(); srv.shutdown()
+        for d in leftovers:
+            try: d.dismiss()
+            except Exception: pass
+        srv.shutdown()
 
 
-def test_extension_eval_awaits_promises(playwright):
+def test_extension_eval_awaits_promises(ext_pages):
     """eval returns the settled value of a promise, runs top-level await as an
     async body, reports a rejection as the error, and does not hang on a
     promise that never settles (measured with a 30 s cap lowered here by
     racing the call itself)."""
-    import tempfile, threading, http.server, socketserver
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200); self.send_header("Content-Type", "text/html" if self.path == "/" else "application/json"); self.end_headers()
-            self.wfile.write(b"<p id=t>hello page</p>" if self.path == "/" else b'{"n": 42}')
-        def log_message(self, *a): pass
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp(prefix="ct-eval-prof-")
-    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    srv = serve_html(lambda path: (200, "text/html", b"<p id=t>hello page</p>") if path == "/" else (200, "application/json", b'{"n": 42}')); port = srv.port
+    ctx = ext_pages
     call = lambda sw, code, ms=8000: sw.evaluate(
         "([code, ms]) => Promise.race([ctHandle('eval', {code}).then(r => ({ok:true, r: r.result}), e => ({ok:false, e:String(e && e.message || e)})),"
         " new Promise(res => setTimeout(() => res({timeout:true}), ms))])", [code, ms])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.sw
         page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
         assert call(sw, "1 + 1") == {"ok": True, "r": 2}
         assert call(sw, "document.getElementById('t').textContent") == {"ok": True, "r": "hello page"}
@@ -864,27 +849,17 @@ def test_extension_eval_awaits_promises(playwright):
         r = call(sw, "new Promise(() => {})", 2000); assert r == {"timeout": True}, "a never-settling promise is capped at 30 s, beyond this test's patience — it must at least not break the worker"
         assert call(sw, "2 * 21") == {"ok": True, "r": 42}, "the worker still answers after a pending eval"
     finally:
-        ctx.close(); srv.shutdown()
+        srv.shutdown()
 
 
-def test_extension_manages_tabs(playwright):
+def test_extension_manages_tabs(ext_pages):
     """The real extension: open a tab (returns its id, listed), focus another,
     back/forward/reload report the URL landed on, close removes it."""
-    import tempfile, threading, http.server, socketserver
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers()
-            self.wfile.write(f"<title>page {self.path}</title><a id=n href='/two'>two</a>".encode())
-        def log_message(self, *a): pass
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]; base = f"http://127.0.0.1:{port}"
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp(prefix="ct-tabs-prof-")
-    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    srv = serve_html(lambda path: f"<title>page {path}</title><a id=n href='/two'>two</a>".encode()); port = srv.port; base = srv.base
+    ctx = ext_pages
     call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.sw
         page = ctx.new_page(); page.goto(base + "/one"); time.sleep(0.2)
         first = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
         opened = call(sw, "open_tab", {"url": base + "/three", "active": False}); time.sleep(0.4)
@@ -900,16 +875,14 @@ def test_extension_manages_tabs(playwright):
         closed = call(sw, "close_tab", {"tabId": opened["tabId"]}); assert closed["closed"] is True and closed["url"].endswith("/three")
         time.sleep(0.2); assert opened["tabId"] not in [t["id"] for t in call(sw, "list_tabs", {})]
     finally:
-        ctx.close(); srv.shutdown()
+        srv.shutdown()
 
 
-def test_extension_fills_forms(playwright):
+def test_extension_fills_forms(ext_pages):
     """The real extension: read_page forms gives refs; fill_form sets text,
     textarea, select (by text), checkbox and radio in one call, fires the
     events a framework listens to, reports a missing ref and a select with no
     matching option without stopping, and does not submit."""
-    import tempfile, threading, http.server, socketserver
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     html = b"""<form id=f action="/submitted"><label>Name <input name=name></label>
       <label>Notes <textarea name=notes></textarea></label>
       <label>Country <select name=country><option value="">--</option><option value=be>Belgium</option><option value=nl>Netherlands</option></select></label>
@@ -918,17 +891,11 @@ def test_extension_fills_forms(playwright):
       <button type=submit>Order</button></form>
       <script>window.ev = []; for (const el of document.querySelectorAll('input,select,textarea')) { el.addEventListener('input', e => ev.push('i:' + el.name)); el.addEventListener('change', e => ev.push('c:' + el.name)); }
       document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); window.submitted = true; });</script>"""
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
-        def log_message(self, *a): pass
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp(prefix="ct-form-prof-")
-    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    srv = serve_html(html); port = srv.port
+    ctx = ext_pages
     call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.sw
         page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
         tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
         forms = call(sw, "read_page", {"tabId": tab, "mode": "forms"})["forms"]
@@ -952,31 +919,24 @@ def test_extension_fills_forms(playwright):
         assert call(sw, "fill", {"tabId": tab, "selector": "input[name=gift]", "value": "off"})["set"] is False
         assert page.evaluate("() => [f.country.value, f.gift.checked]") == ["be", False]
     finally:
-        ctx.close(); srv.shutdown()
+        srv.shutdown()
 
 
-def test_extension_uploads_files(playwright):
+def test_extension_uploads_files(ext_pages):
     """The real extension: bytes sent to the worker become a File in the
     page's <input type=file>; the change handler sees name, size, type and
     content; append keeps earlier files on a multiple input; a non-file
     input is refused."""
-    import base64, tempfile, threading, http.server, socketserver
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
+    import base64
     html = b"""<input type=file id=one accept=".pdf"><input type=file id=many multiple><input type=text id=txt>
       <script>window.seen = []; for (const id of ['one','many']) document.getElementById(id).addEventListener('change', async (e) => {
         for (const f of e.target.files) seen.push({ id, name: f.name, size: f.size, type: f.type, head: await f.slice(0, 8).text() }); });</script>"""
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
-        def log_message(self, *a): pass
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp(prefix="ct-up-prof-")
-    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    srv = serve_html(html); port = srv.port
+    ctx = ext_pages
     call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p).then(r => ({ok:true, r}), e => ({ok:false, e:String(e && e.message || e)}))", [action, params])
     b64 = lambda b: base64.b64encode(b).decode()
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.sw
         page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
         tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
         r = call(sw, "upload", {"tabId": tab, "selector": "#one", "name": "inv.pdf", "mime": "application/pdf", "data": b64(b"%PDF-1.4 fake")})
@@ -996,15 +956,13 @@ def test_extension_uploads_files(playwright):
         r = call(sw, "click", {"tabId": tab, "selector": "#nothing-here"})
         assert r["ok"] is False and "element not found: #nothing-here" in r["e"], "a page-side miss is an error, not a null result"
     finally:
-        ctx.close(); srv.shutdown()
+        srv.shutdown()
 
 
-def test_extension_reads_console_and_network(playwright):
+def test_extension_reads_console_and_network(ext_pages):
     """The real extension: the document_start hook records console output,
     uncaught errors and rejections, fetch/XHR with status, and resource loads;
     filters and clear work; the page's own console/fetch keep working."""
-    import tempfile, threading, http.server, socketserver
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     html = b"""<img src="/pic.png"><script>
       console.log('hello', {a: 1}); console.warn('careful'); console.error('bad', new Error('boom'));
       setTimeout(() => { nosuch(); }, 10);
@@ -1014,22 +972,11 @@ def test_extension_reads_console_and_network(playwright):
       fetch('/api/missing', {method: 'POST'}).then(r => results.push(['fetch', r.status]));
       const x = new XMLHttpRequest(); x.open('PUT', '/api/xhr'); x.onloadend = () => results.push(['xhr', x.status]); x.send();
     </script>"""
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            code = 200 if self.path in ("/", "/api/ok", "/pic.png") else 404
-            self.send_response(code); self.send_header("Content-Type", "text/html" if self.path == "/" else "application/octet-stream"); self.end_headers()
-            self.wfile.write(html if self.path == "/" else b"x" * 10)
-        do_POST = do_GET
-        def do_PUT(self): self.send_response(500); self.end_headers()
-        def log_message(self, *a): pass
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp(prefix="ct-con-prof-")
-    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    srv = serve_html(lambda path: (200, "text/html", html) if path == "/" else (200 if path in ("/api/ok", "/pic.png") else 404, "application/octet-stream", b"x" * 10)); port = srv.port
+    ctx = ext_pages
     call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p).then(r => ({ok:true, r}), e => ({ok:false, e:String(e && e.message || e)}))", [action, params])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.sw
         page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.6)
         tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
         c = call(sw, "console_read", {"tabId": tab})["r"]
@@ -1058,7 +1005,7 @@ def test_extension_reads_console_and_network(playwright):
         c2 = call(sw, "console_read", {"tabId": tab, "clear": True})["r"]; assert c2["total"] >= 5
         assert call(sw, "console_read", {"tabId": tab})["r"]["total"] == 0
     finally:
-        ctx.close(); srv.shutdown()
+        srv.shutdown()
 
 
 def test_submit_card(page, server):
@@ -1074,29 +1021,21 @@ def test_submit_card(page, server):
     cards = page.locator(".card.submit"); cards.nth(cards.count() - 1).locator("button[data-decision=allow]").click(); wait_reply(page, "submit: allow")
 
 
-def test_extension_probes_submits(playwright):
+def test_extension_probes_submits(ext_pages):
     """The real extension: the probe says what a click/Enter would submit
     (fields, masked password, button, method), says no for a plain button,
     a search box with nothing typed, or another key; and press Enter in a
     form field now really submits (a synthetic key alone never did)."""
-    import tempfile, threading, http.server, socketserver
-    ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     html = b"""<form id=login method=post action="/login"><input name=user value=yvan><input name=pw type=password value=secret>
         <label><input type=checkbox name=remember checked> remember</label><button>Sign in</button></form>
       <form id=search action="/s"><input name=q></form>
       <form id=js method=post action="/js"><input name=a value=1><button type=button id=plain>Not a submit</button><button type=submit id=go>Go</button></form>
       <script>window.subs = []; for (const f of document.querySelectorAll('form')) f.addEventListener('submit', e => { e.preventDefault(); subs.push(f.id); });</script>"""
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self): self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(html)
-        def log_message(self, *a): pass
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H); port = srv.server_address[1]
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp(prefix="ct-sub-prof-")
-    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
-                                                        args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
+    srv = serve_html(html); port = srv.port
+    ctx = ext_pages
     call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.sw
         page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
         tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
         r = call(sw, "submit_probe", {"tabId": tab, "selector": "#login button"})
@@ -1115,4 +1054,4 @@ def test_extension_probes_submits(playwright):
         assert call(sw, "click", {"tabId": tab, "selector": "#go"})["clicked"] == "button"
         assert page.evaluate("() => window.subs") == ["search", "login", "js"]
     finally:
-        ctx.close(); srv.shutdown()
+        srv.shutdown()

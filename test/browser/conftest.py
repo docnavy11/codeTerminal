@@ -119,3 +119,55 @@ def last_reply(pg):
 
 def wait_reply(pg, contains, timeout=10):
     wait(pg, f"() => [...document.querySelectorAll('#log .msg.md')].some(m => m.textContent.includes({contains!r}))", timeout, f"reply containing {contains!r}")
+
+
+EXT = os.path.join(REPO, "extension")
+
+
+@pytest.fixture(scope="session")
+def ext_ctx(playwright):
+    """One Chromium with the real extension for the whole session (a launch
+    is ~1.5 s; seven tests used to launch seven). Tests open their own pages
+    and close them; the worker's per-tab state goes with the tab."""
+    prof = tempfile.mkdtemp(prefix="ct-ext-shared-")
+    ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
+                                                        args=[f"--disable-extensions-except={EXT}", f"--load-extension={EXT}"])
+    ctx.sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+    yield ctx
+    ctx.close(); shutil.rmtree(prof, ignore_errors=True)
+
+
+@pytest.fixture
+def ext_pages(ext_ctx):
+    """Pages opened during one test; closed after it so the next test's
+    'first http tab' is its own."""
+    before = set(id(p) for p in ext_ctx.pages)
+    yield ext_ctx
+    for p in list(ext_ctx.pages):
+        if id(p) not in before:
+            try: p.close()
+            except Exception: pass
+
+
+def serve_html(html):
+    """A tiny http server for a page (the extension does not script data: URLs)."""
+    import threading, http.server, socketserver
+    body = html if callable(html) else (lambda path: html)
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            r = body(self.path)
+            if isinstance(r, tuple): code, ctype, data = r
+            else: code, ctype, data = 200, "text/html", r
+            self.send_response(code); self.send_header("Content-Type", ctype); self.end_headers(); self.wfile.write(data)
+        do_POST = do_GET
+        def do_PUT(self): self.send_response(500); self.end_headers()
+        def log_message(self, *a): pass
+    # Threading, with a read timeout: a plain TCPServer handles one connection
+    # at a time, and Chrome's idle preconnect sockets (opened, never written)
+    # parked serve_forever in readline() so shutdown() never returned — the
+    # suite hung at the end of a test (measured: faulthandler at srv.shutdown()).
+    H.timeout = 5
+    class S(socketserver.ThreadingTCPServer): daemon_threads = True; allow_reuse_address = True
+    srv = S(("127.0.0.1", 0), H); srv.port = srv.server_address[1]; srv.base = f"http://127.0.0.1:{srv.port}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
