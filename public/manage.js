@@ -8,6 +8,21 @@ const errBox = $("err");
 
 const show = (msg) => { errBox.textContent = msg; errBox.hidden = !msg; };
 
+/* One dim sentence per section, in the same place every time, instead of the
+   paragraph some sections had and others did not. A loader can replace it
+   when the truth depends on the state (the site gate being off). */
+const CAPTIONS = {
+  chats: "Every conversation on this server: search them, rename them, move one to another project, or read one through without opening the terminal.",
+  prompts: "Prompts you keep. They appear in the ⌘ menu in a chat, filtered by the site you are on. {url} {title} {host} {selection} are filled from the active tab.",
+  projects: "A project is a directory under the projects root — discovered, not created. A chat points at one, and works there.",
+  browser: "The sites the browser tools may use without asking, and at what level.",
+  server: "A Chromium running on this machine, headless, with its own profile — so a chat can browse while your laptop is off. Log in through the live view once; the session stays in the profile.",
+  schedules: "A prepared prompt that runs by itself at the times you set, in a chat of its own. Every run appears in the chat list, named after the schedule and the time.",
+};
+const setCaption = (text) => { $("caption").textContent = text; };
+/* Counts on the tabs themselves, so the navigation reports what is behind it. */
+const setCount = (tab, n) => { const el = $("n-" + tab); if (el) el.textContent = n == null ? "" : String(n); };
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   const body = await r.json().catch(() => ({}));
@@ -60,6 +75,8 @@ function renderChats() {
     return okQ && okP;
   });
   bar.append(el("span", "count", `${shown.length} of ${chatState.chats.length}`));
+  setCount("chats", chatState.chats.length);
+  setCount("projects", chatState.projects.length);
   host.append(bar);
 
   const found = el("div", "found"); found.id = "found"; host.append(found);
@@ -74,9 +91,9 @@ function renderChats() {
     row.append(main);
     row.append(el("span", "tag", c.project ?? "general"));
 
-    const view = el("button", "", "view");
+    const view = el("button", "quiet", "view");
     view.onclick = () => showChat(c.id);
-    const rename = el("button", "", "rename");
+    const rename = el("button", "quiet", "rename");
     rename.onclick = async () => {
       const t = prompt("Rename this chat", c.title);
       if (!t?.trim()) return;
@@ -85,20 +102,27 @@ function renderChats() {
       catch (e) { show(e.message); }
     };
 
-    // Moving a chat rebuilds its session, so the server only allows it on the
-    // chat that is currently open. Say so rather than failing cryptically.
-    const move = el("select");
-    move.append(new Option(c.id === chatState.active ? "move to…" : "move (open it first)", ""));
-    if (c.id === chatState.active) for (const p of chatState.projects) move.append(new Option(p.name, p.id));
-    move.disabled = c.id !== chatState.active;
-    move.onchange = async () => {
-      if (!move.value) return;
-      try { await api(`/chats/${c.id}`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project: move.value }) }); show(""); await loadChats(); }
-      catch (e) { show(e.message); move.value = ""; }
-    };
+    /* Moving a chat rebuilds its session, so the server only allows it on the
+       chat that is currently open. A disabled select saying so on every row
+       was the widest thing in the list and useful on one row in twelve; the
+       control now appears only where it works, and the others say why. */
+    let move;
+    if (c.id === chatState.active) {
+      move = el("select");
+      move.append(new Option("move to…", ""));
+      for (const p of chatState.projects) move.append(new Option(p.name, p.id));
+      move.onchange = async () => {
+        if (!move.value) return;
+        try { await api(`/chats/${c.id}`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project: move.value }) }); show(""); await loadChats(); }
+        catch (e) { show(e.message); move.value = ""; }
+      };
+    } else {
+      move = el("button", "quiet", "move");
+      move.onclick = () => show("Open that chat in the terminal first — moving it rebuilds its session, so the server only allows it on the open one.");
+    }
 
-    const del = el("button", "danger", "delete");
+    const del = el("button", "quiet danger", "delete");
     del.onclick = async () => {
       if (!confirm(`Delete "${c.title}"? This cannot be undone.`)) return;
       try { await api(`/chats/${c.id}`, { method: "DELETE" }); show(""); await loadChats(); }
@@ -215,9 +239,10 @@ function renderPrompts() {
   host.replaceChildren();
 
   const bar = el("div", "bar");
-  const add = el("button", "", "+ new prompt");
+  const add = el("button", "primary", "New prompt");
   add.onclick = () => { promptState.editing = { title: "", text: "", domains: [] }; renderPrompts(); };
   bar.append(add, el("span", "count", `${promptState.all.length} saved`));
+  setCount("prompts", promptState.all.length);
   host.append(bar);
 
   if (promptState.editing) host.append(promptEditor());
@@ -230,9 +255,9 @@ function renderPrompts() {
     row.append(main);
     row.append(el("span", "tag", p.domains.length ? p.domains.join(" ") : "everywhere"));
 
-    const edit = el("button", "", "edit");
+    const edit = el("button", "quiet", "edit");
     edit.onclick = () => { promptState.editing = { ...p }; renderPrompts(); window.scrollTo(0, 0); };
-    const del = el("button", "danger", "delete");
+    const del = el("button", "quiet danger", "delete");
     del.onclick = async () => {
       if (!confirm(`Delete "${p.title}"?`)) return;
       try { await api(`/prompts/${p.id}`, { method: "DELETE" }); show(""); await loadPrompts(); }
@@ -253,7 +278,7 @@ function promptEditor() {
   const text = Object.assign(el("textarea"), { value: e.text ?? "" });
 
   const actions = el("div", "actions");
-  const save = el("button", "", e.id ? "Save changes" : "Create");
+  const save = el("button", "primary", e.id ? "Save changes" : "Create");
   save.onclick = async () => {
     try {
       await api("/prompts", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -303,7 +328,7 @@ async function loadProjects() {
       row.append(main);
       row.append(el("span", "tag",
         p.chats ? `${p.chats} chat${p.chats === 1 ? "" : "s"} · ${ago(p.lastUsed)}` : "unused"));
-      const see = el("button", "", "see chats");
+      const see = el("button", "quiet", "see chats");
       see.onclick = () => {
         chatState.project = p.id; chatState.q = "";
         tab("chats"); renderChats();
@@ -323,13 +348,14 @@ async function loadProjects() {
 async function loadBrowser() {
   const { gated, hosts } = await api("/browser-allow");
   const host = $("browser"); host.replaceChildren();
-  host.append(el("p", "hint", gated
-    ? "Claude asks once per chat before reading a site not listed here, and again before acting on it (click, type, navigate); eval asks every time. \"Always\" on that card adds the site at that level. Patterns: example.com or *.example.com."
-    : "The site gate is off (CODETERM_BROWSER_GATE=0): browser tools act on any site without asking."));
+  setCaption(gated
+    ? "The sites the browser tools may use without asking. Claude asks once per chat before reading a site that is not here, and again before acting on it (click, type, navigate); eval asks every time. “Always” on that card adds the site at that level. Patterns: example.com or *.example.com."
+    : "The site gate is off (CODETERM_BROWSER_GATE=0): browser tools act on any site without asking.");
+  setCount("browser", hosts.length);
   const bar = el("div", "bar");
   const input = Object.assign(el("input"), { placeholder: "example.com or *.example.com" });
   const lvl = el("select"); lvl.append(new Option("read", "read"), new Option("read + act", "act")); lvl.value = "read";
-  const add = el("button", "", "add");
+  const add = el("button", "primary", "Add");
   const setLevel = async (h, level) => { try { await api("/browser-allow", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host: h, level }) }); await loadBrowser(); } catch (e) { show(e.message); } };
   add.onclick = async () => { await setLevel(input.value, lvl.value); input.value = ""; };
   input.onkeydown = (e) => { if (e.key === "Enter") add.click(); };
@@ -339,9 +365,10 @@ async function loadBrowser() {
   for (const { host: h, level } of hosts) {
     const row = el("div", "row");
     const main = el("div", "main"); main.append(el("div", "title", h)); main.append(el("div", "meta", level === "act" ? "read + act — may click, type, navigate" : "read only — acting asks")); row.append(main);
-    const sw = el("button", "", level === "act" ? "make read-only" : "allow acting");
+    row.append(el("span", "tag", level === "act" ? "read + act" : "read"));
+    const sw = el("button", "quiet", level === "act" ? "make read-only" : "allow acting");
     sw.onclick = () => setLevel(h, level === "act" ? "read" : "act");
-    const rm = el("button", "danger", "remove");
+    const rm = el("button", "quiet danger", "remove");
     rm.onclick = async () => { try { await api(`/browser-allow/${encodeURIComponent(h)}`, { method: "DELETE" }); await loadBrowser(); } catch (e) { show(e.message); } };
     row.append(sw, rm); host.append(row);
   }
@@ -354,30 +381,33 @@ async function loadBrowser() {
 async function loadServer() {
   const st = await api("/browser/server");
   const host = $("server"); host.replaceChildren();
-  const p = document.createElement("p"); p.className = "hint";
-  p.textContent = "A Chromium that runs on this machine, headless, with its own profile. Log in to sites through the live view once; the sessions stay in the profile. In a chat, pick “server browser” in the header to make its browser tools act here instead of in your own browser.";
-  host.append(p);
-  const row = document.createElement("div"); row.className = "row";
-  const state = document.createElement("span"); state.className = "pill " + (st.running ? "ok" : "warn");
-  state.textContent = st.running ? `running · pid ${st.pid} · ${st.viewers} viewer${st.viewers === 1 ? "" : "s"}` : "stopped";
-  row.append(state);
-  const btn = document.createElement("button"); btn.textContent = st.running ? "Stop" : "Start";
+
+  // Its state and the one button that changes it, on the first line.
+  const state = el("div", "state");
+  const pill = el("span", "pill " + (st.running ? "ok" : "warn"), st.running ? "running" : "stopped");
+  state.append(pill);
+  if (st.running) state.append(el("span", "hint", `pid ${st.pid} · ${st.viewers} viewer${st.viewers === 1 ? "" : "s"} · ${st.tabs?.length ?? 0} tab${st.tabs?.length === 1 ? "" : "s"}`));
+  const btn = el("button", st.running ? "" : "primary", st.running ? "Stop" : "Start");
   btn.onclick = async () => { btn.disabled = true; try { await api(`/browser/server/${st.running ? "stop" : "start"}`, { method: "POST" }); } catch (e) { show(e.message); } await loadServer(); };
-  row.append(btn);
-  if (st.running) { const view = document.createElement("a"); view.href = "/browser.html"; view.target = "_blank"; view.textContent = "Open live view ↗"; view.className = "btnlink"; row.append(view); }
-  host.append(row);
-  const dl = document.createElement("dl"); dl.className = "kv";
-  const kv = (k, v) => { const dt = document.createElement("dt"); dt.textContent = k; const dd = document.createElement("dd"); dd.textContent = v; dl.append(dt, dd); };
+  state.append(btn);
+  if (st.running) { const view = el("a", "btnlink", "Open live view ↗"); view.href = "/browser.html"; view.target = "_blank"; state.append(view); }
+  host.append(state);
+
+  const panel = el("div", "panel");
+  const dl = el("dl", "kv");
+  const kv = (k, v) => { dl.append(el("dt", "", k), el("dd", "", v)); };
   kv("Chromium", st.chromium ?? "none found — set CODETERM_CHROMIUM");
   kv("Profile", st.profileDir);
   if (st.extensionId) kv("Extension id inside", st.extensionId);
   if (st.lastError) kv("Last error", st.lastError);
-  host.append(dl);
+  panel.append(dl); host.append(panel);
+
   if (st.running && st.tabs?.length) {
-    const h = document.createElement("h3"); h.textContent = "Tabs"; host.append(h);
-    const ul = document.createElement("ul");
-    for (const t of st.tabs) { const li = document.createElement("li"); li.textContent = `${t.title || "(untitled)"} — ${t.url}`; ul.append(li); }
-    host.append(ul);
+    const p2 = el("div", "panel");
+    p2.append(el("h3", "", "Open tabs"));
+    const ul = el("ul", "tabs-list");
+    for (const t of st.tabs) ul.append(el("li", "", `${t.title || "(untitled)"} — ${t.url}`));
+    p2.append(ul); host.append(p2);
   }
 }
 
@@ -390,87 +420,166 @@ let schedData = null;
 async function loadSchedules() {
   schedData = await api("/schedules");
   const host = $("schedules"); host.replaceChildren();
-  const p = document.createElement("p"); p.className = "hint";
-  p.textContent = "A prepared prompt runs by itself at the times you set, in a chat of its own, in the server browser unless you say otherwise. Nobody answers cards during a run: a site not on the allowed list is refused and recorded; any other card is answered “no” after the wait. Every run is a chat in the list, named after the schedule and the time.";
-  host.append(p);
-  const add = document.createElement("button"); add.textContent = "New schedule"; add.onclick = () => schedForm(null);
-  host.append(add);
-  // where results go besides this page
+  setCount("schedules", schedData.schedules.length);
+
+  const bar = el("div", "bar");
+  const add = el("button", "primary", "New schedule"); add.onclick = () => schedForm(null);
+  bar.append(add);
+  // Where a result goes when nobody is looking at this page.
   const nt = await api("/notify");
-  const nrow = document.createElement("p"); nrow.className = "hint"; nrow.id = "notify-row";
-  nrow.textContent = nt.targets.length ? `Phone notifications: ${nt.targets.join(", ")}. ` : "No phone notifications configured (CODETERM_TELEGRAM_TOKEN/CHAT or CODETERM_NOTIFY_WEBHOOK in .env). Results show here, as a strip in open chats, and as an extension notification. ";
-  if (nt.targets.length) { const t = document.createElement("button"); t.textContent = "send test"; t.onclick = async () => { t.disabled = true; try { const r = await api("/notify/test", { method: "POST" }); t.textContent = r.failed.length ? `failed: ${r.failed.map((f) => f.target + " " + f.error).join("; ")}` : `sent to ${r.sent.join(", ")}`; } catch (e) { t.textContent = e.message; } }; nrow.append(t); }
-  host.append(nrow);
-  const formHost = document.createElement("div"); formHost.id = "schedform"; host.append(formHost);
-  if (!schedData.schedules.length) { const e = document.createElement("p"); e.className = "hint"; e.textContent = "No schedules yet."; host.append(e); }
+  const nrow = el("span", "hint"); nrow.id = "notify-row";
+  nrow.textContent = nt.targets.length
+    ? `Results also go to: ${nt.targets.join(", ")}.`
+    : "No phone notifications set — results show here, as a strip in open chats, and as an extension notification.";
+  bar.append(nrow);
+  if (nt.targets.length) {
+    const t = el("button", "quiet", "send test");
+    t.onclick = async () => { t.disabled = true; try { const r = await api("/notify/test", { method: "POST" }); t.textContent = r.failed.length ? `failed: ${r.failed.map((f) => f.target + " " + f.error).join("; ")}` : `sent to ${r.sent.join(", ")}`; } catch (e) { t.textContent = e.message; } };
+    bar.append(t);
+  }
+  bar.append(el("span", "count", `${schedData.schedules.length} schedule${schedData.schedules.length === 1 ? "" : "s"}`));
+  host.append(bar);
+  const formHost = el("div"); formHost.id = "schedform"; host.append(formHost);
+  if (!schedData.schedules.length) { host.append(el("div", "empty", "No schedules yet — “New schedule” runs one of your prompts on a clock.")); return; }
   for (const s of schedData.schedules) host.append(schedCard(s));
 }
+/* One schedule: what it is and when, then what happened last time. The
+   earlier runs are a table, not a bulleted list — four facts a line that
+   ought to line up. */
 function schedCard(s) {
-  const card = document.createElement("div"); card.className = "sched" + (s.paused ? " paused" : "");
-  const top = document.createElement("div"); top.className = "top";
-  const b = document.createElement("b"); b.textContent = s.title;
-  const when = document.createElement("span"); when.className = "when";
-  when.textContent = `${s.words} (${s.when.tz})${s.paused ? " · paused" : s.nextAt ? ` · next ${fmtWhen(s.nextAt, s.when.tz)}` : ""} · ${s.browser === "server" ? "server browser" : "any browser"} · ${s.project}`;
-  const sp = document.createElement("span"); sp.className = "sp";
-  const run = document.createElement("button"); run.textContent = s.running ? "Running…" : "Run now"; run.disabled = !!s.running;
+  const card = el("div", "sched" + (s.paused ? " paused" : ""));
+  const top = el("div", "top");
+  top.append(el("b", "", s.title));
+  top.append(el("span", "when",
+    `${s.words} · ${s.when.tz}${s.paused ? " · paused" : s.nextAt ? ` · next ${fmtWhen(s.nextAt, s.when.tz)}` : ""}`));
+  top.append(el("span", "sp"));
+  const tag = el("span", "tag", `${s.project} · ${s.browser === "server" ? "server browser" : "any browser"} · ${s.mode}`);
+  top.append(tag);
+
+  const run = el("button", "quiet", s.running ? "Running…" : "Run now"); run.disabled = !!s.running;
   run.onclick = async () => { run.disabled = true; try { await api(`/schedules/${s.id}/run`, { method: "POST" }); } catch (e) { show(e.message); } setTimeout(loadSchedules, 400); };
-  const pause = document.createElement("button"); pause.textContent = s.paused ? "Resume" : "Pause";
+  const pause = el("button", "quiet", s.paused ? "Resume" : "Pause");
   pause.onclick = async () => { try { await api(`/schedules/${s.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused: !s.paused }) }); } catch (e) { show(e.message); } loadSchedules(); };
-  const ed = document.createElement("button"); ed.textContent = "Edit"; ed.onclick = () => schedForm(s);
-  const rm = document.createElement("button"); rm.textContent = "Delete"; rm.className = "danger";
+  const ed = el("button", "quiet", "Edit"); ed.onclick = () => schedForm(s);
+  const rm = el("button", "quiet danger", "Delete");
   rm.onclick = async () => { if (!confirm(`Delete the schedule "${s.title}"? Its run chats stay.`)) return; try { await api(`/schedules/${s.id}`, { method: "DELETE" }); } catch (e) { show(e.message); } loadSchedules(); };
-  top.append(b, when, sp, run, pause, ed, rm); card.append(top);
+  top.append(run, pause, ed, rm);
+  card.append(top);
+
   const last = s.runs[0];
-  if (last) {
-    const l = document.createElement("div"); l.className = "last";
-    const o = document.createElement("span"); o.className = "o " + last.outcome; o.textContent = last.outcome.replace("-", " ");
-    l.append(o, document.createTextNode(`${fmtWhen(last.startedAt, s.when.tz)}${last.endedAt && last.outcome !== "running" ? ` · ${Math.round((last.endedAt - last.startedAt) / 1000)}s` : ""}${last.costUsd != null ? ` · $${last.costUsd.toFixed(2)}` : ""} — ${last.summary || ""} `));
-    if (last.chatId) { const a = document.createElement("a"); a.href = `/?chat=${encodeURIComponent(last.chatId)}`; a.textContent = "open chat"; l.append(a); }
-    for (const f of last.files) { const a = document.createElement("a"); a.href = `/files/read?path=${encodeURIComponent(f)}`; a.textContent = ` ${f.split("/").pop()}`; a.style.marginLeft = "8px"; l.append(a); }
-    if (last.needed.length) { const n = document.createElement("div"); n.className = "hint"; n.textContent = "needed: " + last.needed.join(", ") + " — add on the Browser sites tab and run again"; l.append(n); }
-    if (last.cards.length) { const n = document.createElement("div"); n.className = "hint"; n.textContent = "answered “no” for you: " + last.cards.join(", "); l.append(n); }
-    card.append(l);
-    if (s.runs.length > 1) {
-      const ul = document.createElement("ul"); ul.className = "runs";
-      for (const r of s.runs.slice(1, 8)) { const li = document.createElement("li"); li.textContent = `${fmtWhen(r.startedAt, s.when.tz)} · ${r.outcome}${r.costUsd != null ? ` · $${r.costUsd.toFixed(2)}` : ""} — ${r.summary}`; ul.append(li); }
-      card.append(ul);
+  if (!last) { card.append(el("div", "note", "Never run yet — “Run now” tries it before the clock does.")); return card; }
+
+  const l = el("div", "last");
+  l.append(el("span", `o ${last.outcome}`, last.outcome.replace("-", " ")));
+  const txt = el("div", "txt");
+  txt.append(el("span", "", last.summary || "(no reply)"));
+  l.append(txt);
+  const facts = el("span", "hint",
+    `${fmtWhen(last.startedAt, s.when.tz)}${last.endedAt && last.outcome !== "running" ? ` · ${Math.round((last.endedAt - last.startedAt) / 1000)}s` : ""}${last.costUsd != null ? ` · $${last.costUsd.toFixed(2)}` : ""}`);
+  l.append(facts);
+  if (last.chatId) { const a = el("a", "", "open chat"); a.href = `/?chat=${encodeURIComponent(last.chatId)}`; l.append(a); }
+  for (const f of last.files) { const a = el("a", "", f.split("/").pop()); a.href = `/files/read?path=${encodeURIComponent(f)}`; l.append(a); }
+  card.append(l);
+
+  if (last.needed.length) {
+    const n = el("div", "note"); n.append(el("b", "", "needed: "), document.createTextNode(last.needed.join(", ") + " — add these on the Browser sites tab, then run again"));
+    card.append(n);
+  }
+  if (last.cards.length) {
+    const n = el("div", "note"); n.append(el("b", "", "answered “no” for you: "), document.createTextNode(last.cards.join(", ")));
+    card.append(n);
+  }
+
+  if (s.runs.length > 1) {
+    const t = el("table", "runs");
+    for (const r of s.runs.slice(1, 8)) {
+      const tr = el("tr");
+      tr.append(el("td", "", fmtWhen(r.startedAt, s.when.tz)));
+      tr.append(el("td", "", r.outcome.replace("-", " ")));
+      tr.append(el("td", "c", r.costUsd != null ? `$${r.costUsd.toFixed(2)}` : ""));
+      tr.append(el("td", "s", r.summary || ""));
+      t.append(tr);
     }
+    card.append(t);
   }
   return card;
 }
+
+/* The form asks four questions in four labelled groups — what, when, where,
+   and the limits — because twelve fields in one grid is a form nobody reads.
+   Field ids are stable (#sf-*): the browser suite drives this form. */
 function schedForm(s) {
   const host = $("schedform"); host.replaceChildren();
-  const f = document.createElement("form"); f.className = "sched-form";
+  const f = el("form", "sched-form");
   const tz = s?.when.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const row = (label, el, full) => { const l = document.createElement("label"); l.textContent = label; if (full) { l.className = "full"; el.classList.add("full"); } f.append(l, el); return el; };
-  const title = row("Title", Object.assign(document.createElement("input"), { value: s?.title || "", placeholder: "Search for jobs", id: "sf-title" }));
-  const pick = document.createElement("select"); pick.id = "sf-prompt";
+
+  const group = (name) => {
+    const fs = el("fieldset"); fs.append(el("div", "glabel", name));
+    const fields = el("div", "fields"); fs.append(fields); f.append(fs); return fields;
+  };
+  const row = (fs, label, node, full) => {
+    const l = el("label", "", label);
+    if (full) { l.className = "full"; node.classList.add("full"); }
+    fs.append(l, node); return node;
+  };
+
+  const what = group("What it runs");
+  const title = row(what, "Title", Object.assign(el("input"), { value: s?.title || "", placeholder: "Search for jobs", id: "sf-title" }));
+  const pick = el("select"); pick.id = "sf-prompt";
   pick.append(new Option("— type the prompt below —", ""));
   for (const p of schedData.prompts) pick.append(new Option(p.title, p.id));
-  pick.value = s?.promptId || ""; row("Prepared prompt", pick);
-  const text = row("Prompt", Object.assign(document.createElement("textarea"), { value: s?.prompt || "", id: "sf-text", placeholder: "What to do, as you would type it in a chat" }), true);
+  pick.value = s?.promptId || ""; row(what, "Prepared prompt", pick);
+  const text = row(what, "Prompt", Object.assign(el("textarea"), { value: s?.prompt || "", id: "sf-text", placeholder: "What to do, as you would type it in a chat" }), true);
   pick.onchange = async () => { if (!pick.value) return; const all = await api("/prompts"); const p = (all.all || []).find((x) => x.id === pick.value); if (p) { text.value = p.text; if (!title.value) title.value = p.title; } };
-  const latest = document.createElement("label"); const latestCb = document.createElement("input"); latestCb.type = "checkbox"; latestCb.checked = !!s?.useLatest; latestCb.id = "sf-latest";
-  latest.append(latestCb, document.createTextNode(" always use the prepared prompt's current text")); latest.className = "full"; f.append(latest);
-  const when = row("When", Object.assign(document.createElement("input"), { value: s?.when.text || "every day at 08:00", id: "sf-when", placeholder: "every day at 08:00 · weekdays at 07:30 · every monday at 9 · every 6 hours · 30 7 * * 1-5" }));
-  const tzIn = row("Time zone", Object.assign(document.createElement("input"), { value: tz, id: "sf-tz" }));
-  const preview = document.createElement("div"); preview.className = "preview"; preview.id = "sf-preview"; f.append(preview);
-  const showPreview = async () => { try { const r = await api(`/schedules/preview?when=${encodeURIComponent(when.value)}&tz=${encodeURIComponent(tzIn.value)}`); preview.className = "preview"; preview.textContent = `${r.words} — next: ${r.next.map((n) => fmtWhen(Date.parse(n), tzIn.value)).join(", ")}`; } catch (e) { preview.className = "preview bad"; preview.textContent = e.message; } };
+  const latest = el("label", "inline");
+  const latestCb = Object.assign(el("input"), { type: "checkbox", checked: !!s?.useLatest, id: "sf-latest" });
+  latest.append(latestCb, document.createTextNode("Always use the prepared prompt's current text"));
+  what.append(latest);
+
+  const whenG = group("When");
+  const when = row(whenG, "Repeat", Object.assign(el("input"), { value: s?.when.text || "every day at 08:00", id: "sf-when", placeholder: "every day at 08:00 · weekdays at 07:30 · every monday at 9 · every 6 hours · 30 7 * * 1-5" }));
+  const tzIn = row(whenG, "Time zone", Object.assign(el("input"), { value: tz, id: "sf-tz" }));
+  const preview = el("div", "preview"); preview.id = "sf-preview"; whenG.append(preview);
+  const showPreview = async () => {
+    try { const r = await api(`/schedules/preview?when=${encodeURIComponent(when.value)}&tz=${encodeURIComponent(tzIn.value)}`);
+      preview.className = "preview"; preview.textContent = `${r.words} — next: ${r.next.map((n) => fmtWhen(Date.parse(n), tzIn.value)).join(", ")}`; }
+    catch (e) { preview.className = "preview bad"; preview.textContent = e.message; }
+  };
   when.oninput = tzIn.oninput = () => { clearTimeout(f._t); f._t = setTimeout(showPreview, 300); }; showPreview();
-  const proj = document.createElement("select"); proj.id = "sf-project"; for (const p of schedData.projects) proj.append(new Option(p.name, p.id)); proj.value = s?.project || "general"; row("Project", proj);
-  const br = document.createElement("select"); br.id = "sf-browser"; br.append(new Option("server browser (runs while your laptop is off)", "server"), new Option("whichever browser is connected", "auto")); br.value = s?.browser || "server"; row("Browser", br);
-  const mode = document.createElement("select"); mode.id = "sf-mode";
-  for (const [v, l] of [["auto", "Auto — the CLI decides what is safe (shell commands run)"], ["acceptEdits", "Build, auto-accept edits (shell commands ask — answered “no” unattended)"], ["default", "Build (asks — answered “no” unattended)"], ["bypassPermissions", "Never ask"], ["plan", "Plan"]]) mode.append(new Option(l, v));
-  mode.value = s?.mode || "auto"; row("Mode", mode);
-  const model = row("Model", Object.assign(document.createElement("input"), { value: s?.model || "", id: "sf-model", placeholder: "default" }));
-  const budget = row("Budget per run ($)", Object.assign(document.createElement("input"), { value: s?.budgetUsd ?? "", id: "sf-budget", placeholder: "none", type: "number", step: "0.1", min: "0.01" }));
-  const wait = row("Wait for a person (min)", Object.assign(document.createElement("input"), { value: String((s?.waitMs ?? 120000) / 60000), id: "sf-wait", type: "number", min: "1", max: "60" }));
-  const maxm = row("Max run time (min)", Object.assign(document.createElement("input"), { value: String((s?.maxMs ?? 1800000) / 60000), id: "sf-max", type: "number", min: "1", max: "360" }));
-  const keep = row("Runs to keep", Object.assign(document.createElement("input"), { value: String(s?.keepRuns ?? 10), id: "sf-keep", type: "number", min: "1", max: "100" }));
-  const btns = document.createElement("div"); btns.className = "row";
-  const save = document.createElement("button"); save.type = "submit"; save.textContent = s ? "Save" : "Create";
-  const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel"; cancel.onclick = () => host.replaceChildren();
+
+  const where = group("Where it runs");
+  const proj = el("select"); proj.id = "sf-project";
+  for (const p of schedData.projects) proj.append(new Option(p.name, p.id));
+  proj.value = s?.project || "general"; row(where, "Project", proj);
+  const br = el("select"); br.id = "sf-browser";
+  br.append(new Option("server browser (runs while your laptop is off)", "server"), new Option("whichever browser is connected", "auto"));
+  br.value = s?.browser || "server"; row(where, "Browser", br);
+  const mode = el("select"); mode.id = "sf-mode";
+  for (const [v, l] of [["auto", "Auto — the CLI decides what is safe (shell commands run)"],
+                        ["acceptEdits", "Build, auto-accept edits (shell asks — answered “no” unattended)"],
+                        ["default", "Build (asks — answered “no” unattended)"],
+                        ["bypassPermissions", "Never ask"], ["plan", "Plan"]]) mode.append(new Option(l, v));
+  mode.value = s?.mode || "auto"; row(where, "Mode", mode);
+  const model = row(where, "Model", Object.assign(el("input"), { value: s?.model || "", id: "sf-model", placeholder: "default" }));
+
+  const limits = group("Limits");
+  const trio = el("div", "trio"); limits.append(trio);
+  const numField = (label, id, value, attrs) => {
+    const wrap = el("div"); wrap.append(el("label", "", label));
+    const inp = Object.assign(el("input"), { id, value, type: "number", ...attrs });
+    wrap.append(inp); trio.append(wrap); return inp;
+  };
+  const budget = numField("Budget per run ($)", "sf-budget", s?.budgetUsd ?? "", { step: "0.1", min: "0.01", placeholder: "none" });
+  const wait = numField("Wait for a person (min)", "sf-wait", String((s?.waitMs ?? 120000) / 60000), { min: "1", max: "60" });
+  const maxm = numField("Max run time (min)", "sf-max", String((s?.maxMs ?? 1800000) / 60000), { min: "1", max: "360" });
+  const keep = row(limits, "Run chats to keep", Object.assign(el("input"), { id: "sf-keep", value: String(s?.keepRuns ?? 10), type: "number", min: "1", max: "100" }));
+  limits.append(el("div", "hint", "Nobody answers cards during a run: a site not on the allowed list is refused and recorded, and any other card is answered “no” after the wait."));
+
+  const btns = el("div", "formrow");
+  const save = el("button", "primary", s ? "Save" : "Create"); save.type = "submit";
+  const cancel = el("button", "", "Cancel"); cancel.type = "button"; cancel.onclick = () => host.replaceChildren();
   btns.append(save, cancel); f.append(btns);
+
   f.onsubmit = async (e) => {
     e.preventDefault();
     const body = { title: title.value, prompt: text.value, promptId: pick.value || undefined, useLatest: latestCb.checked, when: { text: when.value, tz: tzIn.value }, project: proj.value, browser: br.value, mode: mode.value, model: model.value || undefined,
@@ -481,6 +590,7 @@ function schedForm(s) {
   host.append(f); title.focus();
 }
 
+
 /* ---------------- tabs ---------------- */
 const loaders = { chats: loadChats, prompts: loadPrompts, projects: loadProjects, browser: loadBrowser, server: loadServer, schedules: loadSchedules };
 
@@ -488,7 +598,10 @@ function tab(name) {
   for (const b of document.querySelectorAll("nav button")) b.classList.toggle("on", b.dataset.tab === name);
   for (const id of ["chats", "prompts", "projects", "browser", "server", "schedules"]) $(id).hidden = id !== name;
   show("");
-  loaders[name]().catch((e) => show(e.message));
+  setCaption(CAPTIONS[name] ?? "");
+  loaders[name]()
+    .then(() => $("dot").classList.remove("off"))
+    .catch((e) => { show(e.message); $("dot").classList.add("off"); });
 }
 for (const b of document.querySelectorAll("nav button")) b.onclick = () => tab(b.dataset.tab);
 

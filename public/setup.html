@@ -2,145 +2,44 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>code terminal — setup</title>
-<style>
-  :root {
-    --bg:#14171e; --panel:#1a1e27; --line:#2b3140; --fg:#dfe3ec; --dim:#8b93a7;
-    --accent:#7aa2f7; --ok:#7dcfa0; --warn:#e0af68; --bad:#f07178;
-    --btn:#252a36; --code:#0f1219;
-    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-    --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    color-scheme: dark;
-  }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
-      --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
-      --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b;
-      --btn:#e6e8ee; --code:#f4f5f8; color-scheme: light;
-    }
-  }
-  * { box-sizing:border-box; }
-  [hidden] { display:none !important; }
-  html { font-size:13px; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:1rem/1.5 var(--ui);
-         max-width:1000px; margin-inline:auto; padding:0 14px 40px; }
+<link rel="stylesheet" href="/pages.css">
 
-  header { display:flex; align-items:center; gap:10px; padding:14px 0 10px; }
-  header h1 { font-size:1.15rem; margin:0; font-weight:600; }
-  header a { margin-left:auto; color:var(--accent); font-size:0.85rem; }
-  nav { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:14px; }
-  nav button { background:none; border:0; border-bottom:2px solid transparent; color:var(--dim);
-               font:inherit; padding:7px 12px; cursor:pointer; }
-  nav button.on { color:var(--fg); border-bottom-color:var(--accent); }
+<div class="masthead">
+  <div class="inner">
+    <div class="top">
+      <span class="dot" id="dot" title="the server is answering"></span>
+      <span class="brand">code terminal</span>
+      <h1>setup &amp; status</h1>
+      <span class="sp"></span>
+      <span class="links">
+        <a href="/manage.html">manage</a>
+        <a href="/" id="back">← terminal</a>
+      </span>
+    </div>
+  </div>
+</div>
 
-  button, input, select, textarea {
-    font:inherit; background:var(--btn); color:var(--fg);
-    border:1px solid var(--line); border-radius:5px; padding:4px 8px; }
-  button { cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  .danger:hover { border-color:var(--bad); color:var(--bad); }
-  input[type=search], input[type=text], textarea { background:var(--bg); width:100%; }
-  textarea { min-height:110px; resize:vertical; font-size:0.92rem; }
+<main>
+  <div id="err" class="err" hidden></div>
+  <p class="caption">Everything this needs, checked live and rechecked every five seconds.
+     Red is what stops it working, amber is worth knowing, green needs nothing from you.</p>
 
-  .bar { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
-  .bar .count { color:var(--dim); font-size:0.85rem; margin-left:auto; }
+  <div id="summary" class="summary"><span class="state">checking…</span></div>
+  <div id="checks"></div>
 
-  .row { display:flex; gap:10px; align-items:center; padding:7px 9px;
-         border:1px solid var(--line); border-radius:6px; margin-bottom:5px; background:var(--panel); }
-  .row .main { flex:1; min-width:0; }
-  .row .title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .row .meta { color:var(--dim); font-size:0.8rem; margin-top:1px;
-               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .row .tag { color:var(--accent); font-size:0.8rem; flex-shrink:0; }
-  .row.active { border-color:var(--accent); }
-  .row button { font-size:0.8rem; padding:2px 7px; flex-shrink:0; }
+  <h2>Addresses <span class="sub">who types what, where</span></h2>
+  <div class="panel">
+    <ol class="steps">
+      <li><b>The server</b> runs where your code is, on the Claude Code login of that machine.</li>
+      <li><b>This page and the terminal</b> (<code id="u-ui"></code>) work from any browser that can reach the server.</li>
+      <li><b>The browser extension</b> lets the agent read and drive tabs. It dials the server from <i>its</i> machine, so the address it needs depends on where that browser is.</li>
+      <li><b>The phone page</b> (<code id="u-m"></code>) needs the server bound to an address the phone can reach — a tailnet or VPN, never the open internet.</li>
+    </ol>
+  </div>
+  <div class="panel"><div class="kv" id="kv"></div></div>
 
-  .empty { color:var(--dim); padding:18px 2px; }
-  .editor { border:1px solid var(--accent); border-radius:6px; padding:11px;
-            background:var(--panel); margin-bottom:12px; display:flex; flex-direction:column; gap:7px; }
-  .editor label { color:var(--dim); font-size:0.8rem; }
-  .editor .actions { display:flex; gap:6px; }
-  .hint { color:var(--dim); font-size:0.8rem; }
-  .err { color:var(--bad); padding:8px 0; }
-
-  /* chat detail */
-  .detail .hd { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
-  .detail .hd .who { color:var(--dim); font-size:0.85rem; margin-left:auto; }
-  .transcript { display:flex; flex-direction:column; gap:8px; }
-  .transcript .u { color:var(--accent); border-left:2px solid var(--accent);
-                   padding-left:9px; white-space:pre-wrap; word-break:break-word; }
-  .transcript .a { }
-  .transcript .a p:first-child { margin-top:0; } .transcript .a p:last-child { margin-bottom:0; }
-  .transcript .a pre { background:var(--code); padding:8px; border-radius:5px; overflow-x:auto;
-                       font-size:0.85rem; }
-  .transcript .a code { background:var(--btn); border-radius:3px; padding:1px 4px; font-size:0.9rem;
-                        overflow-wrap:anywhere; }
-  .transcript .t { color:var(--dim); font-size:0.82rem;
-                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .transcript .t b { color:var(--warn); font-weight:600; }
-  .transcript .l { color:var(--dim); font-size:0.85rem; background:var(--panel);
-                   border-left:2px solid var(--line); padding:5px 8px; white-space:pre-wrap; }
-  .transcript .e { color:var(--dim); font-size:0.8rem; border-top:1px dashed var(--line);
-                   padding-top:4px; }
-  .transcript .ctx { color:var(--dim); font-size:0.8rem; border-left:2px solid var(--line);
-                     padding-left:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-
-  /* ---------------- mobile ----------------
-     Reached from the phone's settings menu, so it has to be usable there: the
-     desktop sizing puts ten controls under 40px, which is below any usable
-     touch target. */
-  @media (max-width: 700px) {
-    body { font-size: 15px; padding: 0 10px 40px;
-           padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
-    nav { position: sticky; top: 0; z-index: 5; background: var(--bg);
-          overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    nav button { min-height: 44px; padding: 0 14px; font-size: 15px; }
-    button, input, select, textarea { min-height: 44px; font-size: 16px; }  /* 16px or iOS zooms */
-    .row { flex-wrap: wrap; gap: 6px; }
-    .row button { min-height: 40px; font-size: 0.9rem; padding: 0 12px; }
-    /* Hover is meaningless on touch and leaves controls looking stuck. */
-    @media (hover: none) { button:hover { border-color: var(--line); } }
-  }
-  @media (max-width: 700px) { header a#back { min-height: 44px; display: inline-flex; align-items: center; } }
-</style>
-<style>
-  .checks { display:flex; flex-direction:column; gap:8px; margin:10px 0 18px; }
-  .check { display:grid; grid-template-columns:14px 1fr; gap:10px; padding:10px 12px; border:1px solid var(--line);
-           border-radius:8px; background:var(--panel); }
-  .check .dot { width:10px; height:10px; border-radius:50%; margin-top:6px; background:var(--dim); }
-  .check.ok .dot { background:var(--ok); } .check.warn .dot { background:var(--warn); } .check.bad .dot { background:var(--bad); }
-  .check .t { font-weight:600; } .check .h { color:var(--dim); font-size:0.85rem; margin-top:2px; }
-  .check code, .kv code { font-family:var(--mono); background:var(--code); padding:1px 5px; border-radius:3px; overflow-wrap:anywhere; }
-  h2 { font-size:1rem; margin:18px 0 6px; }
-  .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 14px; font-size:0.9rem; }
-  .kv .k { color:var(--dim); }
-  .copy { margin-left:8px; font-size:0.8rem; padding:1px 7px; }
-  .steps { color:var(--dim); font-size:0.9rem; }
-  .steps li { margin:4px 0; }
-  .summary { padding:10px 12px; border-radius:8px; border:1px solid var(--line); margin-bottom:6px; }
-  .summary.ok { border-color:var(--ok); } .summary.bad { border-color:var(--bad); }
-</style>
-
-<header>
-  <h1>setup &amp; status</h1>
-  <a href="/" id="back">← back to the terminal</a>
-</header>
-
-<div id="err" class="err" hidden></div>
-<div id="summary" class="summary">checking…</div>
-<div id="checks" class="checks"></div>
-
-<h2>How the pieces fit</h2>
-<ol class="steps">
-  <li><b>The server</b> runs where your code is, on the Claude Code login of that machine.</li>
-  <li><b>This page and the terminal</b> (<code id="u-ui"></code>) work from any browser that can reach the server.</li>
-  <li><b>The browser extension</b> lets the agent read and drive tabs. It dials the server from <i>its</i> machine, so the address it needs depends on where that browser is.</li>
-  <li><b>The phone page</b> (<code id="u-m"></code>) needs the server bound to an address the phone can reach — a tailnet or VPN, never the open internet.</li>
-</ol>
-
-<h2>Addresses</h2>
-<div class="kv" id="kv"></div>
-
-<h2>Paths</h2>
-<div class="kv" id="paths"></div>
+  <h2>Paths <span class="sub">where things are kept on the server</span></h2>
+  <div class="panel"><div class="kv" id="paths"></div></div>
+</main>
 
 <script src="/setup.js"></script>

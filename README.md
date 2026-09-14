@@ -553,6 +553,34 @@ cases; removing the `basename` call fails exactly the two upload cases. Revertin
 unit cases plus the end-to-end one. A test that cannot fail is not protecting
 anything.
 
+## The manage and setup pages
+
+They are the terminal's own surface, not a second look: `public/pages.css`
+carries the same tokens, the same control sizes and the same pill tabs as
+`extension/panel.css`, and both pages link it instead of each carrying a
+copy of the chrome (they had drifted — one had cards and pills the other
+never got). The token block is duplicated rather than imported, because the
+extension loads its CSS from disk and cannot fetch a server file; change
+one and change the other.
+
+What the restyle was for, beyond matching: a **sticky masthead** with the
+page name and the tabs, so navigation survives a long list; a **count on
+each tab**, so the bar reports what is behind it; **one dim caption** per
+section in the same place, replacing the paragraph some sections had and
+others did not; **quiet row actions** that light up on hover, because four
+equal buttons shouted over the title they belonged to; and **one filled
+button per page** — the thing that page is for.
+
+On **setup**, the eleven checks are grouped by the question they answer
+(*does it run · who can reach it · what it may do · working on its own ·
+this machine*), a green check has no surface of its own so the amber and
+red ones carry the eye, and the banner names the failing check rather than
+saying only that something is wrong. On **schedules**, the form asks four
+labelled groups instead of twelve fields in one grid, and earlier runs are
+a table rather than a bulleted list. On a phone a list row is two lines —
+what it is, then what you can do with it — because wrapping them into one
+squeezed every title to "Screen…".
+
 ## Four CSS traps in this UI
 
 All cost real debugging time; if the transcript ever looks wrong, check these

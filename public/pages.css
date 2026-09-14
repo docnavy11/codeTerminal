@@ -1,0 +1,338 @@
+/* ---------------------------------------------------------------------------
+   The full-page surfaces: /manage.html and /setup.html.
+
+   One sheet, because the two pages were copies of each other — the same 100
+   lines of tokens and chrome pasted twice, already drifting (manage had
+   pills, cards and schedule styles setup never got, setup had check cards
+   manage never got).
+
+   The look is the terminal's, deliberately: same tokens, same control sizes,
+   the same pill tabs as the transcript's Chat/Files switch, so moving from
+   the panel to these pages does not feel like moving to another program.
+   The token block is a copy of extension/panel.css's, not an import: the
+   extension loads its CSS from disk (MV3 forbids remote code), so panel.css
+   has to stay self-contained. The two blocks must be changed together.
+
+   Chrome (bars, tabs, buttons) is sized in px like the terminal's header, so
+   it stays put when the page font scales; content is sized in rem.
+--------------------------------------------------------------------------- */
+
+:root {
+  --bg:#14171e; --panel:#1a1e27; --line:#2b3140; --fg:#dfe3ec; --dim:#8b93a7;
+  --accent:#7aa2f7; --ok:#7dcfa0; --warn:#e0af68; --bad:#f07178;
+  --code:#0f1219; --card:#211e18; --btn:#252a36; --inline:#222739; --sel:#2a3550;
+  --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
+    --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b;
+    --code:#f4f5f8; --card:#fdf6e6; --btn:#e6e8ee; --inline:#eceef4; --sel:#cfdcf7;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg:#fbfbfd; --panel:#f1f2f6; --line:#d9dce4; --fg:#1c1f26; --dim:#666d7d;
+  --accent:#2f5fd0; --ok:#1f7a4d; --warn:#8a6100; --bad:#c0392b;
+  --code:#f4f5f8; --card:#fdf6e6; --btn:#e6e8ee; --inline:#eceef4; --sel:#cfdcf7;
+  color-scheme: light;
+}
+
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+html { font-size:13px; }
+body { margin:0; background:var(--bg); color:var(--fg); font:1rem/1.5 var(--ui); }
+
+/* Slim scrollbars, as in the panel: Chrome's default slab is wider than some
+   of the columns on this page. */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+::-webkit-scrollbar { width:9px; height:9px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--line); border-radius:5px; }
+::-webkit-scrollbar-thumb:hover { background:var(--dim); }
+
+/* Paths, URLs, IDs and anything you would retype are monospace; the chrome
+   around them is not — the same rule the transcript follows. */
+code, .mono, .kv dd, dl.kv dd, .row .path { font-family:var(--mono); }
+
+/* ---------------- masthead ----------------
+   Sticky, so the tabs are reachable from anywhere down a long chat list, and
+   in the panel's colours so the page reads as the same application. */
+.masthead { position:sticky; top:0; z-index:20; background:var(--panel);
+            border-bottom:1px solid var(--line); }
+.masthead .inner { max-width:1060px; margin-inline:auto; padding:8px 16px;
+                   display:flex; flex-direction:column; gap:7px; }
+.masthead .top { display:flex; align-items:center; gap:9px; min-width:0; }
+.masthead .dot { width:8px; height:8px; border-radius:50%; background:var(--ok);
+                 box-shadow:0 0 0 3px rgba(125,207,160,.20); flex-shrink:0; }
+.masthead .dot.off { background:var(--bad); box-shadow:0 0 0 3px rgba(240,113,120,.20); }
+.masthead .brand { font-size:12px; color:var(--dim); letter-spacing:.02em; flex-shrink:0; }
+.masthead h1 { margin:0; font-size:15px; font-weight:600; letter-spacing:-.01em; }
+.masthead .sp { flex:1; }
+.masthead .links { display:flex; gap:5px; flex-shrink:0; }
+/* The links out are controls, not prose links: same shape as every button. */
+.masthead .links a { font-size:12px; height:26px; padding:0 10px; border-radius:5px;
+                     display:inline-flex; align-items:center; text-decoration:none;
+                     color:var(--dim); border:1px solid transparent; }
+.masthead .links a:hover { color:var(--accent); border-color:var(--line); }
+
+/* ---------------- tabs ----------------
+   The transcript's Chat/Files switch, widened: a pill row, not an underline.
+   An underline nav and a filled button row were two different tab idioms on
+   two pages of one app. */
+nav.tabs { display:flex; gap:3px; overflow-x:auto; scrollbar-width:none; }
+nav.tabs::-webkit-scrollbar { display:none; }
+nav.tabs button { background:none; border:0; font:inherit; font-size:12px; cursor:pointer;
+                  color:var(--dim); height:26px; padding:0 11px; border-radius:5px;
+                  display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+                  transition:background .12s, color .12s; }
+nav.tabs button:hover { color:var(--fg); }
+nav.tabs button.on { color:var(--fg); background:var(--btn); box-shadow:inset 0 0 0 1px var(--line); }
+/* A count riding on the tab itself, so the navigation reports what is behind it. */
+nav.tabs button .n { font-size:10px; color:var(--dim); font-variant-numeric:tabular-nums; }
+nav.tabs button.on .n { color:var(--accent); }
+
+main { max-width:1060px; margin-inline:auto; padding:14px 16px 48px; }
+
+/* One dim sentence under the tabs saying what this section is. Every section
+   has one, in the same place, instead of a paragraph some sections had. */
+.caption { color:var(--dim); font-size:0.85rem; margin:0 0 12px; max-width:70ch; }
+.caption b { color:var(--fg); font-weight:600; }
+
+/* ---------------- controls ---------------- */
+button, select, input, textarea {
+  font:inherit; font-size:0.846rem; background:var(--btn); color:var(--fg);
+  border:1px solid var(--line); border-radius:6px; padding:4px 9px;
+  transition:background .12s, border-color .12s, color .12s; }
+button { cursor:pointer; }
+button:hover:not(:disabled) { border-color:var(--accent); }
+button:disabled { opacity:.4; cursor:default; }
+input, textarea { background:var(--bg); }
+input[type=search], input[type=text], input[type=number], textarea { width:100%; }
+input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); }
+textarea { min-height:110px; resize:vertical; font-size:0.9rem; }
+/* The one action a page wants you to take is the only filled control on it,
+   as "New chat" is in the panel's header. */
+button.primary { background:var(--accent); border-color:var(--accent); color:var(--bg); font-weight:600; }
+button.primary:hover:not(:disabled) { filter:brightness(1.08); }
+/* Row actions: quiet until pointed at, so four of them do not shout over the
+   title they belong to. */
+button.quiet { background:transparent; border-color:transparent; color:var(--dim); }
+button.quiet:hover:not(:disabled) { background:var(--btn); border-color:var(--line); color:var(--fg); }
+button.danger:hover:not(:disabled) { border-color:var(--bad); color:var(--bad); background:transparent; }
+
+/* ---------------- toolbars, rows, lists ---------------- */
+.bar { display:flex; gap:7px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+.bar input[type=search], .bar input[type=text] { flex:1; min-width:180px; }
+.bar .count { color:var(--dim); font-size:0.8rem; margin-left:auto; flex-shrink:0;
+              font-variant-numeric:tabular-nums; }
+
+.row { display:flex; gap:9px; align-items:center; padding:8px 10px;
+       border:1px solid var(--line); border-radius:7px; margin-bottom:5px; background:var(--panel); }
+.row:hover { border-color:var(--dim); }
+.row .main { flex:1; min-width:0; }
+.row .title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+.row .meta { color:var(--dim); font-size:0.8rem; margin-top:2px;
+             overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* The tag is the row's one fact worth colour: project, scope, level. */
+.row .tag { color:var(--dim); font-size:0.76rem; flex-shrink:0; padding:1px 8px;
+            border:1px solid var(--line); border-radius:10px; white-space:nowrap; }
+.row.active { border-color:var(--accent); }
+.row.active .tag { color:var(--accent); border-color:var(--accent); }
+.row button, .row select { font-size:0.78rem; padding:3px 8px; flex-shrink:0; }
+.empty { color:var(--dim); padding:22px 2px; text-align:center;
+         border:1px dashed var(--line); border-radius:7px; }
+.hint { color:var(--dim); font-size:0.82rem; }
+.err { color:var(--bad); padding:8px 10px; margin-bottom:10px;
+       border:1px solid var(--bad); border-radius:7px; background:var(--card); }
+
+/* ---------------- panels and key/value ---------------- */
+.panel { border:1px solid var(--line); border-radius:8px; background:var(--panel);
+         padding:12px 14px; margin:0 0 12px; }
+.panel > h3 { margin:0 0 8px; font-size:0.9rem; font-weight:600; }
+h2 { font-size:0.95rem; font-weight:600; margin:22px 0 8px; color:var(--fg); }
+h2 .sub { color:var(--dim); font-weight:400; font-size:0.85rem; margin-left:8px; }
+
+.kv, dl.kv { display:grid; grid-template-columns:max-content 1fr; gap:5px 16px;
+             font-size:0.85rem; margin:0; align-items:baseline; }
+.kv .k, dl.kv dt { color:var(--dim); }
+.kv code, dl.kv dd { overflow-wrap:anywhere; }
+dl.kv dd { margin:0; }
+.kv code, .check code { background:var(--code); padding:1px 5px; border-radius:3px; }
+.chips { display:flex; flex-wrap:wrap; gap:4px 6px; }
+.copy { margin-left:8px; font-size:0.75rem; padding:1px 7px; background:transparent;
+        border-color:transparent; color:var(--dim); }
+.copy:hover { border-color:var(--line); color:var(--accent); }
+
+/* A status word, in the colour of the state it reports. Used for the server
+   browser, schedule outcomes and site levels. */
+.pill { display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:10px;
+        font-size:0.8rem; border:1px solid var(--line); color:var(--dim); white-space:nowrap; }
+.pill.ok { color:var(--ok); border-color:var(--ok); }
+.pill.warn { color:var(--warn); border-color:var(--warn); }
+.pill.bad { color:var(--bad); border-color:var(--bad); }
+.pill.accent { color:var(--accent); border-color:var(--accent); }
+.pill::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+.pill.plain::before { display:none; }
+
+/* ---------------- editor (prompts) ---------------- */
+.editor { border:1px solid var(--accent); border-radius:8px; padding:12px 14px;
+          background:var(--panel); margin-bottom:12px; display:flex; flex-direction:column; gap:7px; }
+.editor label { color:var(--dim); font-size:0.8rem; }
+.editor .actions { display:flex; gap:6px; margin-top:2px; }
+
+/* ---------------- setup: summary and checks ---------------- */
+.summary { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:8px;
+           border:1px solid var(--line); background:var(--panel); margin-bottom:16px; }
+.summary .state { font-size:1.15rem; font-weight:600; flex-shrink:0; }
+.summary .facts { color:var(--dim); font-size:0.85rem; }
+.summary.ok { border-color:var(--ok); } .summary.ok .state { color:var(--ok); }
+.summary.bad { border-color:var(--bad); } .summary.bad .state { color:var(--bad); }
+
+.checks { display:flex; flex-direction:column; gap:6px; margin:0 0 6px; }
+/* A card with its state on the left edge: the colour is readable before the
+   words are, which is the whole job of this page. */
+.check { display:grid; grid-template-columns:10px 1fr; gap:11px; padding:9px 12px;
+         border:1px solid var(--line); border-left-width:3px; border-radius:7px;
+         background:var(--panel); align-items:start; }
+.check .dot { width:8px; height:8px; border-radius:50%; margin-top:6px; background:var(--dim); }
+.check.ok { border-left-color:var(--ok); } .check.ok .dot { background:var(--ok); }
+.check.warn { border-left-color:var(--warn); } .check.warn .dot { background:var(--warn); }
+.check.bad { border-left-color:var(--bad); background:var(--card); } .check.bad .dot { background:var(--bad); }
+/* A green check needs no surface of its own: the page should read as a list
+   of quiet lines with the two that want attention standing out. */
+.check.ok { background:none; }
+.check .t { font-weight:500; }
+.check .h { color:var(--dim); font-size:0.84rem; margin-top:3px; line-height:1.45; }
+.group { margin:0 0 14px; }
+.group > .glabel { font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
+                   color:var(--dim); margin:0 0 6px 2px; }
+.steps { color:var(--dim); font-size:0.88rem; padding-left:20px; margin:0; }
+.steps li { margin:5px 0; }
+.steps b { color:var(--fg); font-weight:600; }
+
+/* ---------------- schedules ---------------- */
+.sched { border:1px solid var(--line); border-radius:8px; padding:11px 13px; margin:0 0 8px;
+         background:var(--panel); }
+.sched.paused { opacity:.62; }
+.sched .top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.sched .top b { font-size:0.95rem; font-weight:600; }
+.sched .when { color:var(--dim); font-size:0.82rem; }
+.sched .top .sp { flex:1; }
+.sched .top .tag { color:var(--dim); font-size:0.76rem; padding:1px 8px; border:1px solid var(--line);
+                   border-radius:10px; white-space:nowrap; }
+.sched .top button { font-size:0.78rem; padding:3px 9px; }
+.sched .last { margin-top:8px; padding-top:8px; border-top:1px solid var(--line);
+               font-size:0.85rem; display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.sched .last .txt { flex:1; min-width:240px; }
+/* The outcome, in the colour of what happened. */
+.sched .last .o { display:inline-block; padding:1px 8px; border-radius:10px; font-size:0.78rem;
+                  border:1px solid var(--line); color:var(--dim); flex-shrink:0; }
+.sched .o.done { color:var(--ok); border-color:var(--ok); }
+.sched .o.failed, .sched .o.missed { color:var(--bad); border-color:var(--bad); }
+.sched .o.needed-you, .sched .o.stopped, .sched .o.skipped { color:var(--warn); border-color:var(--warn); }
+.sched .o.running { color:var(--accent); border-color:var(--accent); }
+.sched .last a { color:var(--accent); text-decoration:none; }
+.sched .last a:hover { text-decoration:underline; }
+.sched .note { color:var(--dim); font-size:0.8rem; margin-top:4px; width:100%; }
+.sched .note b { color:var(--warn); font-weight:600; }
+/* Earlier runs as a table: four facts per line that ought to line up. */
+.sched table.runs { width:100%; border-collapse:collapse; margin-top:10px; padding-top:6px;
+                    border-top:1px solid var(--line); font-size:0.8rem;
+                    color:var(--dim); font-variant-numeric:tabular-nums; }
+.sched table.runs td { padding:3px 10px 3px 0; vertical-align:top; white-space:nowrap; }
+.sched table.runs td.s { color:var(--fg); width:100%; }
+.sched table.runs td.c { text-align:right; white-space:nowrap; }
+
+/* The schedule form: four labelled groups, because twelve fields in one grid
+   is a form nobody reads. */
+form.sched-form { border:1px solid var(--accent); border-radius:8px; background:var(--panel);
+                  padding:4px 14px 12px; margin:0 0 14px; }
+/* A fieldset is a block with its own label, and the grid lives one level in:
+   a <legend> inside a grid takes the first cell and shifts every label into
+   its field's column — which is exactly what it did. */
+form.sched-form fieldset { border:0; border-top:1px solid var(--line); margin:0; padding:12px 0 6px; }
+form.sched-form fieldset:first-of-type { border-top:0; }
+form.sched-form .glabel { font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
+                          color:var(--dim); margin-bottom:8px; }
+form.sched-form .fields { display:grid; grid-template-columns:150px minmax(0, 520px);
+                          gap:9px 14px; align-items:center; }
+form.sched-form label { color:var(--dim); font-size:0.84rem; }
+form.sched-form label.inline { grid-column:1 / -1; display:flex; align-items:center; gap:7px; color:var(--fg); }
+form.sched-form .fields > .hint { grid-column:2; max-width:520px; }
+form.sched-form .preview { grid-column:2; }
+form.sched-form label.inline input { width:auto; accent-color:var(--accent); }
+form.sched-form textarea { min-height:96px; font-family:var(--mono); font-size:0.82rem; }
+form.sched-form input, form.sched-form select { width:100%; }
+form.sched-form .full { grid-column:1 / -1; }
+form.sched-form .preview { grid-column:2; color:var(--dim); font-size:0.82rem; }
+form.sched-form .preview.bad { color:var(--bad); }
+form.sched-form .formrow { grid-column:1 / -1; display:flex; gap:7px; padding-top:4px; }
+/* Three short numbers side by side rather than three lines of their own. */
+form.sched-form .trio { grid-column:2; display:grid; grid-template-columns:repeat(3, 1fr); gap:8px 12px; }
+form.sched-form .trio label { display:block; margin-bottom:3px; }
+
+/* ---------------- server browser ---------------- */
+#server .state { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px; }
+#server .tabs-list { margin:0; padding-left:18px; font-size:0.84rem; color:var(--dim); }
+#server .tabs-list li { margin:3px 0; overflow-wrap:anywhere; }
+.btnlink { color:var(--accent); font-size:0.82rem; text-decoration:none; padding:4px 9px;
+           border:1px solid var(--line); border-radius:6px; }
+.btnlink:hover { border-color:var(--accent); }
+
+/* ---------------- one chat, read-only ---------------- */
+.detail .hd { display:flex; gap:10px; align-items:center; margin-bottom:12px; }
+.detail .hd .who { color:var(--dim); font-size:0.84rem; margin-left:auto; }
+.transcript { display:flex; flex-direction:column; gap:9px; }
+.transcript .u { color:var(--accent); border-left:2px solid var(--accent);
+                 padding-left:10px; white-space:pre-wrap; word-break:break-word; }
+.transcript .a p:first-child { margin-top:0; } .transcript .a p:last-child { margin-bottom:0; }
+.transcript .a pre { background:var(--code); padding:9px; border-radius:6px; overflow-x:auto; font-size:0.85rem; }
+.transcript .a code { background:var(--inline); border-radius:3px; padding:1px 4px; font-size:0.9rem;
+                      overflow-wrap:anywhere; }
+.transcript .a table { border-collapse:collapse; font-size:0.85rem; }
+.transcript .a th, .transcript .a td { border:1px solid var(--line); padding:3px 8px; text-align:left; }
+.transcript .a th { background:var(--btn); }
+.transcript .t { color:var(--dim); font-size:0.82rem;
+                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.transcript .t b { color:var(--warn); font-weight:600; }
+.transcript .l { color:var(--dim); font-size:0.85rem; background:var(--panel);
+                 border-left:2px solid var(--line); padding:6px 9px; white-space:pre-wrap; }
+.transcript .e { color:var(--dim); font-size:0.8rem; border-top:1px dashed var(--line); padding-top:5px; }
+.transcript .ctx { color:var(--dim); font-size:0.8rem; border-left:2px solid var(--line);
+                   padding-left:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ---------------- mobile ----------------
+   Reached from the phone's settings menu, so it has to be usable there: the
+   desktop sizing puts ten controls under 40px, below any usable touch target. */
+@media (max-width: 700px) {
+  html { font-size:15px; }
+  main { padding:12px 10px calc(48px + env(safe-area-inset-bottom)); }
+  .masthead .inner { padding:8px 10px; }
+  .masthead h1 { font-size:16px; }
+  nav.tabs button { min-height:40px; font-size:14px; padding:0 13px; }
+  button, select, input, textarea { min-height:44px; font-size:16px; }  /* 16px or iOS zooms */
+  .bar .count { width:100%; margin-left:0; text-align:right; }
+  .bar input, .bar select { flex:1 0 100%; }
+  /* A row is two lines on a phone: what it is, then what you can do with it.
+     Wrapping them into one line squeezed the title to "Screen…" and gave the
+     buttons the width. */
+  .masthead .brand { display:none; }
+  .masthead .top { flex-wrap:wrap; }
+  .row { flex-wrap:wrap; gap:6px 8px; }
+  .row .main { flex:1 0 100%; }
+  .row .title { white-space:normal; }
+  .row .meta { white-space:normal; }
+  .row button, .row select { min-height:40px; font-size:0.86rem; padding:0 12px; }
+  .sched .top { gap:6px 10px; }
+  .sched .top .when, .sched .top .tag { flex:1 0 100%; }
+  .sched .top button { min-height:40px; }
+  form.sched-form fieldset { grid-template-columns:1fr; }
+  form.sched-form .preview { grid-column:1; }
+  form.sched-form .trio { grid-template-columns:1fr; }
+  .copy { min-height:34px; }
+  /* Hover is meaningless on touch and leaves controls looking stuck. */
+  @media (hover: none) { button:hover, .row:hover { border-color:var(--line); } }
+}

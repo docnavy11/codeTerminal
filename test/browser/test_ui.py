@@ -1177,7 +1177,8 @@ def test_schedules_tab_create_run_now(page, server):
     page.click("form.sched-form button[type=submit]")
     page.wait_for_selector(".sched", timeout=5000)
     assert page.text_content(".sched .top b") == "Morning check"
-    assert "every day at 08:00 (Europe/Brussels)" in page.text_content(".sched .when")
+    when = page.text_content(".sched .when")
+    assert "every day at 08:00" in when and "Europe/Brussels" in when, when
     page.click(".sched button:text-is('Run now')")
     page.wait_for_function("() => document.querySelector('.sched .last .o.done')", timeout=15000)
     last = page.text_content(".sched .last")
