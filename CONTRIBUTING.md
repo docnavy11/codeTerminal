@@ -10,8 +10,9 @@ logged in). The quick start in the [README](README.md) covers the rest.
 
 ## Before you open a pull request
 
-    npm run check          # typecheck + 550 unit tests, no network, seconds
+    npm run check          # typecheck + 546 unit tests, no network, seconds
     npm run test:browser   # the real client in Chromium against a fixture server
+    npm run test:chromium  # the server browser, driving a real Chromium
 
 The browser suite needs Python with `pytest`, `pytest-xdist` and `playwright`
 (`python -m playwright install chromium`). Both run in CI.

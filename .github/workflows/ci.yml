@@ -18,11 +18,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # A shared runner is slower than a laptop and has no GPU; the suite's
-      # waits scale with this rather than being padded one by one.
       - run: npm run check
-        env:
-          CT_CHROMIUM_WAIT: "60000"
 
   browser:
     name: browser suite
@@ -42,3 +38,16 @@ jobs:
       - run: npm run test:browser
         env:
           CT_TIMEOUT_SCALE: "3"
+      # The server browser drives a real Chromium over the DevTools protocol.
+      # It ran in the unit job until 2026-09-15 and failed there twice on a
+      # wait that 60 s did not fix: the runner image's Chrome is not the
+      # browser the suite is written against. Point it at Playwright's, the
+      # one this job just installed.
+      - name: server browser (real Chromium)
+        run: |
+          export CODETERM_CHROMIUM="$(python -c 'from playwright.sync_api import sync_playwright
+          p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()')"
+          echo "using $CODETERM_CHROMIUM"
+          npm run test:chromium
+        env:
+          CT_CHROMIUM_WAIT: "60000"

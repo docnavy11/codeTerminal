@@ -28,11 +28,20 @@ gate both work.
 
 ## Tests
 
-    npm test          # node:test via tsx
-    npm run check     # typecheck + tests
-    npm run test:e2e  # boots a real server and session; needs credentials
+    npm test             # 546 unit tests, node:test via tsx, no browser, no network
+    npm run check        # typecheck + the above — what CI gates on
+    npm run test:browser # the real client in Chromium against a fixture server (59)
+    npm run test:chromium# the server browser, driving a real Chromium (6)
+    npm run test:e2e     # boots a real server and session; needs credentials
+    npm run test:real    # the actual SDK; costs about $0.30 a run, opt-in
 
-402 unit tests, plus a 12-test browser suite. Measured line coverage of
+Which suite a test belongs in is decided by what it needs to launch. Anything
+that starts a browser is out of `npm test`: the server-browser suite lived
+there until 2026-09-15 and failed twice on GitHub's runner, where the image's
+Chrome is not the browser it is written against — it now runs in the browser
+job with `CODETERM_CHROMIUM` pointed at Playwright's.
+
+Measured line coverage of
 `src/` is 97.7% (`npm run coverage`); every module is above 85%, and the
 ones that matter most — auth, files, protocol, store, session, conversation,
 attach, browser bridge, tools — are at 98–100%.
