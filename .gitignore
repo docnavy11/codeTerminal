@@ -13,3 +13,4 @@ __pycache__/
 .pytest_cache/
 server-browser/
 schedules.json
+browser-allow.json

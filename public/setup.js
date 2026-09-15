@@ -111,6 +111,19 @@ async function load() {
     ["projects", `${s.paths.projectsRoot.path}${s.paths.projectsRoot.exists ? "" : "  (missing)"}`, false],
     ["login file", `${s.login.path}${s.login.credentials ? "" : "  (missing)"}`, false],
   ]);
+  // Everything that makes this installation yours, so "copy my setup" is a
+  // list you can read rather than one you have to piece together.
+  const st = s.statePaths ?? {};
+  kv($("state"), [
+    ["settings", s.envPath ?? "—", false],
+    ["chats", st.chats ?? "—", false],
+    ["prompts", st.prompts ?? "—", false],
+    ["schedules", st.schedules ?? "—", false],
+    ["usage", st.usage ?? "—", false],
+    ["allowed sites", st.browserAllow ?? "—", false],
+    ["workspace", st.workspace ?? "—", false],
+    ["server browser profile", st.serverBrowserProfile ?? "—", false],
+  ]);
 }
 load();
 setInterval(load, 5000);

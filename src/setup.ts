@@ -32,6 +32,10 @@ export type SetupInput = {
   schedules?: { count: number; next: number | null };
   /** Phone notification targets configured (telegram, webhook, ntfy). */
   notifyTargets?: string[];
+  /** Where the config and the state are kept, for the setup page's Paths list. */
+  statePaths?: Record<string, string>;
+  /** The .env this install reads (it may not exist). */
+  envPath?: string;
   /** Set by systemd for every process it starts. */
   systemd: boolean;
   /** Test hook: how to look at the filesystem. */

@@ -40,6 +40,15 @@
 
   <h2>Paths <span class="sub">where things are kept on the server</span></h2>
   <div class="panel"><div class="kv" id="paths"></div></div>
+
+  <h2>Config and state <span class="sub">what to copy to move this installation</span></h2>
+  <div class="panel">
+    <p class="hint" style="margin:0 0 10px">Settings live in one <code>.env</code>; everything else is state the
+      server writes. <code>deploy/backup.sh</code> packs the list below into one tarball and
+      <code>deploy/restore.sh</code> puts it into another clone. <code>CODETERM_STATE</code> keeps all of it in one
+      directory instead of beside the source.</p>
+    <div class="kv" id="state"></div>
+  </div>
 </main>
 
 <script src="/setup.js"></script>

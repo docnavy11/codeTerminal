@@ -28,6 +28,7 @@ import { buildSetup } from "./setup.js";
 import { toMarkdown, exportFilename } from "./export.js";
 import { BrowserAllowlist, normaliseHost, LEVELS, type Level } from "./browser-allow.js";
 import { readFileSync } from "node:fs";
+import { loadEnvFile, statePaths } from "./config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -81,24 +82,29 @@ export type ServerConfig = {
 };
 
 export function envConfig(): ServerConfig {
+  // systemd reads .env through EnvironmentFile; `npm start` did not read it at
+  // all, so every setting the README tells you to put there was ignored
+  // outside the service. Real environment variables still win.
+  loadEnvFile(ROOT);
   const csv = (v: string | undefined, sepRe: RegExp) => (v ?? "").split(sepRe).map((s) => s.trim()).filter(Boolean);
   const home = process.env.HOME ?? homedir();
+  const state = statePaths(ROOT);
   return {
     host: process.env.CODETERM_HOST ?? "127.0.0.1",
     port: Number(process.env.CODETERM_PORT ?? 8123),
-    workspace: process.env.CODETERM_WORKSPACE ?? join(ROOT, "workspace"),
-    chatsDir: process.env.CODETERM_CHATS ?? join(ROOT, "chats"),
+    workspace: state.workspace,
+    chatsDir: state.chats,
     // The shell pane is already a full shell as this user, so scoping the file
     // browser tighter than that would be theatre. Root is configurable; it
     // opens in the workspace.
     filesRoot: process.env.CODETERM_FILES_ROOT ?? home,
     projectsRoot: process.env.CODETERM_PROJECTS_ROOT ?? join(home, "projects"),
-    promptsPath: process.env.CODETERM_PROMPTS ?? join(ROOT, "prompts.json"),
-    schedulesPath: process.env.CODETERM_SCHEDULES ?? join(ROOT, "schedules.json"),
+    promptsPath: state.prompts,
+    schedulesPath: state.schedules,
     notify: notifyConfigFromEnv(),
-    usagePath: process.env.CODETERM_USAGE ?? join(ROOT, "usage.json"),
-    browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : join(ROOT, "browser-allow.json"),
-    serverBrowser: { profileDir: process.env.CODETERM_SERVER_BROWSER_PROFILE ?? join(ROOT, "server-browser", "profile"),
+    usagePath: state.usage,
+    browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : state.browserAllow,
+    serverBrowser: { profileDir: state.serverBrowserProfile,
       ...(process.env.CODETERM_CHROMIUM ? { chromium: process.env.CODETERM_CHROMIUM } : {}), autostart: process.env.CODETERM_SERVER_BROWSER === "1",
       ...(process.env.CODETERM_SERVER_BROWSER_TZ ? { timezone: process.env.CODETERM_SERVER_BROWSER_TZ } : {}),
       ...(process.env.CODETERM_SERVER_BROWSER_LANG ? { lang: process.env.CODETERM_SERVER_BROWSER_LANG } : {}),
@@ -407,6 +413,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       browserSites: browserAllow ? browserAllow.all().length : null,
       mcpServers: convo.mcpServers,
       notifyTargets: notifier.targets,
+      statePaths: statePaths(ROOT), envPath: join(ROOT, ".env"),
       schedules: (() => { const all = schedules.list().filter((s) => !s.paused); const next = all.map((s) => s.nextAt).filter((n): n is number => n !== null).sort((a, b) => a - b)[0]; return { count: schedules.list().length, next: next ?? null }; })(),
     }));
   });

@@ -63,6 +63,47 @@ tool results in [docs/design-tool-results.md](docs/design-tool-results.md).
 
 ---
 
+## Config, state, and moving an installation
+
+**Settings** are one file: `.env` at the repo root, every key documented in
+[.env.example](.env.example). The systemd unit reads it through
+`EnvironmentFile=`, and since 2026-09-15 the server reads it itself as well —
+before that, `npm start` from a shell ignored `.env` entirely, so every
+setting the docs told you to put there applied only under the service. A real
+environment variable still wins over the file.
+
+**State** is what the server writes: `chats/`, `workspace/`, `prompts.json`,
+`schedules.json`, `usage.json`, `browser-allow.json`, and the server
+browser's Chromium profile under `server-browser/profile/` (hundreds of MB,
+and it holds real logins). By default all of it sits beside the source, which
+is why "copy my installation" used to mean knowing which six files and two
+directories among the source were yours. **`CODETERM_STATE=/var/lib/code-terminal`
+keeps all of it in one directory instead**; each item still has its own
+variable (`CODETERM_CHATS`, `CODETERM_PROMPTS`, …) which wins over it. Setting
+it moves nothing: a file that already exists at the repo root keeps being
+used until you move it deliberately, so an existing install cannot be
+stranded by the setting. The setup page lists every one of these paths under
+**Config and state**.
+
+**Moving it** is two commands:
+
+    deploy/backup.sh                     # → code-terminal-backup-<stamp>.tar.gz
+    deploy/backup.sh --with-profile      # …including the browser profile's logins
+
+    git clone <this repo> /srv/ct && cd /srv/ct && npm install
+    deploy/restore.sh ~/code-terminal-backup-*.tar.gz /srv/ct
+
+The backup asks the server where its state actually is rather than guessing,
+so it follows `CODETERM_STATE` and the individual variables. Restore refuses
+to overwrite an existing `chats/` without `--force`, and stops the service
+only when it is restoring into the installation that service runs from.
+
+Not in the backup, by design: `node_modules` (`npm install`), the source
+(`git clone`), and your Claude Code login in `~/.claude` — that belongs to
+the machine, not to this app, so a new machine needs `claude` run once and
+logged in. After restoring, check `CODETERM_HOST` in `.env`: it names the old
+machine's address.
+
 ## Managing the service
 
 `deploy/sudoers-code-terminal` removes the password prompt for
