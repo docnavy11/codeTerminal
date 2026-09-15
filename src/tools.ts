@@ -92,7 +92,7 @@ async function screenshotToFile(bridge: BrowserBridge, args: Record<string, unkn
  * commands the *user* ran — the agent has its own Bash for its own work, and
  * that output never lands here.
  */
-export function terminalTools(getShell: () => Shell | null) {
+export function terminalTools(getShell: () => Shell | null, tmux?: { list: () => Promise<{ name: string; path: string; command: string; attached: number }[]>; capture: (name: string, lines: number) => Promise<string> }) {
   return createSdkMcpServer({
     name: "terminal",
     version: "1.0.0",
@@ -104,9 +104,24 @@ export function terminalTools(getShell: () => Shell | null) {
     tools: [
       tool(
         "read",
-        "Read recent output from the shell pane the user is working in — what THEY ran and what it printed. Use this when the user refers to a command they just ran, an error they are looking at, or 'this failure'. Not your own Bash output.",
-        { lines: z.number().int().optional().describe("How many trailing lines (default 200, max 2000)") },
+        "Read recent output from the user's terminal — what THEY ran and what it printed. Use this when the user refers to a command they just ran, an error they are looking at, or 'this failure'. Not your own Bash output. With `session`, read a named tmux session instead of the open pane: that works even when nobody is attached to it, which is how to see what a background dev server or build is printing. `sessions` lists what is running.",
+        { lines: z.number().int().optional().describe("How many trailing lines (default 200, max 2000)"),
+          session: z.string().optional().describe("A tmux session name from `sessions`"),
+          sessions: z.boolean().optional().describe("List the tmux sessions instead of reading one") },
         async (a) => {
+          if (a.sessions) {
+            if (!tmux) return text("No tmux on this server, so there are no named sessions — only the shell pane.");
+            const list = await tmux.list();
+            if (!list.length) return text("No tmux sessions are running.");
+            return text(list.map((s) => `${s.name}\t${s.command}\t${s.path}${s.attached ? "\t(attached)" : ""}`).join("\n"));
+          }
+          if (a.session) {
+            if (!tmux) return text("No tmux on this server, so there are no named sessions — only the shell pane.");
+            try {
+              const out = await tmux.capture(a.session, a.lines ?? 200);
+              return text(out.trim() ? `Session ${a.session}:\n\n${out}` : `Session ${a.session} has printed nothing.`);
+            } catch (e) { return text(`No session called "${a.session}". Ask for sessions:true to see what is running. (${e instanceof Error ? e.message : String(e)})`); }
+          }
           const shell = getShell();
           if (!shell) return text("No shell pane is open. The user has not started a terminal in this session.");
           if (!shell.hasOutput) return text("The shell pane is open but has printed nothing yet.");

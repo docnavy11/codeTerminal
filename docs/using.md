@@ -33,6 +33,7 @@ Part of [code terminal](../README.md).
 - [Type size and theme](#type-size-and-theme)
 - [Chrome side panel](#chrome-side-panel)
 - [The shell pane](#the-shell-pane)
+- [Sessions](#sessions)
 - [Right-click and notifications](#right-click-and-notifications)
 
 ## Chats
@@ -668,6 +669,39 @@ UI works with no outbound network. The same goes for `marked` + `DOMPurify`,
 which render Claude's replies as markdown: model output is untrusted (the page
 holds an open shell socket), so it is sanitized before it touches the DOM and
 links open in a new tab with no referrer.
+
+## Sessions
+
+The right pane has three tabs: **terminal**, **sessions**, **files**. The
+sessions tab lists the tmux sessions on this machine, with the directory the
+current pane is in, what it is running, how long since it printed something,
+and whether anybody is attached. Click one and the terminal tab attaches to
+it; **+ new** makes one in the current chat's directory; a session can be
+renamed or killed from the row.
+
+These are the machine's sessions, not the server's. The other project on this
+box (tty) makes `wt_<uuid>` sessions on the same tmux socket and they show up
+here unchanged — one set of sessions, two front doors. Nothing is namespaced,
+on purpose.
+
+The plain shell tab is still a plain shell. Making every shell a tmux session
+would have bought persistence for the surface that needs it least and put
+tmux's prefix key in the way of a pane you open, type in and close. You go to
+the sessions tab *because* you want something to outlive the tab: a dev
+server, a long build, a `claude` run you want back after a reload. The
+attachment is remembered in `sessionStorage`, so a reload — or a server
+restart — comes back to the same session, and a Chrome window that attached
+to one does not drag the others with it.
+
+The agent can look in. `terminal.read` takes `sessions: true` to list them and
+`session: "<name>"` to read one, which works when nothing is attached at all —
+that is how to ask what a background build is printing without stealing the
+pane. It reads; it does not type.
+
+`GET /sessions`, `POST /sessions`, `PUT /sessions/:name`, `DELETE
+/sessions/:name`, behind the same guard as everything else. The tab is absent
+when tmux is not installed and when `CODETERM_SHELL=0` — attaching to a
+session is opening a shell, so it obeys the same switch.
 
 ## Right-click and notifications
 

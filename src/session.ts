@@ -66,6 +66,8 @@ export type SessionDeps = {
   getShell: () => Shell | null;
   /** False when the server runs without a shell pane: the terminal tool is not registered at all. */
   shell?: boolean;
+  /** Named sessions for the terminal tool, when the machine has tmux. */
+  tmux?: Parameters<typeof terminalTools>[1];
   watches: WatchRegistry | null;
   prompts: PromptStore | null;
   /** Which browser this conversation's browser tools should act in. */
@@ -191,7 +193,7 @@ export class Session {
         includePartialMessages: true,
         allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...(d.shell === false ? [] : TERMINAL_TOOLS), ...WATCH_TOOLS, ...PROMPT_TOOLS, ...FILE_TOOLS],
         mcpServers: {
-          ...(d.shell === false ? {} : { terminal: terminalTools(this.#deps.getShell) }),
+          ...(d.shell === false ? {} : { terminal: terminalTools(this.#deps.getShell, d.tmux) }),
           ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy, () => this.#workspace, d.filesRoot,
             d.confirmSubmit === false ? undefined : (detail) => this.#askSubmit(detail)) } : {}),
           // The chat id is this session's own, so a watch is always attributed

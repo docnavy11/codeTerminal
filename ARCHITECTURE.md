@@ -39,13 +39,16 @@ is really a cap of eight. That constant is a memory/CPU ceiling, not a
 stylistic one, and the Manager evicts the least-recently-touched idle chat to
 stay under it — never one with a client attached.
 
-Beyond those: one `bash -l` per shell pane (`shell.ts`), and `tailscale whois`
+Beyond those: one `bash -l` per shell pane (`shell.ts`) — or, when the pane is
+attached to a session from the sessions tab, one `tmux new-session -A` client
+against the machine's tmux server (`tmux.ts`), which is shared with anything
+else on the box that uses tmux — and `tailscale whois`
 spawned per authenticated peer — now memoised for 15 s (`tailnet.ts`), because
 before that the file browser's burst of requests was a burst of subprocesses.
 
 ## The server, by dependency
 
-`src/` is 19 modules, 3,371 lines. The import graph is acyclic and strongly
+`src/` is 35 modules, 6,870 lines. The import graph is acyclic and strongly
 layered — this is the codebase's best structural property.
 
 **Leaves (14 of 19) — no local imports.** `browser`, `cidr`, `files`,

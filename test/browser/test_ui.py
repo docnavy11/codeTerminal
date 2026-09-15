@@ -1234,3 +1234,41 @@ def test_question_card_multi_select(page, server):
     answer.click()
     wait_reply(page, '"Which sites should it cover?":"LinkedIn, VDAB"')
     assert '"Which title should the profile use?":"A — Agent Development"' in last_reply(page)
+
+
+def test_sessions_tab_attaches_and_survives_a_restart(page, server):
+    """The chooser: tmux sessions on the machine, attach to one, and — the
+    whole point — what is running in it is still there after the server
+    restarts, which a plain shell pane does not survive."""
+    import subprocess, uuid
+    if subprocess.run(["tmux", "-V"], capture_output=True).returncode != 0:
+        import pytest; pytest.skip("no tmux on this machine")
+    name = "cttest-" + uuid.uuid4().hex[:8]
+    try:
+        open_ui(page, server)
+        page.wait_for_selector('.pane-hd .tab[data-view="sessions"]:not([hidden])', timeout=SHORT)
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        page.wait_for_selector("#slist", timeout=SHORT)
+        # create → attaches, and the terminal view comes forward
+        page.fill("#snew", name); page.click("#screate")
+        page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
+        wait(page, f"() => document.getElementById('rightnote').textContent === 'session: {name}'", what="header names the session")
+        # something long-running, then leave the session entirely
+        page.click("#term"); page.keyboard.type("echo MARKER-$((6*7))\n")
+        wait(page, "() => document.querySelector('#term').innerText.includes('MARKER-42')", what="the session ran it")
+        # the server restarting is what kills a plain shell; this must not kill this
+        server.restart()
+        wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+        wait(page, "() => document.querySelector('#term').innerText.includes('MARKER-42')", 30,
+             "the session and its scrollback came back after the restart")
+        assert page.text_content("#rightnote") == f"session: {name}"
+        # it is listed as attached, and killing it returns the pane to a plain shell
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
+        page.once("dialog", lambda d: d.accept())
+        page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('kill')")
+        wait(page, f"() => ![...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="gone from the list")
+        wait(page, "() => document.getElementById('rightnote').textContent === 'no approval gate'", what="back to a plain shell")
+        assert page.errors == []
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)

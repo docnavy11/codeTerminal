@@ -301,10 +301,37 @@ describe("upgrades", () => {
     assert.match(await rawUpgrade("/ws", ["Origin: https://evil.example"]), /^HTTP\/1\.1 403/);
     assert.match(await rawUpgrade("/pty", ["Sec-Fetch-Site: cross-site"]), /^HTTP\/1\.1 403/);
   });
+  test("/sessions lists, creates, renames and kills tmux sessions on this machine", async () => {
+    const { tmuxAvailable, killSession } = await import("../src/tmux.js");
+    if (!(await tmuxAvailable())) return;                       // no tmux here: the tab is hidden and the routes 404
+    const name = `cthttp-${process.pid}`;
+    try {
+      const made = await s.post("/sessions", { name, cwd: "" });
+      assert.equal(made.status, 200);
+      const mine = (b: unknown) => (b as { sessions: { name: string; path: string }[] }).sessions.find((x) => x.name === name);
+      assert.ok(mine(made.body), "the new session comes back in the list");
+      // the machine's sessions, not ours: whatever else is running is listed too
+      assert.ok((made.body!.sessions as unknown[]).length >= 1);
+
+      const renamed = `${name}-2`;
+      assert.ok(mine((await s.json(`/sessions/${name}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: renamed }) })).body) === undefined);
+      assert.ok((await s.json("/sessions")).body!.sessions.some((x: { name: string }) => x.name === renamed));
+
+      assert.equal((await s.json(`/sessions/${renamed}`, { method: "DELETE" })).status, 200);
+      assert.ok(!(await s.json("/sessions")).body!.sessions.some((x: { name: string }) => x.name === renamed));
+
+      // a name tmux must never see
+      assert.equal((await s.post("/sessions", { name: "a b" })).status, 400);
+      assert.equal((await s.post("/sessions", { name: "-rf" })).status, 400);
+    } finally { await killSession(name).catch(() => {}); await killSession(`${name}-2`).catch(() => {}); }
+  });
+
   test("CODETERM_SHELL=0: no /pty, /config says so, and the agent gets no terminal tool", async () => {
     const noShell = await startTestServer({ cfg: { shell: false } });
     try {
-      assert.deepEqual((await noShell.json("/config")).body, { shell: false });
+      const cfg = (await noShell.json("/config")).body!;
+      assert.equal(cfg.shell, false); assert.equal(cfg.sessions, false, "no shell means no sessions either");
+      assert.equal((await noShell.json("/sessions")).status, 404);
       assert.match(await upgradeTo(noShell.port, "/pty", []), /^HTTP\/1\.1 404/);
       const ws = await noShell.socket("/ws");
       await ws.wait((m) => m.kind === "replayed");
@@ -314,7 +341,7 @@ describe("upgrades", () => {
       ws.ws.close();
     } finally { await noShell.stop(); }
     // the default still has all three
-    assert.deepEqual((await s.json("/config")).body, { shell: true });
+    assert.equal((await s.json("/config")).body!.shell, true);
   });
 
   test("server browser: status without Chromium running; navigate refused; the live socket exists and is gated", async () => {

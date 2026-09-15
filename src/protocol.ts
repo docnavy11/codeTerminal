@@ -145,7 +145,8 @@ export type AgentMessage =
 
 /** Client → server on /pty. Terminal bytes travel as binary frames, not JSON. */
 export type ShellMessage =
-  | { type: "start"; cols?: number; rows?: number }
+  /** `session` attaches to that tmux session (created if new); without it, a throwaway login shell. */
+  | { type: "start"; cols?: number; rows?: number; session?: string }
   | { type: "input"; data: string }
   | { type: "resize"; cols?: number; rows?: number };
 

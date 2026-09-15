@@ -58,9 +58,12 @@ globalThis.PLATFORM = {
     } catch { return null; }
   },
 
-  /* A single-column host: the shared client swaps transcript for files itself.
-     The desktop supplies a function here to put files in its right pane. */
+  /* A single-column host swaps the transcript for the file browser. The desktop
+     supplies a function here to put files in its right pane. */
   showFiles: null,
+  /* And showView when a host has more than those two: the desktop's right pane
+     is terminal | sessions | files. Null here means "only the two". */
+  showView: null,
   onPendingPrompt(cb) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === "session" && changes.pendingPrompt?.newValue) cb();

@@ -357,6 +357,30 @@
   .pane-hd .tab { cursor:pointer; padding:1px 6px; border-radius:3px; }
   .pane-hd .tab.on { color:var(--fg); background:var(--btn); }
   .pane-hd .tab:hover:not(.on) { color:var(--fg); }
+  /* the sessions chooser: tmux sessions on this machine, whoever made them */
+  #sessions { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .sbar { display:flex; align-items:center; gap:5px; padding:5px 8px; flex-shrink:0;
+          border-bottom:1px solid var(--line); background:var(--panel); }
+  .sbar input { flex:0 1 200px; min-width:0; font:inherit; font-size:0.792rem; font-family:var(--mono);
+                background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 7px; }
+  .sbar input:focus { outline:none; border-color:var(--accent); }
+  .sbar button { font-size:0.792rem; padding:1px 8px; }
+  .sbar #snote { color:var(--dim); font-size:0.75rem; margin-left:auto; overflow:hidden;
+                 text-overflow:ellipsis; white-space:nowrap; }
+  .sbar #snote.bad { color:var(--bad); }
+  #slist { flex:1; min-height:0; overflow-y:auto; }
+  #slist .s { display:flex; align-items:center; gap:8px; padding:6px 9px; cursor:pointer;
+              border-bottom:1px solid var(--line); }
+  #slist .s:hover { background:var(--btn); }
+  #slist .s.live { box-shadow:inset 2px 0 0 var(--accent); }
+  #slist .s .nm { font-family:var(--mono); flex-shrink:0; }
+  #slist .s .cmd { color:var(--warn); font-size:0.792rem; flex-shrink:0; }
+  #slist .s .pth { color:var(--dim); font-size:0.792rem; font-family:var(--mono); flex:1; min-width:0;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #slist .s .when { color:var(--dim); font-size:0.75rem; flex-shrink:0; font-variant-numeric:tabular-nums; }
+  #slist .s button { font-size:0.708rem; padding:1px 6px; flex-shrink:0; }
+  #slist .empty { color:var(--dim); padding:18px 10px; }
+  #term.on-session { box-shadow:inset 2px 0 0 var(--accent); }
 
   #files { flex:1; min-height:0; display:flex; flex-direction:column; }
   .fbar { display:flex; align-items:center; gap:5px; padding:5px 8px; flex-shrink:0;
@@ -417,7 +441,10 @@ globalThis.PLATFORM = {
   tabTitle: "Attach the active browser tab to each prompt",
   async takePendingPrompt() { return null; },
   onPendingPrompt() {},
-  // showFiles is installed by desktop.js: files live in the right pane here.
+  // showFiles and showView are installed by desktop.js: this host's right pane
+  // has three views, not two.
+  showFiles: null,
+  showView: null,
 };
 </script>
 
@@ -477,10 +504,19 @@ globalThis.PLATFORM = {
 
   <div class="pane" id="right">
     <div class="pane-hd">
-      <span class="tabs"><span class="tab on" data-view="shell">shell</span><span class="tab" data-view="files">files</span></span>
+      <span class="tabs"><span class="tab on" data-view="shell">terminal</span><span class="tab" data-view="sessions" hidden>sessions</span><span class="tab" data-view="files">files</span></span>
       <span class="warn" id="rightnote">no approval gate</span>
     </div>
     <div id="term"></div>
+    <div id="sessions" hidden>
+      <div class="sbar">
+        <input id="snew" placeholder="new session name" spellcheck="false" autocomplete="off">
+        <button id="screate">Create</button>
+        <button id="srefresh" title="Refresh">⟳</button>
+        <span id="snote"></span>
+      </div>
+      <div id="slist"></div>
+    </div>
     <div id="files" hidden>
       <div class="fbar">
         <button id="fup" title="Up one level">↑</button>

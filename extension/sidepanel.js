@@ -1517,8 +1517,10 @@ document.querySelectorAll(".tabs .tab").forEach((tab) => {
     document.querySelectorAll(".tabs .tab").forEach((t) => t.classList.toggle("on", t === tab));
     // A single-column host swaps the transcript for the file browser. A host
     // with room for both (the desktop's right pane) supplies showFiles and
-    // decides for itself what the toggle reveals.
-    if (PLATFORM.showFiles) PLATFORM.showFiles(wantFiles);
+    // decides for itself what the toggle reveals — or showView, when it has
+    // more than the two (the desktop's terminal | sessions | files).
+    if (PLATFORM.showView) PLATFORM.showView(tab.dataset.view);
+    else if (PLATFORM.showFiles) PLATFORM.showFiles(wantFiles);
     else {
       log.hidden = wantFiles;
       document.querySelector("footer").hidden = wantFiles;

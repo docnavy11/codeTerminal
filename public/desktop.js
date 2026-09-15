@@ -46,6 +46,11 @@ function checkPtyLiveness(now = Date.now()) {
   return true;
 }
 setInterval(() => checkPtyLiveness(), 15_000);
+/* Which tmux session the terminal is attached to, or null for the throwaway
+   shell. Reattaching after a drop must land on the same one, so it is held
+   here rather than in the socket. */
+let attachedTo = (() => { try { return sessionStorage.getItem("ct.session") || null; } catch { return null; } })();
+const rememberSession = (n) => { try { n ? sessionStorage.setItem("ct.session", n) : sessionStorage.removeItem("ct.session"); } catch { /* private window */ } };
 async function connectShell() {
   clearTimeout(ptyRetry);
   const url = (await PLATFORM.wsUrl()).replace(/\/ws$/, "/pty");
@@ -53,8 +58,13 @@ async function connectShell() {
   ptyWs.binaryType = "arraybuffer";
   ptyWs.onopen = () => {
     ptySeen = Date.now();
-    if (ptyWasDown) { ptyWasDown = false; term.write("\r\n\x1b[90m[reconnected — new shell]\x1b[0m\r\n"); }
-    ptyWs.send(JSON.stringify({ type: "start", cols: term.cols, rows: term.rows }));
+    if (ptyWasDown) {
+      ptyWasDown = false;
+      term.write(attachedTo
+        ? `\r\n\x1b[90m[reattached — ${attachedTo}]\x1b[0m\r\n`
+        : "\r\n\x1b[90m[reconnected — new shell]\x1b[0m\r\n");
+    }
+    ptyWs.send(JSON.stringify({ type: "start", cols: term.cols, rows: term.rows, ...(attachedTo ? { session: attachedTo } : {}) }));
   };
   ptyWs.onmessage = (ev) => {
     ptySeen = Date.now();
@@ -95,12 +105,131 @@ const termEl = document.getElementById("term"), filesEl = document.getElementByI
 const note = document.getElementById("rightnote");
 let filesRoot = "";
 // Called by the shared client's chat|files tabs; the transcript stays put.
-PLATFORM.showFiles = (on) => {
-  termEl.hidden = on; filesEl.hidden = !on;
-  note.textContent = on ? filesRoot : "no approval gate";
-  if (!on) sendResize();
+const sessionsEl = document.getElementById("sessions");
+PLATFORM.showFiles = (on) => PLATFORM.showView(on ? "files" : "shell");
+/* Three views in one pane: the terminal (a throwaway shell, or a tmux session
+   you attached to), the session chooser, and the file browser. */
+PLATFORM.showView = (view) => {
+  termEl.hidden = view !== "shell"; filesEl.hidden = view !== "files"; sessionsEl.hidden = view !== "sessions";
+  note.textContent = view === "files" ? filesRoot
+    : view === "sessions" ? "tmux sessions on this machine"
+    : attachedTo ? `session: ${attachedTo}` : "no approval gate";
+  if (view === "sessions") loadSessions();
+  if (view === "shell") sendResize();
 };
 fetch("/files/info").then((r) => r.json()).then((i) => { filesRoot = i.root ?? ""; }).catch(() => {});
+
+/* ---------------- sessions: the tmux chooser ----------------
+   These are the machine's sessions, not this app's. Anything tty (or you, in
+   a real terminal) started is here too, with its working directory — one set
+   of sessions, several front doors. Attaching points this pane's terminal at
+   one; the session keeps running when you leave. */
+const slist = document.getElementById("slist"), snote = document.getElementById("snote"), snew = document.getElementById("snew");
+let homeDir = "";
+/* `~/projects/x`, and the middle dropped when it is long. The first attempt
+   used direction:rtl to ellipsise the left, which moved the leading slash to
+   the end: "home/dev/projects/x/". */
+const shortPath = (p) => {
+  let t = homeDir && p.startsWith(homeDir) ? "~" + p.slice(homeDir.length) : p;
+  if (t.length > 46) { const parts = t.split("/"); t = parts.length > 3 ? `${parts[0]}/${parts[1]}/…/${parts[parts.length - 1]}` : "…" + t.slice(-44); }
+  return t;
+};
+/* Not `ago`: desktop.js and the shared client are two plain scripts in one
+   global scope, and sidepanel.js already has one — the page died on
+   "Identifier 'ago' has already been declared" until this was renamed. */
+const shortAgo = (ms) => {
+  if (!ms) return "";
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+};
+const sfail = (msg) => { snote.textContent = msg; snote.className = "bad"; };
+async function sapi(path, opts) {
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+  return body;
+}
+function attach(name) {
+  attachedTo = name; rememberSession(name);
+  try { ptyWs?.close(); } catch { /* already gone */ }
+  ptyWs = null;
+  term.reset();
+  connectShell();
+  document.querySelector('.pane-hd .tab[data-view="shell"]')?.click();
+}
+function detach() {
+  if (!attachedTo) return;
+  attachedTo = null; rememberSession(null);
+  try { ptyWs?.close(); } catch { /* already gone */ }
+  ptyWs = null;
+  term.reset();
+  connectShell();
+  PLATFORM.showView("shell");
+}
+function renderSessions(sessions) {
+  slist.replaceChildren();
+  snote.className = "";
+  snote.textContent = `${sessions.length} session${sessions.length === 1 ? "" : "s"}`;
+  if (!sessions.length) {
+    const e = document.createElement("div"); e.className = "empty";
+    e.textContent = "No tmux sessions. Create one above; it keeps running when you close this tab.";
+    slist.append(e); return;
+  }
+  for (const s of sessions) {
+    const row = document.createElement("div");
+    row.className = "s" + (s.name === attachedTo ? " live" : "");
+    row.title = `${s.name} · ${s.windows} window${s.windows === 1 ? "" : "s"} · created ${new Date(s.createdAt).toLocaleString()}`;
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = s.name;
+    const cmd = document.createElement("span"); cmd.className = "cmd"; cmd.textContent = s.command;
+    const pth = document.createElement("span"); pth.className = "pth"; pth.textContent = shortPath(s.path); pth.title = s.path;
+    const when = document.createElement("span"); when.className = "when";
+    when.textContent = (s.attached ? "● " : "") + shortAgo(s.activityAt);
+    row.append(nm, cmd, pth, when);
+
+    const ren = document.createElement("button"); ren.textContent = "rename";
+    ren.onclick = async (e) => {
+      e.stopPropagation();
+      const to = prompt(`Rename "${s.name}" to`, s.name);
+      if (!to || to === s.name) return;
+      try { renderSessions((await sapi(`/sessions/${encodeURIComponent(s.name)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: to }) })).sessions);
+            if (attachedTo === s.name) attachedTo = to; }
+      catch (err) { sfail(err.message); }
+    };
+    const kill = document.createElement("button"); kill.textContent = "kill";
+    kill.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Kill "${s.name}"? Whatever is running in it stops.`)) return;
+      try {
+        renderSessions((await sapi(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" })).sessions);
+        if (attachedTo === s.name) detach();
+      } catch (err) { sfail(err.message); }
+    };
+    row.append(ren, kill);
+    row.onclick = () => attach(s.name);
+    slist.append(row);
+  }
+}
+async function loadSessions() {
+  try { renderSessions((await sapi("/sessions")).sessions); }
+  catch (e) { slist.replaceChildren(); sfail(e.message); }
+}
+document.getElementById("srefresh").onclick = loadSessions;
+document.getElementById("screate").onclick = async () => {
+  const name = snew.value.trim();
+  if (!name) { snew.focus(); return; }
+  try {
+    renderSessions((await sapi("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) })).sessions);
+    snew.value = "";
+    attach(name);
+  } catch (e) { sfail(e.message); }
+};
+snew.onkeydown = (e) => { if (e.key === "Enter") document.getElementById("screate").click(); };
+// A click on the note while attached is the way back to a plain shell.
+note.onclick = () => { if (attachedTo) detach(); };
+note.title = "click to leave the session and go back to a plain shell";
 
 /* ---------------- draggable divider ---------------- */
 const grip = document.getElementById("grip"), split = document.getElementById("split");
@@ -121,8 +250,16 @@ grip.addEventListener("pointerdown", (e) => {
    /pty route, and the retry loop would knock on a 404 every three seconds. */
 fetch("/config").then((r) => r.json()).then((c) => {
   shellOn = c.shell !== false;
+  // No tmux on the server, no sessions tab: the chooser would have nothing to
+  // choose and every button would 404.
+  homeDir = c.home ?? "";
+  if (shellOn && c.sessions) document.querySelector('.pane-hd .tab[data-view="sessions"]').hidden = false;
+  // A reload comes back to the session this tab was on, not a fresh shell.
+  if (!c.sessions) { attachedTo = null; rememberSession(null); }
+  if (attachedTo) note.textContent = `session: ${attachedTo}`;
   if (shellOn) { connectShell(); return; }
-  document.querySelector('.tabs .tab[data-view="shell"]')?.remove();
+  document.querySelector('.pane-hd .tab[data-view="shell"]')?.remove();
+  document.querySelector('.pane-hd .tab[data-view="sessions"]')?.remove();
   PLATFORM.showFiles(true);
   document.querySelector('.tabs .tab[data-view="files"]')?.classList.add("on");
   termEl.remove();

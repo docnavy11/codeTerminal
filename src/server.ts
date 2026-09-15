@@ -19,6 +19,7 @@ import type { ClientEvent } from "./protocol.js";
 import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe as describeCron } from "./schedule.js";
 import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
+import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture } from "./tmux.js";
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
@@ -234,7 +235,8 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     cfg.chatsDir,
     cfg.projectsRoot,
     // prefer is replaced per-chat by LiveChat, which knows its own browser.
-    { bridge, getShell: () => (SHELL ? state.activeShell : null), shell: SHELL, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false, warn,
+    { bridge, getShell: () => (SHELL ? state.activeShell : null), shell: SHELL,
+      tmux: { list: async () => (await haveTmux()) ? listSessions() : [], capture: (name, lines) => capture(name, lines) }, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false, warn,
       ...(cfg.spawnQuery ? { spawnQuery: cfg.spawnQuery } : {}),
       ...(cfg.titler ? { titler: cfg.titler } : {}) },
   );
@@ -406,9 +408,42 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     res.json({ ok: usage.record(String((req.body as { control?: unknown })?.control ?? "")) });
   });
 
+  /* The sessions tab: tmux sessions on this machine. They are the machine's,
+     not ours — tty's `wt_*` sessions appear here too, which is the point.
+     Gated the same as the shell, and gone entirely when the shell is off:
+     attaching to a session is opening a shell. */
+  let tmuxOk: boolean | null = null;
+  const haveTmux = async () => (SHELL ? (tmuxOk ??= await tmuxAvailable()) : false);
+  const tmuxGuard: express.RequestHandler = async (_req, res, next) => {
+    if (await haveTmux()) { next(); return; }
+    res.status(404).json({ error: SHELL ? "tmux is not installed on the server" : "the shell is off (CODETERM_SHELL=0)" });
+  };
+  const tmuxFail = (res: express.Response, e: unknown) =>
+    res.status(400).json({ error: e instanceof Error ? e.message.replace(/^Command failed.*?\n/s, "").trim() || e.message : String(e) });
+
+  app.get("/sessions", guard, tmuxGuard, async (_req, res) => {
+    try { res.json({ sessions: await listSessions() }); } catch (e) { tmuxFail(res, e); }
+  });
+  app.post("/sessions", guard, tmuxGuard, express.json({ limit: "8kb" }), async (req, res) => {
+    const b = req.body as { name?: string; cwd?: string };
+    try {
+      const cwd = b.cwd ? await files.safePath(FILES_ROOT, b.cwd) : (state.lastChat?.cwd ?? WORKSPACE);
+      await createSession(String(b.name ?? ""), cwd);
+      res.json({ sessions: await listSessions() });
+    } catch (e) { tmuxFail(res, e); }
+  });
+  app.put("/sessions/:name", guard, tmuxGuard, express.json({ limit: "8kb" }), async (req, res) => {
+    try { await renameSession(String(req.params.name), String((req.body as { name?: string }).name ?? "")); res.json({ sessions: await listSessions() }); }
+    catch (e) { tmuxFail(res, e); }
+  });
+  app.delete("/sessions/:name", guard, tmuxGuard, async (req, res) => {
+    try { await killSession(String(req.params.name)); res.json({ sessions: await listSessions() }); }
+    catch (e) { tmuxFail(res, e); }
+  });
+
   /** What the UI must know before it draws itself. Small on purpose: the
       desktop page asks this before opening a terminal socket that may not exist. */
-  app.get("/config", guard, (_req, res) => { res.json({ shell: SHELL }); });
+  app.get("/config", guard, async (_req, res) => { res.json({ shell: SHELL, sessions: await haveTmux(), home: cfg.home }); });
 
   app.get("/usage", guard, (_req, res) => {
     res.json({ counts: usage.counts() });

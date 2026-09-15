@@ -3,8 +3,8 @@
 A web UI, a Chrome side panel and a mobile page over one live Claude Code
 session. You type, the agent works in a workspace on your machine, and every
 action that could change something stops for your approval. Beside it: a real
-terminal, a file browser, saved prompts, and page watches that report back
-when a tab changes. It uses your Claude Code login — no API key, no credits.
+terminal, your tmux sessions, a file browser, saved prompts, and page watches
+that report back when a tab changes. It uses your Claude Code login — no API key, no credits.
 
 | desktop `/` | side panel | mobile `/m` |
 |---|---|---|
@@ -70,6 +70,7 @@ Start with the quick start above. After that, by what you are trying to do:
 | **Reach it from a phone or another device** | [Running it for real → Authentication](docs/running.md#authentication) |
 | **Run it as a service, move it, back it up** | [Running it for real](docs/running.md) |
 | **Know what every button and card does** | [Using it](docs/using.md) |
+| **Attach to a long-running tmux session** | [Using it → Sessions](docs/using.md#sessions) |
 | **Let the agent read and drive your browser** | [The browser](docs/browser-tools.md) |
 | **Have it work while your laptop is off** | [Working while you are away](docs/automation.md) |
 | **Understand or change the code** | [Working on the code](docs/development.md), then [ARCHITECTURE.md](ARCHITECTURE.md) |

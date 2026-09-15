@@ -199,7 +199,7 @@ export function attachShell(ws: WebSocket, ctx: AttachContext): void {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     switch (msg.type) {
       // The shell opens where the newest attached chat works, so both panes agree.
-      case "start":  shell.start(state.lastChat?.cwd ?? ctx.workspace, msg.cols ?? 80, msg.rows ?? 24); return;
+      case "start":  shell.start(state.lastChat?.cwd ?? ctx.workspace, msg.cols ?? 80, msg.rows ?? 24, msg.session); return;
       case "input":  if (typeof msg.data === "string") shell.write(msg.data); return;
       case "resize": shell.resize(msg.cols ?? 80, msg.rows ?? 24); return;
     }

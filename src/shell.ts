@@ -26,6 +26,7 @@ export function stripAnsi(s: string): string {
 
 export class Shell {
   #pty: IPty | null = null;
+  #session: string | null = null;
   /** Raw tail of what the terminal printed, so the agent can be shown it. */
   #scrollback = "";
   #onData: (chunk: string) => void;
@@ -36,17 +37,31 @@ export class Shell {
     this.#onExit = onExit;
   }
 
-  start(cwd: string, cols: number, rows: number): void {
+  /**
+   * `session` attaches this pty to a tmux session of that name, creating it in
+   * `cwd` if it is not there yet (`new-session -A`), so the process inside
+   * outlives the socket, the tab and the server. Without it the pty is a plain
+   * login shell that dies with its socket — which is what the shell pane wants.
+   */
+  start(cwd: string, cols: number, rows: number, session?: string): void {
     if (this.#pty) return;
 
     // Login shell so ~/.profile and nvm land on PATH — otherwise `node` is missing.
     const shell = process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : "/bin/bash";
+    const cols_ = clamp(cols, 20, 500), rows_ = clamp(rows, 5, 200);
+    this.#session = session ?? null;
 
-    this.#pty = spawn(shell, ["-l"], {
+    const [cmd, args] = session
+      // -A: attach if it exists, create if not. The size is passed so a fresh
+      // session is born at this client's size rather than 80x24.
+      ? ["tmux", ["new-session", "-A", "-s", session, "-x", String(cols_), "-y", String(rows_), "-c", cwd]] as const
+      : [shell, ["-l"]] as const;
+
+    this.#pty = spawn(cmd, [...args], {
       name: "xterm-256color",
       cwd,
-      cols: clamp(cols, 20, 500),
-      rows: clamp(rows, 5, 200),
+      cols: cols_,
+      rows: rows_,
       env: shellEnv(),
     });
 
@@ -77,6 +92,9 @@ export class Shell {
   }
 
   get hasOutput(): boolean { return this.#scrollback.length > 0; }
+
+  /** The tmux session this pane is attached to, if any. */
+  get session(): string | null { return this.#session; }
 
   resize(cols: number, rows: number): void {
     if (!this.#pty) return;

@@ -17,6 +17,7 @@ Part of [code terminal](../README.md).
 
     browser ─┬─ /ws  ──> session.ts ──Agent SDK──> claude session  (gated)
              └─ /pty ──> shell.ts   ──node-pty───> bash -l         (NOT gated)
+                                                    or tmux new-session -A -s <name>
 
 Two WebSocket endpoints, one shared workspace, no shared secret — access is
 by network position (Origin + tailscale whois), not a token.
