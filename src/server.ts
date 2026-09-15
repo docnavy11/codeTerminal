@@ -64,6 +64,8 @@ export type ServerConfig = {
   maxUpload: number;
   maxZip: number;
   extraOrigins: string[];
+  /** The address a notification's link should use. Defaults to the bind address. */
+  publicUrl?: string;
   forceLocal: boolean;
   trustedCidrSpec?: string;
   extOrigin?: string;
@@ -119,6 +121,7 @@ export function envConfig(): ServerConfig {
     maxUpload: Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024),
     maxZip: Number(process.env.CODETERM_MAX_ZIP ?? 500 * 1024 * 1024),
     extraOrigins: csv(process.env.CODETERM_ORIGINS, /,/),
+    publicUrl: process.env.CODETERM_PUBLIC_URL,
     forceLocal: process.env.CODETERM_LOCALHOST === "1",
     trustedCidrSpec: process.env.CODETERM_TRUSTED_CIDRS,
     extOrigin: process.env.CODETERM_EXT_ORIGIN,
@@ -665,7 +668,11 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
   const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"));
   const notifier = new Notifier({ ...(cfg.notify ?? {}), log, warn });
-  const publicBase = `http://${HOST}:${port}`;
+  /* Where a notification tells you to go. The bind address is right for a
+     laptop on the same tailnet, but it is an IP: it reads badly on a phone
+     and it breaks the day the machine gets a new one. CODETERM_PUBLIC_URL
+     names the address you would actually type. */
+  const publicBase = (cfg.publicUrl ?? `http://${HOST}:${port}`).replace(/\/+$/, "");
   /* A card in a run nobody is watching. The notification is the only thing
      that can reach you, and a link into that chat is the whole answer: a
      client attaching while a card is open is sent it (measured), so opening
