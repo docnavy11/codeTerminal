@@ -39,6 +39,9 @@ how the session talks to the SDK.
 
 ## Layout
 
-[ARCHITECTURE.md](ARCHITECTURE.md) is the module map.
-[docs/browser-tools.md](docs/browser-tools.md) is the browser side.
-The design notes under `docs/` record why a feature is shaped the way it is.
+[ARCHITECTURE.md](ARCHITECTURE.md) is the module map, and the README's
+[table of contents](README.md#where-to-read-what) says which document covers
+what. [docs/development.md](docs/development.md) is the one for this file's
+readers: how the pieces fit, how it is tested, and the CSS traps this UI has
+already fallen into. The design notes under `docs/` record why a feature is
+shaped the way it is.

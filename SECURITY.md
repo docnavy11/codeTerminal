@@ -31,9 +31,10 @@ They constrain *Claude*, not an intruder:
   every call; a form submit with filled fields shows what it would send.
 - Per-turn caps on tool calls, screenshots and cost.
 
-See the **Authentication** and **Chrome extension** sections of the README for
-the full model, and [SECURITY-AUDIT.md](SECURITY-AUDIT.md) for the findings
-from the audits, each with how it was measured.
+See [Running it for real → Authentication](docs/running.md#authentication) and
+[The browser](docs/browser-tools.md) for the full model, and
+[SECURITY-AUDIT.md](SECURITY-AUDIT.md) for the findings from the audits, each
+with how it was measured.
 
 ## Reporting a vulnerability
 
