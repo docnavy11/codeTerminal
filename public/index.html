@@ -461,6 +461,10 @@
    transcript, chats, files, prompts and settings below are sidepanel.js — the
    same file the Chrome side panel and the mobile page run — served as
    /m/app.js. desktop.js adds only the terminal pane and the split. */
+/* Read before anything can clear it: recallChat() strips the query string the
+   moment it claims the chat, and desktop.js needs to know a chat was named to
+   decide whether a remembered collapse still applies. */
+globalThis.ASKED_FOR_CHAT = new URLSearchParams(location.search).has("chat");
 globalThis.PLATFORM = {
   name: "desktop",
   async wsUrl() { return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`; },

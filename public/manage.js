@@ -188,7 +188,10 @@ async function showChat(id) {
     try {
       await api(`/chats/${id}`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ open: true }) });
-      location.href = "/";
+      // Naming the chat in the URL as well as marking it open: that is what
+      // tells the page you came to read this one, so it does not restore a
+      // collapsed transcript over the top of it.
+      location.href = `/?chat=${encodeURIComponent(id)}`;
     } catch (e) { show(e.message); }
   };
   const exp = el("button", "", "export .md");

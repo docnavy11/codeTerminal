@@ -1536,3 +1536,29 @@ def test_side_panel_has_a_shell_and_the_session_chooser(ext_pages, server):
     finally:
         pg.close()
         subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+
+
+def test_a_link_to_a_chat_beats_a_collapsed_transcript(page, server):
+    """"Open in the terminal", and the notification a scheduled run sends when
+    it needs an answer, both name the chat in the URL. Landing on a 26px rail
+    with that conversation behind it is the one case where the remembered
+    collapse is wrong — the notification exists to put a card in front of you.
+    The preference itself is untouched: a plain visit is still collapsed."""
+    open_ui(page, server)
+    send(page, "before the link"); wait_reply(page, "You said: before the link")
+    chat = page.evaluate("() => sessionStorage.getItem('ct.chat')")
+
+    page.click("#lhide")
+    wait(page, "() => document.getElementById('left').clientWidth < 40", what="the transcript is a rail")
+
+    page.goto(f"{server.base}/?chat={chat}")
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+    wait(page, "() => document.getElementById('left').clientWidth > 100", what="the transcript came back for a named chat")
+    wait_reply(page, "You said: before the link")
+
+    # the preference stands: arriving with no chat named is collapsed again
+    page.goto(server.base + "/")
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+    wait(page, "() => document.getElementById('left').clientWidth < 40", what="still collapsed on a plain visit")
+    page.click("#lshow")
+    assert page.errors == []

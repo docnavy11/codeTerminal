@@ -83,9 +83,21 @@ document.getElementById("lshow").onclick = () => collapseLeft(false);
 grip.addEventListener("dblclick", () => collapseRight(!split.classList.contains("collapsed")));
 /* Restore at most one: a hand-edited localStorage with both set would
    otherwise paint two rails and no pane. Right wins, being the older key. */
+/* A link that names a chat — the manage page's "open in the terminal", and the
+   notification a scheduled run sends when it needs an answer — is a request to
+   look at that conversation. Restoring a collapsed transcript over the top of
+   it lands you on a 26px rail with the thing you came for hidden behind it,
+   which is worst for the notification: its whole job is to put a card in front
+   of you. So a named chat wins over the remembered state, this once. The
+   preference is left alone; the next plain visit still comes back collapsed.
+
+   The flag is read in index.html, before any script that could clear it:
+   recallChat() strips the query string the moment it claims the chat, and it
+   does that before this file is parsed. */
+const askedForChat = globalThis.ASKED_FOR_CHAT === true;
 try {
   if (localStorage.getItem(COLLAPSED) === "1") collapseRight(true, false);
-  else if (localStorage.getItem(LEFT_COLLAPSED) === "1") collapseLeft(true, false);
+  else if (!askedForChat && localStorage.getItem(LEFT_COLLAPSED) === "1") collapseLeft(true, false);
 } catch { /* private window */ }
 grip.addEventListener("pointerdown", (e) => {
   e.preventDefault();
