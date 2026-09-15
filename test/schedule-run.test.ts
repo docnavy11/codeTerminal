@@ -7,8 +7,9 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 /* The whole thing through the server: a schedule created over the API,
    "run now", a chat that runs the prompt with the scripted SDK, and the
    run's row: outcome, cost, the first line of the reply, the offered file,
-   what it needed. Plus the unattended rules: no site card, cards answered
-   "no" after the wait. */
+   what it needed. Plus the unattended rules: every card goes up, is
+   announced with a link into the run's chat, and is answered "no" once the
+   wait is out. */
 let s: TestServer;
 const notified: { url: string; body: string }[] = [];
 const said = (m: SDKUserMessage) => String(typeof m.message.content === "string" ? m.message.content : JSON.stringify(m.message.content));
@@ -72,19 +73,30 @@ describe("scheduled prompts through the server", () => {
     ws.ws.close();
   });
 
-  test("unattended: a question is answered no after the wait; a new site is refused without a card; the run says needed-you", async () => {
+  test("unattended: a card is announced with a link to its chat, then answered no after the wait; the run says needed-you", async () => {
     const q = await s.post("/schedules", { title: "Asker", prompt: "ask me something", when: { text: "daily", tz: "UTC" }, browser: "auto", waitMs: 1000 });
     const ws = await s.socket("/ws"); await ws.wait((m) => m.kind === "replayed");
     await s.post(`/schedules/${q.body!.id}/run`, {});
     const a = await waitRun(q.body!.id as string);
     const ar = a.runs[0] as unknown as { outcome: string; summary: string; cards: string[] };
     assert.equal(ar.outcome, "needed-you"); assert.deepEqual(ar.cards, ["a question"]); assert.equal(ar.summary, "answered: deny");
+    /* The notification that makes this answerable at all: sent when the card
+       goes up, not when the run ends, and pointing at the chat that is still
+       blocked on it. */
+    const ask = notified.map((n) => JSON.parse(n.body)).find((b) => /waiting for you/.test(b.title))!;
+    assert.ok(ask, "a card in an unattended run notifies straight away");
+    assert.equal(ask.title, "Asker — waiting for you");
+    assert.match(ask.message, /^a question/);
+    assert.match(ask.message, /within 1 min it is refused/);
+    assert.match(ask.url, new RegExp(`/\\?chat=${(a.runs[0] as unknown as { chatId: string }).chatId}$`));
     const b = await s.post("/schedules", { title: "Banker", prompt: "read my bank", when: { text: "daily", tz: "UTC" }, browser: "auto", waitMs: 1000 });
     await s.post(`/schedules/${b.body!.id}/run`, {});
     const bs = await waitRun(b.body!.id as string);
     const br = bs.runs[0] as unknown as { outcome: string; summary: string; needed: string[] };
     assert.equal(br.outcome, "needed-you"); assert.deepEqual(br.needed, ["bank.example (read)"]); assert.equal(br.summary, "site: deny");
-    assert.ok(!ws.got.some((m) => m.kind === "approval" && (m.input as { host?: string })?.host === "bank.example"), "no site card was shown to anyone");
+    const siteAsk = notified.map((n) => JSON.parse(n.body)).filter((b) => /waiting for you/.test(b.title)).at(-1)!;
+    assert.equal(siteAsk.title, "Banker — waiting for you");
+    assert.match(siteAsk.message, /^bank\.example \(read\)/, "the notification says what is being asked");
     ws.ws.close();
   });
 

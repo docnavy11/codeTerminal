@@ -570,7 +570,7 @@ function schedForm(s) {
     wrap.append(inp); trio.append(wrap); return inp;
   };
   const budget = numField("Budget per run ($)", "sf-budget", s?.budgetUsd ?? "", { step: "0.1", min: "0.01", placeholder: "none" });
-  const wait = numField("Wait for a person (min)", "sf-wait", String((s?.waitMs ?? 120000) / 60000), { min: "1", max: "60" });
+  const wait = numField("Wait for a person (min)", "sf-wait", String((s?.waitMs ?? 600000) / 60000), { min: "1", max: "60" });
   const maxm = numField("Max run time (min)", "sf-max", String((s?.maxMs ?? 1800000) / 60000), { min: "1", max: "360" });
   const keep = row(limits, "Run chats to keep", Object.assign(el("input"), { id: "sf-keep", value: String(s?.keepRuns ?? 10), type: "number", min: "1", max: "100" }));
   limits.append(el("div", "hint", "Nobody answers cards during a run: a site not on the allowed list is refused and recorded, and any other card is answered “no” after the wait."));

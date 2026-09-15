@@ -409,7 +409,7 @@ describe("Session rewind", () => {
 });
 
 describe("unattended runs", () => {
-  test("the site gate refuses without a card and records the site; a submit card is answered no after the wait and recorded", async () => {
+  test("every card goes up and is announced, then answered no after the wait — the site gate included, and answering in time lets it through", async () => {
     const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
     const { BrowserAllowlist } = await import("../src/browser-allow.js");
     const { BrowserBridge } = await import("../src/browser.js");
@@ -421,7 +421,10 @@ describe("unattended runs", () => {
     ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result:
       msg.action === "tab_url" ? { tabId: 1, url: "https://shop.example/cart", title: "Cart" }
       : msg.action === "submit_probe" ? { submit: true, via: "click", form: { action: "https://shop.example/checkout", method: "post", button: "Pay", fields: [{ name: "amount", value: "120" }], filled: 1 } }
-      : msg.action === "read_page" ? { text: "page" } : (clicks.push(1), { clicked: "button" }) })); };
+      : msg.action === "read_page" ? { text: "page" } : msg.action === "fetch_bytes" ? { bytes: "" }
+      // Only a real click counts: the catch-all used to count every other
+      // action too, so a read_page's fetch_bytes read as "it clicked".
+      : (msg.action === "click" && clicks.push(1), { clicked: "button" }) })); };
     bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
     const sdk = fakeSdk(); const events: ClientEvent[] = []; const seen: string[] = [];
     const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, browserAllow: allow });
@@ -430,17 +433,28 @@ describe("unattended runs", () => {
     type Reg = Record<string, { callback?: Function; handler?: Function }>;
     const tools = (sdk.last.options.mcpServers as Record<string, { instance: { _registeredTools: Reg } }>).browser.instance._registeredTools;
     const call = (name: string, args: Record<string, unknown>) => (tools[name].callback ?? tools[name].handler)!(args, {}) as Promise<{ content: { text: string }[] }>;
-    // 1. the gate: refused at once, no card, recorded
+    // 1. the gate: a card, announced at once, refused only when the wait runs out
     await assert.rejects(call("read_page", { tabId: 1 }), /shop\.example: the user did not allow it/);
-    assert.deepEqual(seen, ["needed:shop.example (read)"]);
-    assert.ok(!events.some((e) => e.kind === "approval"), "no card");
+    assert.deepEqual(seen, ["asked:shop.example (read)", "needed:shop.example (read)"],
+      "announced when it went up, recorded when it timed out");
+    assert.ok(events.some((e) => e.kind === "approval" && (e as { tool: string }).tool === "browser"),
+      "the card was shown — a notification links here and it is still waiting when you arrive");
     assert.ok(events.some((e) => e.kind === "local" && /not on the allowed sites list/.test((e as { text: string }).text)));
+    // 1b. the same card, answered inside the wait: the run carries on
+    seen.length = 0;
+    const reading = call("read_page", { tabId: 2 });
+    await new Promise((r) => setTimeout(r, 10));
+    const card = events.filter((e) => e.kind === "approval" && (e as { tool: string }).tool === "browser").at(-1) as { id: string };
+    s.decide(card.id, "allow");
+    assert.match((await reading).content[0].text, /page/);
+    assert.deepEqual(seen, ["asked:shop.example (read)"], "announced, never recorded as needed");
+    allow.remove("shop.example");
     // 2. allowed site, submitting click: the card shows, then is answered no after the wait
     allow.add("shop.example", "act");
     const t0 = Date.now();
     await assert.rejects(call("click", { tabId: 1, selector: "#pay" }), /the user stopped the submit/);
     assert.ok(Date.now() - t0 >= 50, "waited"); assert.equal(clicks.length, 0);
-    assert.deepEqual(seen, ["needed:shop.example (read)", "card:submit to shop.example"]);
+    assert.deepEqual(seen, ["asked:shop.example (read)", "asked:submit to shop.example", "card:submit to shop.example"]);
     assert.ok(events.some((e) => e.kind === "approval" && (e as { tool: string }).tool === "submit"), "the card was shown, for anyone watching");
     assert.equal((events.filter((e) => e.kind === "approval_closed").at(-1) as { decision: string }).decision, "deny");
     s.close(); await done.catch(() => {});

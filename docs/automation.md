@@ -33,13 +33,19 @@ shows a notification.
 
 **Nobody is there**, so the rules are fixed and shown on the form:
 
-- The site gate uses the standing allow list only. A site not on it is a
-  refusal, not a card; the row says "needed: jobsite.example (act)" so you
-  can add it on the Browser sites tab and run again.
-- Every other card — confirm-before-submit, eval, a question from Claude —
-  is shown as usual (for anyone watching), and answered "no" after the wait
-  (default 2 minutes); the row says which ones. Such a run's outcome is
-  **needed you**.
+- Every card — a site not on the allow list, confirm-before-submit, eval, a
+  question from Claude — goes up as usual and is answered "no" after the
+  wait (default 10 minutes); the row says which ones, and the run's outcome
+  is **needed you**. The site gate used to refuse on the spot rather than
+  ask. That was right while the only way to answer was to be sitting at the
+  page; now the card is announced the moment it goes up and the run is still
+  blocked on it when you arrive.
+- **The notification is the way in.** A card in an unattended run sends one
+  straight away — what is being asked, and a link to that chat. Opening it
+  puts the confirmation box in front of you, because a client attaching
+  while a card is open is sent that card (measured in `test/attach.test.ts`).
+  Answer it and the run carries on. Ignore it and the wait runs out, which
+  is why the wait is minutes rather than seconds.
 - The per-run budget is the SDK's cost ceiling for that chat; the run stops
   past it. The maximum run time interrupts the turn.
 - The default mode is **Auto** — the CLI's own judgement of what is safe,

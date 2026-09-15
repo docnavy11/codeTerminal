@@ -16,7 +16,7 @@ import { PromptStore, hostOf, fill } from "./prompts.js";
 import { resolveProject } from "./projects.js";
 import { ServerBrowser, SERVER_BROWSER_ID } from "./server-browser.js";
 import type { ClientEvent } from "./protocol.js";
-import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe as describeCron } from "./schedule.js";
+import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe as describeCron, type Schedule } from "./schedule.js";
 import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
 import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture } from "./tmux.js";
@@ -664,12 +664,26 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
 
   /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
   const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"));
-  const scheduler = new Scheduler({
-    store: schedules, log, warn,
-    runner: makeRunner({ convo, prompts, serverBrowserReady: () => serverBrowser.running && bridge.instances.includes(SERVER_BROWSER_ID) }),
-  });
   const notifier = new Notifier({ ...(cfg.notify ?? {}), log, warn });
   const publicBase = `http://${HOST}:${port}`;
+  /* A card in a run nobody is watching. The notification is the only thing
+     that can reach you, and a link into that chat is the whole answer: a
+     client attaching while a card is open is sent it (measured), so opening
+     the link puts the confirmation box in front of you with the run still
+     blocked on it. */
+  const askedYou = (s: Schedule, chatId: string, what: string) => {
+    const mins = Math.max(1, Math.round(s.waitMs / 60_000));
+    void notifier.send({
+      title: `${s.title} — waiting for you`,
+      message: `${what}\n\nOpen the chat to answer. If nobody does within ${mins} min it is refused and the run carries on without it.`,
+      url: `${publicBase}/?chat=${encodeURIComponent(chatId)}`, tags: ["question"],
+    });
+  };
+  const scheduler = new Scheduler({
+    store: schedules, log, warn,
+    runner: makeRunner({ convo, prompts, onAsk: askedYou,
+      serverBrowserReady: () => serverBrowser.running && bridge.instances.includes(SERVER_BROWSER_ID) }),
+  });
   scheduler.onDone = (s, run) => {
     const removed = pruneRuns({ convo }, s);
     if (removed.length) log(`[schedule] ${s.title}: removed ${removed.length} old run chat(s)`);

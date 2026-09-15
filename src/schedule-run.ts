@@ -18,6 +18,9 @@ export type RunDeps = {
   prompts: PromptStore | null;
   /** The server browser is up and its extension connected? A "server" schedule needs it. */
   serverBrowserReady: () => boolean;
+  /** A card went up in a run nobody is watching: say so now, with a way in.
+      The run keeps waiting while this is delivered — that is the point. */
+  onAsk?: (s: Schedule, chatId: string, what: string) => void;
   now?: () => number;
 };
 
@@ -45,7 +48,10 @@ export function makeRunner(d: RunDeps): Runner {
       if (s.mode !== chat.mode) await chat.setMode(s.mode);
       if (s.model && s.model !== chat.model) await chat.setModel(s.model);
       chat.useBrowser(s.browser === "server" ? SERVER_BROWSER_ID : undefined);
-      chat.setUnattended({ waitMs: s.waitMs, onEvent: (kind, detail) => (kind === "needed" ? needed : cards).push(detail) }, s.budgetUsd);
+      chat.setUnattended({ waitMs: s.waitMs, onEvent: (kind, detail) => {
+        if (kind === "asked") { d.onAsk?.(s, chat.id, detail); return; }
+        (kind === "needed" ? needed : cards).push(detail);
+      } }, s.budgetUsd);
 
       let lastText = ""; let ended: Extract<ClientEvent, { kind: "turn_end" }> | null = null;
       let resolveEnd: () => void = () => {};

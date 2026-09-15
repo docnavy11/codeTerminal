@@ -216,7 +216,11 @@ export class ScheduleStore {
       project: String(input.project ?? "general"), browser: input.browser === "auto" ? "auto" : "server", mode,
       model: input.model?.trim() || undefined,
       budgetUsd: input.budgetUsd === undefined || input.budgetUsd === null ? undefined : num(input.budgetUsd, 0, 0.01, 1000, "budget"),
-      waitMs: num(input.waitMs, 120_000, 1000, 3_600_000, "wait"), maxMs: num(input.maxMs, 30 * 60_000, 10_000, 6 * 3_600_000, "max run time"),
+      /* The wait is how long a card stands before it is answered "no" for you.
+         Two minutes was right when the only way to answer was to be at the
+         page; now a notification links into the chat, so it has to cover
+         noticing a phone and unlocking it. Ten. */
+      waitMs: num(input.waitMs, 600_000, 1000, 3_600_000, "wait"), maxMs: num(input.maxMs, 30 * 60_000, 10_000, 6 * 3_600_000, "max run time"),
       keepRuns: num(input.keepRuns, 10, 1, 100, "runs to keep"), paused: !!input.paused,
     };
   }

@@ -257,17 +257,24 @@ export class Session {
     evalAllowed: (host) => this.#evalGrants.has(host),
     ask: (host, action, detail, level) => this.#askBrowser(host, action, detail, level),
   };
-  /* Unattended: a scheduled run with nobody there to answer cards. The site
-     gate refuses instead of asking (recorded as "needed"); every other card
-     is shown as usual and answered "no" after the wait (recorded as a card). */
-  #unattended: { waitMs: number; onEvent: (kind: "needed" | "card", detail: string) => void } | null = null;
-  setUnattended(cfg: { waitMs: number; onEvent: (kind: "needed" | "card", detail: string) => void } | null): void { this.#unattended = cfg; }
+  /* Unattended: a scheduled run with nobody in front of it. Every card is
+     shown as usual and answered "no" after the wait — including the site
+     gate, which used to refuse on the spot. Refusing was right while the only
+     way to answer was to be sitting at the page; now the run says "asked" the
+     moment a card goes up, a notification carries a link to that chat, and
+     the card is there waiting when you open it. The wait is the whole budget
+     for noticing, unlocking a phone and tapping allow, so it is minutes, not
+     seconds. */
+  #unattended: { waitMs: number; onEvent: (kind: "needed" | "card" | "asked", detail: string) => void } | null = null;
+  setUnattended(cfg: { waitMs: number; onEvent: (kind: "needed" | "card" | "asked", detail: string) => void } | null): void { this.#unattended = cfg; }
   get unattended(): boolean { return this.#unattended !== null; }
-  #autoDeny(id: string, what: string): void {
+  /** Announce the card, then answer it "no" if nobody does within the wait. */
+  #autoDeny(id: string, what: string, kind: "card" | "needed" = "card"): void {
     const u = this.#unattended; if (!u) return;
+    u.onEvent("asked", what);
     const t = setTimeout(() => {
       if (!this.#pending.has(id)) return;
-      u.onEvent("card", what);
+      u.onEvent(kind, what);
       this.decide(id, "deny");
     }, u.waitMs);
     t.unref?.();
@@ -285,17 +292,15 @@ export class Session {
   }
 
   #askBrowser(host: string, action: string, detail: string | undefined, level: Level): Promise<"allow" | "deny"> {
-    if (this.#unattended) {
-      // No card: the standing list is the whole answer for a run nobody watches.
-      this.#unattended.onEvent("needed", `${host} (${level}${action === "eval" ? ", eval" : ""})`);
-      this.#emit({ kind: "local", text: `Unattended run: ${host} is not on the allowed sites list (${level} needed) — refused. Add it on the manage page and run again.` });
-      return Promise.resolve("deny");
-    }
     const id = randomUUID();
     const { promise, resolve } = deferred<PermissionResult>();
     this.#pending.set(id, { resolve, tool: "browser", suggestions: [], browser: { host, action, level } });
     this.#emit({ kind: "approval", id, tool: "browser", input: { host, action, level, ...(detail ? { detail } : {}) }, canAlways: true });
     this.#pushStatus();
+    if (this.#unattended) {
+      this.#emit({ kind: "local", text: `Unattended run: ${host} is not on the allowed sites list (${level} needed). Open this chat to allow it; it is refused if nobody does.` });
+      this.#autoDeny(id, `${host} (${level}${action === "eval" ? ", eval" : ""})`, "needed");
+    }
     return promise.then((r) => r.behavior);
   }
 
@@ -305,12 +310,18 @@ export class Session {
     input: Record<string, unknown>,
     { signal, suggestions }: { signal: AbortSignal; suggestions?: PermissionUpdate[] },
   ): Promise<PermissionResult> => {
-    // A site ask arriving this way (the fixture's shape of the site gate) follows the unattended rule too.
+    // A site ask arriving this way (the fixture's shape of the site gate)
+    // follows the same unattended rule: a card, and "no" once the wait is up.
     if (this.#unattended && tool === "browser") {
       const host = String(input.host ?? "?"), level = String(input.level ?? "act");
-      this.#unattended.onEvent("needed", `${host} (${level})`);
-      this.#emit({ kind: "local", text: `Unattended run: ${host} is not on the allowed sites list (${level} needed) — refused. Add it on the manage page and run again.` });
-      return Promise.resolve({ behavior: "deny", message: "declined" });
+      const bid = randomUUID();
+      const { promise: bp, resolve: br } = deferred<PermissionResult>();
+      this.#pending.set(bid, { resolve: br, tool: "browser", suggestions: [], browser: { host, action: "read", level: level as Level } });
+      this.#emit({ kind: "approval", id: bid, tool: "browser", input, canAlways: true });
+      this.#emit({ kind: "local", text: `Unattended run: ${host} is not on the allowed sites list (${level} needed). Open this chat to allow it; it is refused if nobody does.` });
+      this.#pushStatus();
+      this.#autoDeny(bid, `${host} (${level})`, "needed");
+      return bp;
     }
     const id = randomUUID();
     const { promise, resolve } = deferred<PermissionResult>();
