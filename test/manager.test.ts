@@ -26,7 +26,9 @@ before(async () => {
   mgr = new Manager(join(root, "ws"), join(root, "chats"), join(root, "projects"),
     { bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined });
 });
-after(async () => { await rm(root, { recursive: true, force: true }); });
+// The Manager saves on a debounce; flush it or the write races the removal
+// (ENOTEMPTY, measured in test/attach.test.ts on 2026-09-15).
+after(async () => { try { mgr.shutdown(); } catch { /* already closed */ } await rm(root, { recursive: true, force: true }); });
 
 async function onDisk(): Promise<ChatRecord> {
   return JSON.parse(await readFile(join(root, "chats", `${ID}.json`), "utf8"));

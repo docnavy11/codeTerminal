@@ -23,7 +23,17 @@ before(async () => {
   await mkdir(join(root, "ws"), { recursive: true });
   await writeFile(join(root, "files", "f.txt"), "x");
 });
-after(async () => { await rm(root, { recursive: true, force: true }); });
+/* Chats save on a debounce, so a Manager left running writes into its chats
+   directory after the test that made it has finished. Removing the temp tree
+   then raced that write and failed with ENOTEMPTY about once in four runs
+   (measured, 2026-09-15). Every world registers itself; teardown flushes them
+   all first. */
+const worlds: Manager[] = [];
+after(async () => {
+  for (const c of worlds) { try { c.shutdown(); } catch { /* already closed */ } }
+  await new Promise((r) => setTimeout(r, 50));
+  await rm(root, { recursive: true, force: true });
+});
 
 function world() {
   const sdk = fakeSdk();
@@ -35,6 +45,7 @@ function world() {
   convo.onListChanged = () => { for (const f of ctx.clients) f(); };
   bridge.onChange = () => { for (const f of browserWatchers) f(); };
   const agent = (replay = true) => { const ws = new FakeWs(); attachAgent(ws as unknown as WebSocket, ctx, replay); return ws; };
+  worlds.push(convo);
   return { sdk, convo, ctx, agent };
 }
 
