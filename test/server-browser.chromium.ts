@@ -36,7 +36,16 @@ describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Pl
   after(async () => { await sb?.stop(); await s?.stop(); await rm(profile, { recursive: true, force: true }); });
 
   const setup = async () => (await (await fetch(`${s.base}/setup`, { headers: { Origin: s.base } })).json()) as { extension: { connected: string[] } };
-  const until = async (pred: () => Promise<boolean> | boolean, ms: number, what: string) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await pred()) return; await new Promise((r) => setTimeout(r, 100)); } throw new Error(`timed out: ${what}`); };
+  /* A timeout here used to say only what it was waiting for, which on a CI
+     runner nobody can attach to is not enough to fix anything. `diag` is
+     whatever would have answered the question, printed with the failure. */
+  const until = async (pred: () => Promise<boolean> | boolean, ms: number, what: string, diag?: () => unknown) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await pred()) return; await new Promise((r) => setTimeout(r, 100)); }
+    let extra = "";
+    try { extra = diag ? ` — ${JSON.stringify(await diag()).slice(0, 1200)}` : ""; } catch (e) { extra = ` — diag failed: ${String(e)}`; }
+    throw new Error(`timed out: ${what}${extra}`);
+  };
 
   test("starts Chromium with the extension, which dials this server as the server browser", async () => {
     assert.equal((await sb.status()).running, false);
@@ -86,7 +95,9 @@ describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Pl
     await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 2, PATIENT, "two tabs");
     const cur = (v.last("viewing") as { id: string }).id;
     v.frame({ type: "closetab", id: cur });
-    await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 1, PATIENT, "back to one tab");
+    await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 1, PATIENT, "back to one tab",
+      async () => ({ closed: cur, lastTabs: v.last("tabs"), lastViewing: v.last("viewing"), errors: v.kind("error"), gone: v.kind("gone"), status: await sb.status() })));
+    assert.deepEqual(v.kind("error"), [], "the viewer reported no error");
     v.close();
     await until(async () => (await sb.status()).viewers === 0, PATIENT, "viewer detached");
   });
