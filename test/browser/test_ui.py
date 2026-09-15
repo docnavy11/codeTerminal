@@ -2,7 +2,7 @@
 that only exist in the DOM — reconnects, streaming, cards, downloads, layout."""
 import os, time
 import pytest
-from conftest import SHORT, LONG, serve_html, open_ui, send, wait, wait_reply, last_reply
+from conftest import SHORT, LONG, serve_html, wait_stable, open_ui, send, wait, wait_reply, last_reply
 
 
 def test_prompt_round_trip(page, server):
@@ -22,8 +22,11 @@ def test_reconnect_does_not_duplicate_the_transcript(page, server):
     before = count()
     for _ in range(2):
         server.restart()
-        wait(page, "() => document.querySelector('#dot').classList.contains('on')", 20, "reconnect")
-        time.sleep(1)
+        wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+        # The replay arrives over the new socket a message at a time; a fixed
+        # sleep counted a half-drawn transcript on a slow runner (CI, 1 of 1).
+        wait(page, f"() => document.querySelectorAll('#log > *').length === {before['n']}", 30, "transcript replayed")
+        time.sleep(0.3)
         assert count() == before
     assert page.errors == []
 
@@ -330,7 +333,7 @@ def test_tool_results_in_the_transcript(page, server):
     assert page.locator("#log .tool >> nth=0 >> .tb .copy").count() == 1
     page.click("#log .tool >> nth=0 >> .tl")   # the body swallows clicks (so text can be selected); the line toggles
     assert not page.evaluate("() => document.querySelectorAll('#log .tool')[0].classList.contains('open')")
-    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); wait_stable(page)
     again = page.evaluate("() => [...document.querySelectorAll('#log .tool .tr')].map(t => t.textContent)")
     assert again[:2] == ["M src/a.ts", "3 lines"], "results survive the replay"
     assert page.errors == []
@@ -372,7 +375,7 @@ def test_thinking_streams_collapsed_then_persists(page, server):
     assert page.evaluate("() => document.querySelectorAll('#log .think').length") == 1, "the finished block replaces the streamed one"
     page.click("#log .think")
     assert "Now verifying each against the repo." in page.text_content("#log .think .tt")
-    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); wait_stable(page)
     assert page.evaluate("() => document.querySelectorAll('#log .think').length") == 1, "persisted and replayed"
     assert page.errors == []
 
@@ -406,7 +409,7 @@ def test_images_pasted_and_picked_go_with_the_prompt(page, server):
     wait_reply(page, "You said: what is in this picture? (+1 image)")
     assert page.evaluate("() => document.querySelectorAll('#attach-strip .att').length") == 0, "strip cleared after send"
     assert page.locator("#log .msg.user .imgs img").count() == 1, "thumbnail under the message"
-    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); wait_stable(page)
     assert page.locator("#log .msg.user .imgs img").count() == 1, "thumbnail survives the replay"
     assert page.errors == []
 
@@ -444,7 +447,7 @@ def test_subagent_progress_nests_under_the_agent_call(page, server):
     assert page.evaluate("() => document.querySelector('#log .tool .grp').classList.contains('open')")
     page.click("#log .task.has")
     assert "- c" in page.text_content("#log .task .tsum")
-    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); wait_stable(page)
     assert page.evaluate("() => document.querySelector('#log .task')?.className") == "task completed has", "replayed from start+end events"
 
 
@@ -628,7 +631,7 @@ def test_offered_file_has_a_download_button(page, server):
     tab.close()
     page.click("#log .filecard button:has-text('Show in files')")
     page.wait_for_selector("#flist .row:has(.n:text-is('notes.txt'))", timeout=SHORT)
-    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
+    page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); wait_stable(page)
     assert page.locator("#log .filecard").count() == 1, "the offer is part of the transcript"
 
 

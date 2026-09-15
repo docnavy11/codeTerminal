@@ -10,6 +10,11 @@ import { FakeWs } from "./fakes/ws.js";
 
 const CHROMIUM = findChromium();
 const ROOT = join(import.meta.dirname, "..");
+/* A CI runner is slower than a laptop and Chromium there has no GPU: the
+   waits are generous so a timeout means something is broken, not busy
+   (measured: "back to one tab" timed out at 5 s on GitHub's runner). */
+const PATIENT = Number(process.env.CT_CHROMIUM_WAIT ?? 20_000);
+const SLOW = PATIENT * 2;
 
 describe("server browser: presenting as an ordinary Chrome", () => {
   test("the UA is built from the binary's version without 'Headless'", { skip: !CHROMIUM }, async () => {
@@ -37,29 +42,29 @@ describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Pl
     await sb.start();
     const st = await sb.status();
     assert.equal(st.running, true); assert.ok(st.pid); assert.ok(st.extensionId, "extension id known"); assert.equal(st.tabs?.length, 1);
-    await until(async () => (await setup()).extension.connected.includes(SERVER_BROWSER_ID), 10_000, "the server browser's extension connects to /ext");
+    await until(async () => (await setup()).extension.connected.includes(SERVER_BROWSER_ID), SLOW, "the server browser's extension connects to /ext");
     await sb.start();   // idempotent
     assert.equal((await sb.status()).pid, st.pid);
   });
 
   test("what a site sees: an ordinary Chrome UA, no webdriver flag, a screen matching the window, the configured time zone", async () => {
     await sb.navigate(`${s.base}/setup.html`);
-    await until(async () => /setup/i.test(String(await sb.evaluate("document.title"))), 10_000, "a page to evaluate in");
+    await until(async () => /setup/i.test(String(await sb.evaluate("document.title"))), SLOW, "a page to evaluate in");
     const seen = await sb.evaluate("({ ua: navigator.userAgent, webdriver: navigator.webdriver, screen: [screen.width, screen.height], tz: Intl.DateTimeFormat().resolvedOptions().timeZone })") as { ua: string; webdriver: boolean; screen: number[]; tz: string };
     assert.doesNotMatch(seen.ua, /Headless/); assert.equal(seen.webdriver, false); assert.deepEqual(seen.screen, [1280, 800]); assert.equal(seen.tz, "Europe/Brussels");
   });
 
   test("navigate and evaluate work on the tab", async () => {
     await sb.navigate(`${s.base}/setup.html`);
-    await until(async () => /setup/i.test(String(await sb.evaluate("document.title"))), 10_000, "the setup page loads");
+    await until(async () => /setup/i.test(String(await sb.evaluate("document.title"))), SLOW, "the setup page loads");
   });
 
   test("a viewer gets frames, the tab list and its url; mouse and keys drive the page", async () => {
     await sb.navigate(`${s.base}/m.html`);
-    await until(async () => (await sb.evaluate("!!document.getElementById('box')")) === true, 10_000, "the mobile page loads");
+    await until(async () => (await sb.evaluate("!!document.getElementById('box')")) === true, SLOW, "the mobile page loads");
     const v = new FakeWs();
     sb.attachViewer(v as unknown as WebSocket);
-    await until(() => v.kind("frame").length > 0 && v.kind("tabs").length > 0 && v.kind("viewing").length > 0, 10_000, "first frame, tabs and viewing");
+    await until(() => v.kind("frame").length > 0 && v.kind("tabs").length > 0 && v.kind("viewing").length > 0, SLOW, "first frame, tabs and viewing");
     const frame = v.last("frame") as { data: string; meta: { deviceWidth: number; deviceHeight: number } };
     assert.ok(frame.data.length > 1000, "a real jpeg"); assert.equal(Buffer.from(frame.data, "base64").subarray(0, 2).toString("hex"), "ffd8", "jpeg magic");
     assert.equal(frame.meta.deviceWidth, 1280);
@@ -68,27 +73,27 @@ describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Pl
     const r = await sb.evaluate("(() => { const b = document.getElementById('box').getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()") as { x: number; y: number };
     v.frame({ type: "mouse", kind: "mousePressed", x: r.x, y: r.y, button: "left", buttons: 1, clickCount: 1 });
     v.frame({ type: "mouse", kind: "mouseReleased", x: r.x, y: r.y, button: "left", buttons: 0, clickCount: 1 });
-    await until(async () => (await sb.evaluate("document.activeElement && document.activeElement.id")) === "box", 5000, "the click focused the box");
+    await until(async () => (await sb.evaluate("document.activeElement && document.activeElement.id")) === "box", PATIENT, "the click focused the box");
     for (const ch of "hi") { v.frame({ type: "key", kind: "keyDown", key: ch, code: `Key${ch.toUpperCase()}`, text: ch, vk: ch.toUpperCase().charCodeAt(0) }); v.frame({ type: "key", kind: "keyUp", key: ch, code: `Key${ch.toUpperCase()}`, vk: ch.toUpperCase().charCodeAt(0) }); }
     v.frame({ type: "text", text: " there" });
-    await until(async () => (await sb.evaluate("document.getElementById('box').value")) === "hi there", 5000, "keys and text arrived");
+    await until(async () => (await sb.evaluate("document.getElementById('box').value")) === "hi there", PATIENT, "keys and text arrived");
     // navigate from the viewer; url event follows
     v.frame({ type: "navigate", url: `${s.base}/setup.html` });
-    await until(() => (v.kind("url") as { url: string }[]).some((u) => u.url.endsWith("/setup.html")), 10_000, "url event after navigate");
+    await until(() => (v.kind("url") as { url: string }[]).some((u) => u.url.endsWith("/setup.html")), SLOW, "url event after navigate");
     // new tab, list, close it
     v.frame({ type: "newtab", url: "about:blank" });
-    await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 2, 5000, "two tabs");
+    await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 2, PATIENT, "two tabs");
     const cur = (v.last("viewing") as { id: string }).id;
     v.frame({ type: "closetab", id: cur });
-    await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 1, 5000, "back to one tab");
+    await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 1, PATIENT, "back to one tab");
     v.close();
-    await until(async () => (await sb.status()).viewers === 0, 3000, "viewer detached");
+    await until(async () => (await sb.status()).viewers === 0, PATIENT, "viewer detached");
   });
 
   test("stop ends the process and the extension drops off; a viewer on a stopped browser is told", async () => {
     await sb.stop();
     assert.equal((await sb.status()).running, false);
-    await until(async () => !(await setup()).extension.connected.includes(SERVER_BROWSER_ID), 10_000, "extension gone");
+    await until(async () => !(await setup()).extension.connected.includes(SERVER_BROWSER_ID), SLOW, "extension gone");
     const v = new FakeWs(); sb.attachViewer(v as unknown as WebSocket);
     assert.equal((v.last("gone") as { reason: string }).reason, "the server browser is not running");
   });

@@ -101,11 +101,26 @@ def page(browser, server):
 
 def wait(pg, js, timeout=15, what="condition"):
     """Poll a JS predicate (the CSP forbids string eval in wait_for_function)."""
+    timeout *= SCALE
     t0 = time.time()
     while time.time() - t0 < timeout:
         if pg.evaluate(js): return
         time.sleep(0.05)
     raise AssertionError(f"timed out waiting for {what}")
+
+
+def wait_stable(pg, selector="#log > *", quiet=0.4, timeout=20 * SCALE):
+    """Wait until a list stops growing. The server replays a transcript one
+    message at a time over a new socket, so "reload, sleep, assert" counted a
+    half-drawn log on a slow machine (CI, 2026-09-15). Polling for stillness
+    is the same idea as the sleep, without guessing how long it needs."""
+    t0 = time.time(); last = -1; since = time.time()
+    while time.time() - t0 < timeout:
+        n = pg.evaluate(f"() => document.querySelectorAll({selector!r}).length")
+        if n != last: last, since = n, time.time()
+        elif time.time() - since >= quiet: return n
+        time.sleep(0.05)
+    return last
 
 
 def open_ui(pg, server, path="/"):

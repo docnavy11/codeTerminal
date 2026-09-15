@@ -18,7 +18,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # A shared runner is slower than a laptop and has no GPU; the suite's
+      # waits scale with this rather than being padded one by one.
       - run: npm run check
+        env:
+          CT_CHROMIUM_WAIT: "60000"
 
   browser:
     name: browser suite
@@ -36,3 +40,5 @@ jobs:
       - run: pip install pytest pytest-xdist playwright
       - run: python -m playwright install --with-deps chromium
       - run: npm run test:browser
+        env:
+          CT_TIMEOUT_SCALE: "3"
