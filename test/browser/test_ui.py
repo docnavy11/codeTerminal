@@ -1236,6 +1236,43 @@ def test_question_card_multi_select(page, server):
     assert '"Which title should the profile use?":"A — Agent Development"' in last_reply(page)
 
 
+def test_renaming_the_attached_session_keeps_the_attachment(page, server):
+    """Rename the session the pane is attached to, then reload. The attachment
+    is remembered by name, so if the rename does not update what is
+    remembered, the reload silently opens a plain shell instead."""
+    import subprocess, uuid
+    if subprocess.run(["tmux", "-V"], capture_output=True).returncode != 0:
+        import pytest; pytest.skip("no tmux on this machine")
+    tag = uuid.uuid4().hex[:8]
+    name, renamed = "cttest-" + tag, "cttest-r-" + tag
+    try:
+        open_ui(page, server)
+        page.wait_for_selector('.pane-hd .tab[data-view="sessions"]:not([hidden])', timeout=SHORT)
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        page.fill("#snew", name); page.click("#screate")
+        page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
+        page.click("#term"); page.keyboard.type("echo RENAME-$((6*7))\n")
+        wait(page, "() => document.querySelector('#term').innerText.includes('RENAME-42')", what="the session ran it")
+
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
+        page.once("dialog", lambda d: d.accept(renamed))
+        page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('rename')")
+        wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {renamed!r})", what="renamed in the list")
+        assert page.evaluate("() => sessionStorage.getItem('ct.session')") == renamed
+
+        page.reload()
+        wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+        wait(page, f"() => document.getElementById('rightnote').textContent === 'session: {renamed}'",
+             what="came back to the renamed session, not a plain shell")
+        wait(page, "() => document.querySelector('#term').innerText.includes('RENAME-42')",
+             what="and it is the same session, with its scrollback")
+        assert page.errors == []
+    finally:
+        for n in (renamed, name):
+            subprocess.run(["tmux", "kill-session", "-t", "=" + n], capture_output=True)
+
+
 def test_sessions_tab_attaches_and_survives_a_restart(page, server):
     """The chooser: tmux sessions on the machine, attach to one, and — the
     whole point — what is running in it is still there after the server

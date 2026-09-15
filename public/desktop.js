@@ -194,9 +194,15 @@ function renderSessions(sessions) {
       e.stopPropagation();
       const to = prompt(`Rename "${s.name}" to`, s.name);
       if (!to || to === s.name) return;
-      try { renderSessions((await sapi(`/sessions/${encodeURIComponent(s.name)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: to }) })).sessions);
-            if (attachedTo === s.name) attachedTo = to; }
-      catch (err) { sfail(err.message); }
+      try {
+        const body = await sapi(`/sessions/${encodeURIComponent(s.name)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: to }) });
+        /* Before rendering, or the renamed row draws as not-attached — and
+           `rememberSession` too, or a reload reattaches to a name that is gone
+           and quietly opens a plain shell instead. The tmux client itself
+           survives a rename, so the pane keeps running untouched. */
+        if (attachedTo === s.name) { attachedTo = to; rememberSession(to); }   // the note is recomputed when you go back to the terminal
+        renderSessions(body.sessions);
+      } catch (err) { sfail(err.message); }
     };
     const kill = document.createElement("button"); kill.textContent = "kill";
     kill.onclick = async (e) => {
