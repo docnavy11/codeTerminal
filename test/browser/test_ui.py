@@ -1371,3 +1371,52 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         assert page.errors == []
     finally:
         subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+
+
+def test_refresh_redraws_the_terminal_without_losing_the_session(page, server):
+    """The header's ↻. Attached to a tmux session it redials, which is what
+    makes tmux repaint the whole screen — the session and its scrollback have
+    to come back, or the button trades a skewed pane for a lost one."""
+    import subprocess, uuid
+    if subprocess.run(["tmux", "-V"], capture_output=True).returncode != 0:
+        pytest.skip("no tmux on this machine")
+    name = "cttest-r-" + uuid.uuid4().hex[:8]
+    try:
+        open_ui(page, server)
+        page.wait_for_selector('.pane-hd .tab[data-view="sessions"]:not([hidden])', timeout=SHORT)
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        page.fill("#snew", name); page.click("#screate")
+        page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
+        page.click("#term"); page.keyboard.type("echo REDRAW-$((6*7))\n")
+        wait(page, "() => document.querySelector('#term').innerText.includes('REDRAW-42')", what="the session ran it")
+
+        page.click("#rrefresh")
+        wait(page, "() => ptyWs && ptyWs.readyState === 1", 20, "the pane redialled")
+        wait(page, "() => document.querySelector('#term').innerText.includes('REDRAW-42')", 20,
+             "tmux repainted the same session, scrollback and all")
+        assert page.text_content("#rightnote").startswith(f"session: {name}")
+        # One client, not two: a second one would size the session to the
+        # smaller window and skew the very thing the button is here to fix.
+        # The old client goes away when the server notices its socket closed,
+        # which lands a moment after the new one is up — so poll rather than
+        # read once and catch the overlap.
+        count = lambda: len(subprocess.run(["tmux", "list-clients", "-t", "=" + name],
+                                           capture_output=True, text=True).stdout.strip().splitlines())
+        deadline = time.time() + 10
+        while count() != 1 and time.time() < deadline:
+            time.sleep(0.2)
+        assert count() == 1
+        assert page.errors == []
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+
+
+def test_refresh_button_is_only_offered_for_the_terminal(page, server):
+    """It redraws the terminal, so it has no meaning over the file list."""
+    open_ui(page, server)
+    assert page.is_visible("#rrefresh")
+    page.click('.pane-hd .tab[data-view="files"]')
+    wait(page, "() => document.getElementById('rrefresh').hidden", what="hidden over the files view")
+    page.click('.pane-hd .tab[data-view="shell"]')
+    wait(page, "() => !document.getElementById('rrefresh').hidden", what="back for the terminal")
+    assert page.errors == []

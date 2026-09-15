@@ -649,6 +649,22 @@ view it is standing in for, so you can see whether you left the terminal, the
 sessions or the files open, and one click brings it back. The choice is
 remembered per browser.
 
+The **↻** beside it redraws the terminal, for when the pane's picture has
+drifted from what is really on the other end — a resize that landed while it
+was hidden or collapsed, a font change, a half-drawn full-screen program. It
+refits the geometry and repaints xterm from its own buffer; attached to a tmux
+session it also redials, because a reattaching client is what makes tmux paint
+the whole screen again. The session is untouched by that. A plain shell is
+deliberately *not* redialled — that socket is the shell, and dialling again
+would throw away what is running in it — so there the button is a local
+repaint and a resize. It is only offered while the terminal tab is up.
+
+Redialling now takes the old socket's handlers with it. It used to leave them:
+`close()` fires its event after the replacement is already open, and the stale
+`onclose` scheduled another reconnect — two clients on one tmux session, which
+tmux sizes to the smaller of the two. That was a way to *get* a skewed pane
+from the button meant to fix one.
+
 It is narrowed, never removed. xterm loses its scrollback when its element is
 detached, and the file list would have to be fetched again. The one thing that
 had to change for it is the resize: fitting a terminal against a zero-width

@@ -85,6 +85,38 @@ async function connectShell() {
     ptyRetry = setTimeout(connectShell, 3000);
   };
 }
+/* Drop the socket we are about to replace, handlers and all. close() fires its
+   event later, by which time the replacement is already up — and the old
+   onclose would schedule another connectShell, leaving two clients on one tmux
+   session. Two clients are sized to the smaller of the two, which is one way
+   this pane ends up drawing at a geometry nobody asked for. */
+function dropPty() {
+  const dead = ptyWs;
+  ptyWs = null;
+  if (!dead) return;
+  dead.onclose = null; dead.onmessage = null; dead.onopen = null;
+  try { dead.close(); } catch { /* already gone */ }
+}
+/* The header's ↻. What the pane draws can drift from what is really on the
+   other end — a resize that landed while the pane was hidden or collapsed, a
+   font change the pty never heard about, a half-drawn full-screen program. So:
+   put the geometry back first, then repaint xterm from its own buffer.
+
+   Attached to a tmux session it also redials, which is the only way to get the
+   *remote* side to redraw: tmux paints the whole screen for a client that
+   attaches, and the session itself is untouched by the reconnect. A plain
+   shell is deliberately not redialled — that socket *is* the shell, and
+   dialling again would throw away whatever is running in it. */
+function refreshTerminal() {
+  if (split.classList.contains("collapsed")) collapseRight(false);
+  PLATFORM.showView("shell");            // also refits, via sendResize()
+  term.clearTextureAtlas?.();            // a stale glyph atlas survives a repaint otherwise
+  term.refresh(0, term.rows - 1);
+  if (!attachedTo) return;
+  dropPty();
+  term.reset();
+  connectShell();
+}
 term.onData((d) => { if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "input", data: d })); });
 
 const sendResize = () => {
@@ -111,6 +143,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTermT
 const termEl = document.getElementById("term"), filesEl = document.getElementById("files");
 
 const note = document.getElementById("rightnote");
+const refreshBtn = document.getElementById("rrefresh");
 const railLabel = document.getElementById("rlabel");   // names the view the collapsed rail stands in for
 let filesRoot = "";
 // Called by the shared client's chat|files tabs; the transcript stays put.
@@ -128,6 +161,8 @@ PLATFORM.showView = (view) => {
   if (view === "sessions") loadSessions();
   if (view === "shell") sendResize();
   if (railLabel) railLabel.textContent = view === "files" ? "files" : view === "sessions" ? "sessions" : "terminal";
+  // ↻ redraws the terminal, so it is only offered while the terminal is up.
+  if (refreshBtn) refreshBtn.hidden = view !== "shell";
 };
 fetch("/files/info").then((r) => r.json()).then((i) => { filesRoot = i.root ?? ""; }).catch(() => {});
 
@@ -182,8 +217,7 @@ async function sapi(path, opts) {
 }
 function attach(name, path) {
   attachedTo = name; rememberSession(name); attachedPath = path ?? "";
-  try { ptyWs?.close(); } catch { /* already gone */ }
-  ptyWs = null;
+  dropPty();
   term.reset();
   connectShell();
   document.querySelector('.pane-hd .tab[data-view="shell"]')?.click();
@@ -191,8 +225,7 @@ function attach(name, path) {
 function detach() {
   if (!attachedTo) return;
   attachedTo = null; rememberSession(null); attachedPath = "";
-  try { ptyWs?.close(); } catch { /* already gone */ }
-  ptyWs = null;
+  dropPty();
   term.reset();
   connectShell();
   PLATFORM.showView("shell");
@@ -289,6 +322,7 @@ function collapseRight(on, remember = true) {
   if (remember) { try { localStorage.setItem(COLLAPSED, on ? "1" : "0"); } catch { /* private window */ } }
   if (!on) sendResize();
 }
+refreshBtn.onclick = refreshTerminal;
 document.getElementById("rhide").onclick = () => collapseRight(true);
 document.getElementById("rshow").onclick = () => collapseRight(false);
 // The usual second way: double-click the divider.
@@ -320,6 +354,7 @@ fetch("/config").then((r) => r.json()).then((c) => {
   if (shellOn) { connectShell(); return; }
   document.querySelector('.pane-hd .tab[data-view="shell"]')?.remove();
   document.querySelector('.pane-hd .tab[data-view="sessions"]')?.remove();
+  refreshBtn?.remove();            // nothing to redraw without a terminal
   PLATFORM.showFiles(true);
   document.querySelector('.tabs .tab[data-view="files"]')?.classList.add("on");
   termEl.remove();
