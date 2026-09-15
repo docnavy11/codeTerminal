@@ -197,6 +197,25 @@
   #grip { width:5px; cursor:col-resize; background:var(--line); flex-shrink:0; }
   #grip:hover { background:var(--accent); }
 
+  /* Collapsing the right pane. It stays in the DOM — xterm loses its buffer if
+     it is detached, and the file list would have to be fetched again — so it
+     is narrowed to a rail instead, and only the rail is drawn. A collapsed
+     #term has zero size, which is why sendResize() refuses to fit one. */
+  .pane-hd .paneb { background:none; border:0; color:var(--dim); cursor:pointer; font-size:0.917rem;
+                    line-height:1; padding:2px 4px; border-radius:3px; flex-shrink:0; }
+  .pane-hd .paneb:hover { color:var(--fg); background:var(--btn); }
+  #split.collapsed > #grip { display:none; }
+  #split.collapsed > #right { flex:0 0 auto; width:26px; }
+  #split.collapsed > #right > :not(#rrail) { display:none; }
+  #rrail { display:none; }
+  #split.collapsed > #right > #rrail { flex:1; display:flex; flex-direction:column; align-items:center; gap:10px; padding:6px 0; }
+  #rrail button { background:none; border:0; color:var(--dim); cursor:pointer; font-size:1rem; line-height:1;
+                  padding:3px 4px; border-radius:3px; }
+  #rrail button:hover { color:var(--fg); background:var(--btn); }
+  /* Vertical, reading top-to-bottom like the tab it stands in for. */
+  #rrail .rlabel { writing-mode:vertical-rl; font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
+                   color:var(--dim); user-select:none; }
+
   #log { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding:10px; display:flex; flex-direction:column; gap:6px; }
   .msg { white-space:pre-wrap; word-break:break-word; }
   /* Rendered markdown is real HTML: pre-wrap would turn every newline
@@ -510,6 +529,11 @@ globalThis.PLATFORM = {
     <div class="pane-hd">
       <span class="tabs"><span class="tab on" data-view="shell">terminal</span><span class="tab" data-view="sessions" hidden>sessions</span><span class="tab" data-view="files">files</span></span>
       <span class="warn" id="rightnote">no approval gate</span>
+      <button id="rhide" class="paneb" title="Collapse this pane (or double-click the divider)" aria-label="Collapse the right pane" aria-expanded="true">›</button>
+    </div>
+    <div id="rrail">
+      <button id="rshow" title="Show the right pane" aria-label="Show the right pane">‹</button>
+      <span class="rlabel" id="rlabel">terminal</span>
     </div>
     <div id="term"></div>
     <div id="sessions" hidden>

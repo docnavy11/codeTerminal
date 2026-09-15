@@ -88,6 +88,10 @@ async function connectShell() {
 term.onData((d) => { if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "input", data: d })); });
 
 const sendResize = () => {
+  // A collapsed (or hidden) pane has no size, and fitting against zero asks
+  // the pty for a nonsense geometry — it comes back as a wrecked terminal
+  // when the pane is opened again.
+  if (!termEl.clientWidth || !termEl.clientHeight) return;
   fit.fit();
   if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
 };
@@ -107,6 +111,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTermT
 const termEl = document.getElementById("term"), filesEl = document.getElementById("files");
 
 const note = document.getElementById("rightnote");
+const railLabel = document.getElementById("rlabel");   // names the view the collapsed rail stands in for
 let filesRoot = "";
 // Called by the shared client's chat|files tabs; the transcript stays put.
 const sessionsEl = document.getElementById("sessions");
@@ -122,6 +127,7 @@ PLATFORM.showView = (view) => {
   if (view === "shell" && attachedTo) refreshAttachedPath();
   if (view === "sessions") loadSessions();
   if (view === "shell") sendResize();
+  if (railLabel) railLabel.textContent = view === "files" ? "files" : view === "sessions" ? "sessions" : "terminal";
 };
 fetch("/files/info").then((r) => r.json()).then((i) => { filesRoot = i.root ?? ""; }).catch(() => {});
 
@@ -260,9 +266,34 @@ snew.onkeydown = (e) => { if (e.key === "Enter") document.getElementById("screat
 note.onclick = () => { if (attachedTo) detach(); };
 note.title = "click to leave the session and go back to a plain shell";
 
-/* ---------------- draggable divider ---------------- */
+/* ---------------- draggable divider, and collapsing the right pane ----------------
+   The terminal is not always what you want beside the conversation — reading a
+   long reply on a laptop, it is half the screen doing nothing. Collapsed, the
+   pane becomes a 26px rail naming the view it is standing in for, so getting it
+   back is one click and you can still see which of the three you left open.
+
+   The pane is narrowed, never removed: xterm loses its scrollback when its
+   element is detached, and the session behind it keeps running either way. */
 const grip = document.getElementById("grip"), split = document.getElementById("split");
 const left = document.getElementById("left"), right = document.getElementById("right");
+const COLLAPSED = "ct.rightCollapsed";
+/* The divider writes inline flex on both panes. Collapsing has to put those
+   aside and give them back, or an expanded pane returns to the width the drag
+   left it at — which, after dragging the terminal wide, is the whole window. */
+let dragged = null;
+function collapseRight(on, remember = true) {
+  if (on && !dragged) { dragged = { left: left.style.flex, right: right.style.flex }; left.style.flex = ""; right.style.flex = ""; }
+  split.classList.toggle("collapsed", on);
+  document.getElementById("rhide")?.setAttribute("aria-expanded", String(!on));
+  if (!on && dragged) { left.style.flex = dragged.left; right.style.flex = dragged.right; dragged = null; }
+  if (remember) { try { localStorage.setItem(COLLAPSED, on ? "1" : "0"); } catch { /* private window */ } }
+  if (!on) sendResize();
+}
+document.getElementById("rhide").onclick = () => collapseRight(true);
+document.getElementById("rshow").onclick = () => collapseRight(false);
+// The usual second way: double-click the divider.
+grip.addEventListener("dblclick", () => collapseRight(!split.classList.contains("collapsed")));
+try { if (localStorage.getItem(COLLAPSED) === "1") collapseRight(true, false); } catch { /* private window */ }
 grip.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   grip.setPointerCapture(e.pointerId);

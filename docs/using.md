@@ -643,6 +643,19 @@ new profile, so `CODETERM_EXT_ORIGIN` pinning needs the id from
 
 ## The shell pane
 
+The right pane can be put away. The **›** in its header collapses it to a
+narrow rail, and double-clicking the divider does the same; the rail names the
+view it is standing in for, so you can see whether you left the terminal, the
+sessions or the files open, and one click brings it back. The choice is
+remembered per browser.
+
+It is narrowed, never removed. xterm loses its scrollback when its element is
+detached, and the file list would have to be fetched again. The one thing that
+had to change for it is the resize: fitting a terminal against a zero-width
+pane asks the pty for a nonsense geometry, so the fit is skipped while the
+pane has no size and runs again when it reopens.
+
+
 `CODETERM_SHELL=0` leaves it out altogether: the `/pty` upgrade answers 404,
 the desktop page asks `/config` before dialling (otherwise its retry loop
 would knock every three seconds) and shows the file browser alone, the agent

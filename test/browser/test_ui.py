@@ -1236,6 +1236,40 @@ def test_question_card_multi_select(page, server):
     assert '"Which title should the profile use?":"A — Agent Development"' in last_reply(page)
 
 
+def test_right_pane_collapses_to_a_rail_and_is_remembered(page, server):
+    """Collapse the right pane and the terminal gives its width to the
+    conversation. It is narrowed rather than removed, so the shell keeps its
+    scrollback across a collapse; the choice itself survives a reload."""
+    open_ui(page, server)
+    page.wait_for_selector("#term", timeout=SHORT)
+    page.click("#term"); page.keyboard.type("echo COLLAPSE-$((6*7))\n")
+    wait(page, "() => document.querySelector('#term').innerText.includes('COLLAPSE-42')", what="the shell ran it")
+    wide = page.evaluate("() => document.getElementById('left').clientWidth")
+
+    page.click("#rhide")
+    wait(page, "() => document.getElementById('right').clientWidth < 40", what="the pane is a rail")
+    assert page.evaluate("() => document.getElementById('left').clientWidth") > wide
+    assert page.is_visible("#rshow"), "the rail offers a way back"
+    assert page.text_content("#rlabel") == "terminal"
+
+    page.click("#rshow")
+    wait(page, "() => document.getElementById('right').clientWidth > 100", what="back to a pane")
+    # narrowed, not removed: the same shell, with what it printed before
+    assert "COLLAPSE-42" in page.inner_text("#term")
+    wait(page, "() => { const t = document.querySelector('#term .xterm-screen'); return t && t.clientWidth > 100; }",
+         what="the terminal refitted to the reopened pane")
+
+    # the choice is a preference, so it is still collapsed on the next visit
+    page.click("#rhide")
+    wait(page, "() => document.getElementById('right').clientWidth < 40", what="collapsed again")
+    page.reload()
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+    wait(page, "() => document.getElementById('right').clientWidth < 40", what="still collapsed after a reload")
+    page.click("#rshow")
+    wait(page, "() => document.getElementById('right').clientWidth > 100", what="and can be opened again")
+    assert page.errors == []
+
+
 def test_header_shows_the_attached_session_directory(page, server):
     """The header says where the session is, not only what it is called — and
     it follows the session when it cds, because the directory is read back
