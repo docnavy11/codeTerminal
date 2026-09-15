@@ -571,12 +571,21 @@ coming back, a prompt typed while offline being queued and sent, streaming
 at one render per frame, approval and question cards round-tripping, new
 chat and switching back, per-chat mode surviving a reload, downloads with no
 blob in page memory, garbage events not breaking the client, and the mobile
-page fitting the viewport. Eight of the tests load the real extension into
-Chromium (dialogs, eval, tabs, forms, upload, console/network, submit
-probe, first-run connect). It runs on four pytest-xdist workers, each with
-its own fixture server and browser, in about 26 s (serial: about 95 s;
-`npm run test:browser:serial`). Needs `pytest-xdist`:
-`python3 -m pip install --user pytest-xdist` (add
+page fitting the viewport. Nine of the tests load the real extension into
+Chromium (dialogs, eval, tabs, forms, upload, console/network, submit probe,
+trusted input, first-run connect) and one drives the server browser.
+
+It runs on four pytest-xdist workers, each with its own fixture server and
+browser, in about 27 s (serial: about 100 s; `npm run test:browser:serial`).
+Two things make the parallel run reliable, both added after it failed twice in
+three runs on tests that passed alone: the ten Chromium-launching tests share
+one `xdist_group`, so `--dist loadgroup` keeps them on a single worker instead
+of starting four browsers at once; and every wait uses the `SHORT`/`LONG`
+constants from `conftest.py` (15 s and 30 s, `CT_TIMEOUT_SCALE` to stretch
+them) rather than the 5 s that was losing races to contention rather than to
+bugs. Measured after: four consecutive green runs.
+
+Needs `pytest-xdist`: `python3 -m pip install --user pytest-xdist` (add
 `--break-system-packages` on a PEP 668 system).
 
 Plus `stripAnsi`, since what the agent reads from the shell pane is raw pty

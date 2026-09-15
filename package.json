@@ -19,8 +19,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm test",
     "test:e2e": "CODETERM_E2E=1 node --import tsx --test test/e2e.test.ts",
-    "test:browser": "cd test/browser && python3 -m pytest -q -p no:cacheprovider -n 4 -o faulthandler_timeout=90",
-    "test:browser:serial": "cd test/browser && python3 -m pytest -q -p no:cacheprovider -o faulthandler_timeout=90",
+    "test:browser": "cd test/browser && python3 -m pytest -q -n 4",
+    "test:browser:serial": "cd test/browser && python3 -m pytest -q",
     "test:real": "CODETERM_REAL=1 CODETERM_MAX_BUDGET_USD=3 node --import tsx --test test/real.test.ts",
     "coverage": "node --import tsx --test --experimental-test-coverage test/*.test.ts"
   },

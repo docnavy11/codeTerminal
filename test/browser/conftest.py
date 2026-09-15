@@ -2,6 +2,16 @@ import os, socket, subprocess, tempfile, time, shutil, sys, select
 import pytest
 from playwright.sync_api import sync_playwright
 
+# Every wait in this suite goes through these. Under -n 4 the box runs four
+# fixture servers, four page browsers and a real-extension Chromium at once,
+# and the old 5 s selector waits were losing races that are not the thing
+# being tested (two different tests failed on two consecutive runs, each
+# passing alone). A timeout only costs time when something is actually broken,
+# so they are generous; PW_TIMEOUT scales them on a slower machine.
+SCALE = float(os.environ.get("CT_TIMEOUT_SCALE", "1"))
+SHORT = int(15000 * SCALE)      # a selector that should already be there
+LONG = int(30000 * SCALE)       # something that needs a turn, a launch or a restart
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
@@ -89,7 +99,7 @@ def page(browser, server):
     ctx.close()
 
 
-def wait(pg, js, timeout=10, what="condition"):
+def wait(pg, js, timeout=15, what="condition"):
     """Poll a JS predicate (the CSP forbids string eval in wait_for_function)."""
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -117,7 +127,7 @@ def last_reply(pg):
     return pg.evaluate("() => { const m = [...document.querySelectorAll('#log .msg.md')]; return m.length ? m[m.length-1].textContent.trim() : null; }")
 
 
-def wait_reply(pg, contains, timeout=10):
+def wait_reply(pg, contains, timeout=20):
     wait(pg, f"() => [...document.querySelectorAll('#log .msg.md')].some(m => m.textContent.includes({contains!r}))", timeout, f"reply containing {contains!r}")
 
 
@@ -174,3 +184,10 @@ def serve_html(html):
     srv = S(("127.0.0.1", 0), H); srv.port = srv.server_address[1]; srv.base = f"http://127.0.0.1:{srv.port}"
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
+
+
+def pytest_configure(config):
+    """The tests that launch a real Chromium (the extension suite, the server
+    browser) share one xdist group, so `-n 4 --dist loadgroup` runs them on a
+    single worker instead of starting four browsers at once."""
+    config.addinivalue_line("markers", "xdist_group(name): run these on one xdist worker")

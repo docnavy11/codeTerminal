@@ -1,7 +1,8 @@
 """The shared client in a real browser against the fixture server: the paths
 that only exist in the DOM — reconnects, streaming, cards, downloads, layout."""
 import os, time
-from conftest import serve_html, open_ui, send, wait, wait_reply, last_reply
+import pytest
+from conftest import SHORT, LONG, serve_html, open_ui, send, wait, wait_reply, last_reply
 
 
 def test_prompt_round_trip(page, server):
@@ -66,7 +67,7 @@ def test_streaming_renders_once_per_frame(page, server):
 def test_approval_card_round_trip(page, server):
     open_ui(page, server)
     send(page, "approve-me")
-    page.wait_for_selector(".card[data-tool=Bash]", timeout=10000)
+    page.wait_for_selector(".card[data-tool=Bash]", timeout=LONG)
     assert "rm -rf build" in page.text_content(".card[data-tool=Bash] pre")
     page.click(".card[data-tool=Bash] button[data-decision=deny]")
     wait(page, "() => [...document.querySelectorAll('.card[data-tool=Bash] button')].every(b => b.disabled)", what="card disabled")
@@ -76,7 +77,7 @@ def test_approval_card_round_trip(page, server):
 def test_question_card_round_trip(page, server):
     open_ui(page, server)
     send(page, "ask-me")
-    page.wait_for_selector(".q[data-tool=question]", timeout=10000)
+    page.wait_for_selector(".q[data-tool=question]", timeout=LONG)
     page.click(".q .opt:has-text('Blue')")
     page.click(".q button.allow:has-text('Answer')")
     wait_reply(page, '"Which colour?":"Blue"')
@@ -88,7 +89,7 @@ def test_new_chat_and_switching_back(page, server):
     page.click("#newchat")
     wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="cleared")
     page.click("#chatsbtn")
-    page.wait_for_selector("#clist .c", timeout=5000)
+    page.wait_for_selector("#clist .c", timeout=SHORT)
     assert page.locator("#clist .c").count() >= 2
     page.click("#clist .c:has(.ct:text-is('remember me'))")
     wait(page, "() => [...document.querySelectorAll('.msg.user')].some(m => m.textContent.includes('remember me'))", what="old transcript")
@@ -107,13 +108,13 @@ def test_mode_is_remembered_per_chat_across_reload(page, server):
 def test_downloads_stream_without_a_blob(page, server):
     open_ui(page, server)
     page.click(".tabs .tab[data-view=files]")
-    page.wait_for_selector("#flist .row", timeout=5000)
-    with page.expect_download(timeout=10000) as dl:
+    page.wait_for_selector("#flist .row", timeout=SHORT)
+    with page.expect_download(timeout=LONG) as dl:
         page.click("#flist .row:has(.n:text-is('blob.txt')) .dl")
     d = dl.value; path = os.path.join(server.root, "dl.txt"); d.save_as(path)
     assert d.suggested_filename == "blob.txt" and os.path.getsize(path) == 300_000
     page.click("#flist .row:has(.n:text-is('hello.txt')) .ck"); page.click("#flist .row:has(.n:text-is('note.txt')) .ck")
-    with page.expect_download(timeout=10000) as dl2:
+    with page.expect_download(timeout=LONG) as dl2:
         page.click("#fsel button:text-is('zip')")
     z = os.path.join(server.root, "sel.zip"); dl2.value.save_as(z)
     assert dl2.value.suggested_filename == "selection.zip" and open(z, "rb").read(2) == b"PK"
@@ -141,14 +142,14 @@ def test_mobile_page_fits_the_viewport(browser, server):
 def test_new_folder_inline(page, server):
     open_ui(page, server)
     page.click(".tabs .tab[data-view=files]")
-    page.wait_for_selector("#flist .row", timeout=5000)
+    page.wait_for_selector("#flist .row", timeout=SHORT)
     page.click("#fmkdir")
     page.fill("#flist .row.newdir input", "made here")
     page.press("#flist .row.newdir input", "Enter")
     wait(page, "() => document.querySelector('#fpath').textContent.includes('made here')", what="navigated into the new folder")
     assert os.path.isdir(os.path.join(server.root, "ws", "made here"))
     page.click("#fup")
-    page.wait_for_selector("#flist .row.dir:has(.n:text-is('made here/'))", timeout=5000)
+    page.wait_for_selector("#flist .row.dir:has(.n:text-is('made here/'))", timeout=SHORT)
     # a duplicate is refused and the row stays editable
     page.click("#fmkdir"); page.fill("#flist .row.newdir input", "made here"); page.press("#flist .row.newdir input", "Enter")
     wait(page, "() => { const i = document.querySelector('#flist .row.newdir input'); return !!i && !i.disabled && i.validationMessage.includes('already exists'); }", what="refusal shown")
@@ -176,7 +177,7 @@ def test_welcome_card_on_a_fresh_chat_only(page, server):
 def test_file_pane_errors_show_inline(page, server):
     open_ui(page, server)
     page.click(".tabs .tab[data-view=files]")
-    page.wait_for_selector("#flist .row", timeout=5000)
+    page.wait_for_selector("#flist .row", timeout=SHORT)
     page.click("#flist .row:has(.n:text-is('huge.bin')) .ck")
     page.click("#fsel button:text-is('zip')")
     wait(page, "() => (document.querySelector('#flist .ferr')?.textContent || '').includes('too large')", what="zip refusal inline")
@@ -188,7 +189,7 @@ def test_file_pane_errors_show_inline(page, server):
 
 def test_setup_page_renders_live_checks(page, server):
     page.goto(server.base + "/setup.html")
-    page.wait_for_selector(".check", timeout=10000)
+    page.wait_for_selector(".check", timeout=LONG)
     checks = page.evaluate("() => [...document.querySelectorAll('.check')].map(c => c.className.replace('check ', '') + ':' + c.querySelector('.t').textContent)")
     assert any(c.startswith("bad:No Claude Code login") for c in checks), checks   # the fixture home has no login
     assert any("localhost mode" in c for c in checks), checks
@@ -217,6 +218,7 @@ def test_tool_rows_keep_their_height_when_the_log_overflows(browser, server):
     ctx.close()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_connects_once_its_address_is_set(server, playwright):
     ext = os.path.join(os.path.dirname(__file__), "..", "..", "extension")
     """The real extension in Chromium: it starts with no address (badge 'set'),
@@ -228,7 +230,7 @@ def test_extension_connects_once_its_address_is_set(server, playwright):
     ctx = playwright.chromium.launch_persistent_context(prof, headless=True, channel="chromium",
                                                         args=[f"--disable-extensions-except={ext}", f"--load-extension={ext}"])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=LONG)
         time.sleep(1.0)
         assert connected() == [], "nothing should connect before an address is set"
         assert sw.evaluate("() => chrome.action.getBadgeText({})") == "set"
@@ -290,9 +292,9 @@ def test_search_jumps_to_the_message_in_another_chat(page, server):
     for i in range(3): send(page, f"filler message {i}"); wait_reply(page, f"You said: filler message {i}")
     send(page, "the platypus is a monotreme"); wait_reply(page, "You said: the platypus")
     page.click("#newchat"); wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="new chat")
-    page.click("#chatsbtn"); page.wait_for_selector("#clist .cfind input", timeout=5000)
+    page.click("#chatsbtn"); page.wait_for_selector("#clist .cfind input", timeout=SHORT)
     page.fill("#clist .cfind input", "platypus")
-    page.wait_for_selector("#clist .c.hit", timeout=5000)
+    page.wait_for_selector("#clist .c.hit", timeout=SHORT)
     assert "platypus" in page.text_content("#clist .c.hit .cs")
     page.click("#clist .c.hit")
     wait(page, "() => !!document.querySelector('#log .flash') && document.querySelector('#log .flash').textContent.includes('platypus')", what="jumped and flashed the hit")
@@ -303,7 +305,7 @@ def test_export_downloads_markdown(page, server):
     open_ui(page, server)
     send(page, "export me please"); wait_reply(page, "You said: export me please")
     page.click("#more")
-    with page.expect_download(timeout=10000) as dl:
+    with page.expect_download(timeout=LONG) as dl:
         page.click("#export")
     d = dl.value; path = os.path.join(server.root, "export.md"); d.save_as(path)
     md = open(path).read()
@@ -348,7 +350,7 @@ def test_turn_rollup_in_the_status_bar(page, server):
 def test_edit_approval_shows_a_diff(page, server):
     open_ui(page, server)
     send(page, "edit-me")
-    page.wait_for_selector(".card[data-tool=Edit] .diff", timeout=10000)
+    page.wait_for_selector(".card[data-tool=Edit] .diff", timeout=LONG)
     d = page.evaluate("""() => { const c = document.querySelector('.card[data-tool=Edit] .diff'); return {
         path: c.querySelector('.dp').textContent, kind: c.querySelector('.dk').textContent, counts: c.querySelector('.dc').textContent,
         lines: [...c.querySelectorAll('.l')].map(l => l.className.replace('l ', '') + ':' + l.textContent.trim()) }; }""")
@@ -362,7 +364,7 @@ def test_edit_approval_shows_a_diff(page, server):
 def test_thinking_streams_collapsed_then_persists(page, server):
     open_ui(page, server)
     send(page, "think-me")
-    page.wait_for_selector("#log .think", timeout=10000)
+    page.wait_for_selector("#log .think", timeout=LONG)
     wait(page, "() => (document.querySelector('#log .think .first')?.textContent || '').includes('narrowed')", what="first line while streaming")
     wait_reply(page, "Verified: it is the second one.")
     assert page.text_content("#log .think .first") == "I've narrowed it to two candidates."
@@ -412,7 +414,7 @@ def test_images_pasted_and_picked_go_with_the_prompt(page, server):
 def test_plan_card_renders_the_plan_and_switches_mode(page, server):
     open_ui(page, server)
     send(page, "plan-me")
-    page.wait_for_selector(".card.plan", timeout=10000)
+    page.wait_for_selector(".card.plan", timeout=LONG)
     assert page.locator(".card.plan .planbody h1").text_content() == "Rename the widget"
     assert page.locator(".card.plan .planbody li").count() == 3
     assert page.locator(".card.plan pre").count() == 0, "the plan is rendered, not dumped as JSON"
@@ -460,7 +462,7 @@ def test_todo_list_updates_in_place(page, server):
 def test_at_file_completion_inserts_a_path(page, server):
     open_ui(page, server)
     page.fill("#box", "explain @load")
-    page.wait_for_selector("#menu.open .item", timeout=5000)
+    page.wait_for_selector("#menu.open .item", timeout=SHORT)
     names = page.evaluate("() => [...document.querySelectorAll('#menu .item .n')].map(n => n.textContent)")
     assert names[0] == "@src/lib/loader.ts", names
     assert not any("node_modules" in n for n in names)
@@ -468,10 +470,10 @@ def test_at_file_completion_inserts_a_path(page, server):
     assert page.input_value("#box") == "explain @src/lib/loader.ts "
     assert not page.evaluate("() => document.getElementById('menu').classList.contains('open')")
     # a directory keeps the menu open to go deeper
-    page.fill("#box", "look at @sr"); page.wait_for_selector("#menu.open .item", timeout=5000)
+    page.fill("#box", "look at @sr"); page.wait_for_selector("#menu.open .item", timeout=SHORT)
     page.press("#box", "Enter")
     assert page.input_value("#box") == "look at @src/"
-    page.wait_for_selector("#menu.open .item", timeout=5000)
+    page.wait_for_selector("#menu.open .item", timeout=SHORT)
     deeper = page.evaluate("() => [...document.querySelectorAll('#menu .item .n')].map(n => n.textContent)")
     assert "@src/index.ts" in deeper and "@src/lib/" in deeper, deeper
     page.press("#box", "Escape")
@@ -499,13 +501,13 @@ def test_rewind_previews_then_restores(page, server):
     open_ui(page, server)
     send(page, "touch the loader"); wait_reply(page, "You said: touch the loader")
     page.hover("#log .msg.user"); page.click("#log .msg.user .rw")
-    page.wait_for_selector("#log .msg.user .rwcard", timeout=5000)
+    page.wait_for_selector("#log .msg.user .rwcard", timeout=SHORT)
     what = page.text_content("#log .msg.user .rwcard .what")
     assert "Restore 2 files" in what and "src/a.ts, src/b.ts" in what and "(+3 −10 lines)" in what, what
     page.click("#log .msg.user .rwcard button:has-text('Cancel')")
     assert page.locator("#log .msg.user .rwcard").count() == 0
     page.hover("#log .msg.user"); page.click("#log .msg.user .rw")
-    page.wait_for_selector("#log .msg.user .rwcard", timeout=5000)
+    page.wait_for_selector("#log .msg.user .rwcard", timeout=SHORT)
     page.click("#log .msg.user .rwcard button:has-text('Restore')")
     wait(page, "() => [...document.querySelectorAll('#log .local')].some(l => l.textContent.includes('Rewound 2 files to before'))", what="the note")
     assert page.locator("#log .msg.user .rwcard").count() == 0
@@ -520,9 +522,9 @@ def test_a_chat_keeps_running_while_you_are_on_another_and_shows_the_answer_on_r
     page.click("#newchat")                                              # switch away while it is still streaming
     wait(page, "() => document.querySelectorAll('.msg.user').length === 0", what="on the new chat")
     time.sleep(2.5)                                                      # the original finishes in the background
-    page.click("#chatsbtn"); page.wait_for_selector("#clist .cfind input", timeout=5000)
+    page.click("#chatsbtn"); page.wait_for_selector("#clist .cfind input", timeout=SHORT)
     page.fill("#clist .cfind input", "please echo")                          # the title is the first message
-    page.wait_for_selector("#clist .c:has(.ct:text-matches('please echo'))", timeout=5000)
+    page.wait_for_selector("#clist .c:has(.ct:text-matches('please echo'))", timeout=SHORT)
     page.click("#clist .c:has(.ct:text-matches('please echo'))")
     wait(page, "() => [...document.querySelectorAll('#log .msg.md')].some(m => m.textContent.includes('You said: please echo') && m.textContent.includes('w49'))", what="the full answer, finished while away")
     assert page.locator("#log .end").count() == 1, "turn ended in the background"
@@ -532,14 +534,14 @@ def test_a_chat_keeps_running_while_you_are_on_another_and_shows_the_answer_on_r
 def test_site_and_eval_cards(page, server):
     open_ui(page, server)
     send(page, "site-me")
-    page.wait_for_selector(".card.site", timeout=10000)
+    page.wait_for_selector(".card.site", timeout=LONG)
     assert page.text_content(".card.site h4") == "Let Claude read bank.example?"
     labels = page.evaluate("() => [...document.querySelectorAll('.card.site .row button')].map(b => b.textContent)")
     assert labels == ["Allow (this chat)", "Always (this site)", "Deny"], labels
     assert page.text_content("#statustext") == "waiting for you — a site"
     page.click(".card.site button[data-decision=deny]"); wait_reply(page, "site: deny")
     send(page, "eval-me")
-    page.wait_for_selector(".card.site:not(.done)", timeout=10000)   # not the denied one still on screen
+    page.wait_for_selector(".card.site:not(.done)", timeout=LONG)   # not the denied one still on screen
     cards = page.locator(".card.site:not(.done)"); last = cards.nth(cards.count() - 1)
     assert last.locator("h4").text_content() == "Run JavaScript on bank.example?"
     assert last.locator("pre").text_content() == "document.title"
@@ -549,7 +551,7 @@ def test_site_and_eval_cards(page, server):
 
 def test_manage_page_browser_sites(page, server):
     page.goto(server.base + "/manage.html"); page.click("nav button[data-tab=browser]")
-    page.wait_for_selector("#browser .bar input", timeout=5000)
+    page.wait_for_selector("#browser .bar input", timeout=SHORT)
     page.fill("#browser .bar input", "*.corp.example"); page.press("#browser .bar input", "Enter")
     wait(page, "() => [...document.querySelectorAll('#browser .row .title')].some(t => t.textContent === '*.corp.example')", what="added")
     row = "#browser .row:has(.title:text-is('*.corp.example'))"
@@ -612,20 +614,20 @@ def test_page_read_modes(page, server):
 def test_offered_file_has_a_download_button(page, server):
     open_ui(page, server)
     send(page, "offer-me"); wait_reply(page, "Here it is.")
-    page.wait_for_selector("#log .filecard", timeout=5000)
+    page.wait_for_selector("#log .filecard", timeout=SHORT)
     assert page.text_content("#log .filecard .fn") == "notes.txt"
     assert "your export" in page.text_content("#log .filecard .fm") and "ws/notes.txt" in page.text_content("#log .filecard .fm")
-    with page.expect_download(timeout=10000) as dl:
+    with page.expect_download(timeout=LONG) as dl:
         page.click("#log .filecard button:has-text('Download')")
     assert dl.value.suggested_filename == "notes.txt"
-    with page.context.expect_page(timeout=10000) as newp:
+    with page.context.expect_page(timeout=LONG) as newp:
         page.click("#log .filecard button:has-text('Open in tab')")
     tab = newp.value; tab.wait_for_load_state()
     assert "inline=1" in tab.url and tab.url.endswith("path=ws%2Fnotes.txt&inline=1"), tab.url
     assert "one" in tab.content(), "the text file renders as plain text in its own tab"
     tab.close()
     page.click("#log .filecard button:has-text('Show in files')")
-    page.wait_for_selector("#flist .row:has(.n:text-is('notes.txt'))", timeout=5000)
+    page.wait_for_selector("#flist .row:has(.n:text-is('notes.txt'))", timeout=SHORT)
     page.reload(); wait(page, "() => document.querySelector('#dot').classList.contains('on')", what="reconnect"); time.sleep(0.5)
     assert page.locator("#log .filecard").count() == 1, "the offer is part of the transcript"
 
@@ -672,7 +674,7 @@ def test_wait_probe_reports_each_condition(page, server):
 def test_reply_tables_have_lines(page, server):
     open_ui(page, server)
     page.evaluate("() => handle({ kind: 'text', text: '| txn | € |\\n|---|---|\\n| T1052 | 171,24 |\\n| T1095 | 53,84 |' })")
-    page.wait_for_selector("#log .msg.md table td", timeout=5000)
+    page.wait_for_selector("#log .msg.md table td", timeout=SHORT)
     cs = page.evaluate("() => { const td = document.querySelector('#log .msg.md tbody td'); const th = document.querySelector('#log .msg.md th'); const s = getComputedStyle(td), h = getComputedStyle(th);"
                        " return { border: s.borderTopWidth, pad: s.paddingLeft, headRule: h.borderBottomWidth, collapse: getComputedStyle(document.querySelector('#log .msg.md table')).borderCollapse }; }")
     assert cs["border"] == "1px" and cs["pad"] == "8px" and cs["headRule"] == "2px" and cs["collapse"] == "collapse", cs
@@ -688,7 +690,7 @@ def test_viewer_renders_markdown_csv_json(page, server):
     with open(os.path.join(server.root, "files", "d.json"), "w") as f:
         f.write('{"a":[1,2],"b":{"c":true}}')
     page.goto(server.base + "/view.html?path=files/report.md")
-    page.wait_for_selector("#main .md table td", timeout=5000)
+    page.wait_for_selector("#main .md table td", timeout=SHORT)
     assert page.text_content("#main .md h1").strip() == "Report"
     assert page.evaluate("() => getComputedStyle(document.querySelector('#main .md td')).borderTopWidth") == "1px"
     assert page.evaluate("() => document.querySelector('#main .md a').target") == "_blank"
@@ -697,15 +699,15 @@ def test_viewer_renders_markdown_csv_json(page, server):
     page.click("#raw")
     assert "| txn | amount |" in page.text_content("#main pre")
     page.goto(server.base + "/view.html?path=files/data.csv")
-    page.wait_for_selector("#main table.grid tbody tr", timeout=5000)
+    page.wait_for_selector("#main table.grid tbody tr", timeout=SHORT)
     cells = page.evaluate("() => [...document.querySelectorAll('#main table.grid tbody tr')].map(r => [...r.cells].map(c => c.textContent))")
     assert cells == [["1", "1", "Doe, Jane"], ["2", "2", 'say "hi"']], cells
     assert page.text_content("#main .note").strip() == "2 rows"
     page.goto(server.base + "/view.html?path=files/d.json")
-    page.wait_for_selector("#main pre", timeout=5000)
+    page.wait_for_selector("#main pre", timeout=SHORT)
     assert page.text_content("#main pre") == '{\n  "a": [\n    1,\n    2\n  ],\n  "b": {\n    "c": true\n  }\n}'
     page.goto(server.base + "/view.html?path=files/nope.md")
-    page.wait_for_selector("#main .err", timeout=5000)
+    page.wait_for_selector("#main .err", timeout=SHORT)
     assert "Cannot open nope.md" in page.text_content("#main .err")
 
 
@@ -717,18 +719,18 @@ def test_open_in_tab_routes_markdown_to_viewer(page, server):
 def test_each_tab_keeps_its_own_chat(page, server):
     open_ui(page, server)
     page.click("#newchat")
-    page.wait_for_function("() => ACTIVE && sessionStorage.getItem('ct.chat') === ACTIVE", timeout=5000)
+    page.wait_for_function("() => ACTIVE && sessionStorage.getItem('ct.chat') === ACTIVE", timeout=SHORT)
     mine = page.evaluate("() => ACTIVE")
     send(page, "mine"); wait_reply(page, "You said: mine")     # used, so "New chat" elsewhere makes a different one
     other = page.context.new_page()
     other.goto(server.base + "/m.html")
-    other.wait_for_function("() => ACTIVE", timeout=5000)
+    other.wait_for_function("() => ACTIVE", timeout=SHORT)
     assert other.evaluate("() => ACTIVE") == mine          # a fresh tab still lands on the newest
     other.click("#newchat")
-    other.wait_for_function("(m) => ACTIVE && ACTIVE !== m", arg=mine, timeout=5000)
+    other.wait_for_function("(m) => ACTIVE && ACTIVE !== m", arg=mine, timeout=SHORT)
     theirs = other.evaluate("() => ACTIVE")
     page.reload()
-    page.wait_for_function("() => ACTIVE", timeout=5000)
+    page.wait_for_function("() => ACTIVE", timeout=SHORT)
     assert page.evaluate("() => ACTIVE") == mine, "reload must reattach to this tab's chat, not the other tab's newer one"
     assert other.evaluate("() => ACTIVE") == theirs
     other.close()
@@ -741,7 +743,7 @@ def test_browser_tool_rows_say_where(page, server):
         handle({kind:'tool_result', id:'w1', name:'mcp__browser__click', ok:true, summary:'clicked', text:'{}', bytes:2, truncated:false, where:'bank.example · Transfer'});
         handle({kind:'tool', id:'w2', name:'Read', input:{file_path:'/tmp/x'}});
         handle({kind:'tool_result', id:'w2', name:'Read', ok:true, summary:'3 lines', text:'a', bytes:1, truncated:false}); }""")
-    page.wait_for_selector("#log .tool .where", timeout=5000)
+    page.wait_for_selector("#log .tool .where", timeout=SHORT)
     assert page.text_content("#log .tool .where") == "bank.example · Transfer"
     assert page.evaluate("() => document.querySelectorAll('#log .tool .where').length") == 1
 
@@ -752,7 +754,7 @@ def test_viewer_tables_sort_filter_resize(page, server):
     with open(os.path.join(server.root, "files", "t.md"), "w") as f:
         f.write("# T\n\n| name | amount |\n|---|---|\n| pear | 10,50 |\n| apple | -331.33 |\n| fig | 2 |\n| kiwi | |\n")
     page.goto(server.base + "/view.html?path=files/t.md")
-    page.wait_for_selector("#main .tw table th.sortable", timeout=5000)
+    page.wait_for_selector("#main .tw table th.sortable", timeout=SHORT)
     col = lambda i: page.evaluate("(i) => [...document.querySelectorAll('#main tbody tr:not([hidden])')].map(r => r.cells[i].textContent.trim())", i)
     page.click("#main th.sortable >> nth=0")                    # name asc
     assert col(0) == ["apple", "fig", "kiwi", "pear"]
@@ -777,6 +779,7 @@ def test_viewer_tables_sort_filter_resize(page, server):
     assert col(0) == ["apple", "fig", "pear", "kiwi"], "a drag on the handle must not change the (amount-sorted) order"
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_detects_and_answers_dialogs(ext_pages):
     """The real extension in Chromium: a confirm/prompt/alert raised by the
     agent's own click is reported with its message, blocks other calls at
@@ -826,6 +829,7 @@ def test_extension_detects_and_answers_dialogs(ext_pages):
         srv.shutdown()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_eval_awaits_promises(ext_pages):
     """eval returns the settled value of a promise, runs top-level await as an
     async body, reports a rejection as the error, and does not hang on a
@@ -852,6 +856,7 @@ def test_extension_eval_awaits_promises(ext_pages):
         srv.shutdown()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_manages_tabs(ext_pages):
     """The real extension: open a tab (returns its id, listed), focus another,
     back/forward/reload report the URL landed on, close removes it."""
@@ -878,6 +883,7 @@ def test_extension_manages_tabs(ext_pages):
         srv.shutdown()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_fills_forms(ext_pages):
     """The real extension: read_page forms gives refs; fill_form sets text,
     textarea, select (by text), checkbox and radio in one call, fires the
@@ -922,6 +928,7 @@ def test_extension_fills_forms(ext_pages):
         srv.shutdown()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_uploads_files(ext_pages):
     """The real extension: bytes sent to the worker become a File in the
     page's <input type=file>; the change handler sees name, size, type and
@@ -959,6 +966,7 @@ def test_extension_uploads_files(ext_pages):
         srv.shutdown()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_reads_console_and_network(ext_pages):
     """The real extension: the document_start hook records console output,
     uncaught errors and rejections, fetch/XHR with status, and resource loads;
@@ -1011,16 +1019,17 @@ def test_extension_reads_console_and_network(ext_pages):
 def test_submit_card(page, server):
     open_ui(page, server)
     send(page, "submit-me")
-    page.wait_for_selector(".card.submit", timeout=10000)
+    page.wait_for_selector(".card.submit", timeout=LONG)
     assert page.text_content(".card.submit h4") == "Submit this form on shop.example?"
     assert page.text_content(".card.submit pre") == 'POST /checkout?step=2 · button "Place order"\nname: Alex\ncard: •••'
     assert page.evaluate("() => [...document.querySelectorAll('.card.submit .row button')].map(b => b.textContent)") == ["Submit", "Stop"]
     assert page.text_content("#statustext") == "waiting for you — a form submit"
     page.click(".card.submit button[data-decision=deny]"); wait_reply(page, "submit: deny")
-    send(page, "submit-me"); page.wait_for_selector(".card.submit:not(:has(button[disabled]))", timeout=10000)
+    send(page, "submit-me"); page.wait_for_selector(".card.submit:not(:has(button[disabled]))", timeout=LONG)
     cards = page.locator(".card.submit"); cards.nth(cards.count() - 1).locator("button[data-decision=allow]").click(); wait_reply(page, "submit: allow")
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_probes_submits(ext_pages):
     """The real extension: the probe says what a click/Enter would submit
     (fields, masked password, button, method), says no for a plain button,
@@ -1057,6 +1066,7 @@ def test_extension_probes_submits(ext_pages):
         srv.shutdown()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_extension_trusted_input_and_csp_eval(ext_pages):
     """The real extension: type/press produce trusted events (an editor that
     ignores untrusted input gets the text), modifiers and Enter work, eval
@@ -1117,6 +1127,7 @@ def test_extension_trusted_input_and_csp_eval(ext_pages):
         srv.shutdown()
 
 
+@pytest.mark.xdist_group("chromium")
 def test_server_browser_live_view(page, server):
     """The server browser from the manage page: Start launches a headless
     Chromium with the extension (it appears as 'server-browser' on /setup and
@@ -1124,7 +1135,7 @@ def test_server_browser_live_view(page, server):
     navigates, clicks and keys reach the page; Stop ends it."""
     import json, urllib.request
     page.goto(server.base + "/manage.html"); page.click("nav button[data-tab=server]")
-    page.wait_for_selector("#server button", timeout=5000)
+    page.wait_for_selector("#server button", timeout=SHORT)
     assert page.text_content("#server .pill") == "stopped"
     page.click("#server button:text-is('Start')")
     page.wait_for_selector("#server .pill.ok", timeout=30000)
@@ -1134,15 +1145,15 @@ def test_server_browser_live_view(page, server):
     assert "server-browser" in connected(), connected()
     # the chat header offers it
     chat = page.context.new_page(); chat.goto(server.base + "/m.html")
-    chat.wait_for_function("() => !document.getElementById('browser').hidden", timeout=10000)
+    chat.wait_for_function("() => !document.getElementById('browser').hidden", timeout=LONG)
     assert chat.evaluate("() => [...document.getElementById('browser').options].map(o => o.textContent)") == ["auto", "server browser"]
     chat.close()
     # the live view
     view = page.context.new_page(); view.goto(server.base + "/browser.html")
-    view.wait_for_function("() => document.getElementById('screen').naturalWidth > 100", timeout=15000)
+    view.wait_for_function("() => document.getElementById('screen').naturalWidth > 100", timeout=LONG)
     assert view.text_content("#st") == "live"
     view.fill("#url", server.base + "/m.html"); view.press("#url", "Enter")
-    view.wait_for_function("(b) => document.getElementById('url').value.startsWith(b) && document.getElementById('url').value.endsWith('/m.html')", arg=server.base, timeout=15000)
+    view.wait_for_function("(b) => document.getElementById('url').value.startsWith(b) && document.getElementById('url').value.endsWith('/m.html')", arg=server.base, timeout=LONG)
     time.sleep(1.0)   # a frame of the loaded page
     # frame geometry: the viewport is what headless Chromium gives a 1280×800 window (measured 1280×657: window minus its bars)
     box = view.evaluate("() => { const img = document.getElementById('screen'); return { nw: img.naturalWidth, nh: img.naturalHeight }; }")
@@ -1153,7 +1164,7 @@ def test_server_browser_live_view(page, server):
     assert st["running"] and st["viewers"] == 1 and any(t["url"].endswith("/m.html") for t in st["tabs"]), st
     view.close()
     page.click("#server button:text-is('Stop')")
-    page.wait_for_selector("#server .pill.warn", timeout=15000)
+    page.wait_for_selector("#server .pill.warn", timeout=LONG)
     t0 = time.time()
     while time.time() - t0 < 10 and "server-browser" in connected(): time.sleep(0.2)
     assert "server-browser" not in connected()
@@ -1165,31 +1176,31 @@ def test_schedules_tab_create_run_now(page, server):
     answers), and the row shows the outcome, cost and the reply's first
     line with a link to the run's chat; the chat's transcript can be opened."""
     page.goto(server.base + "/manage.html"); page.click("nav button[data-tab=schedules]")
-    page.wait_for_selector("#schedules button:text-is('New schedule')", timeout=5000)
+    page.wait_for_selector("#schedules button:text-is('New schedule')", timeout=SHORT)
     page.click("#schedules button:text-is('New schedule')")
     page.fill("#sf-title", "Morning check"); page.fill("#sf-text", "hello scheduler")
     page.fill("#sf-when", "weekdays at 07:30"); page.fill("#sf-tz", "Europe/Brussels")
-    page.wait_for_function("() => /weekdays at 07:30 — next:/.test(document.getElementById('sf-preview').textContent)", timeout=5000)
+    page.wait_for_function("() => /weekdays at 07:30 — next:/.test(document.getElementById('sf-preview').textContent)", timeout=SHORT)
     page.fill("#sf-when", "nonsense")
-    page.wait_for_function("() => document.getElementById('sf-preview').classList.contains('bad')", timeout=5000)
+    page.wait_for_function("() => document.getElementById('sf-preview').classList.contains('bad')", timeout=SHORT)
     page.fill("#sf-when", "every day at 08:00")
     page.select_option("#sf-browser", "auto")
     page.click("form.sched-form button[type=submit]")
-    page.wait_for_selector(".sched", timeout=5000)
+    page.wait_for_selector(".sched", timeout=SHORT)
     assert page.text_content(".sched .top b") == "Morning check"
     when = page.text_content(".sched .when")
     assert "every day at 08:00" in when and "Europe/Brussels" in when, when
     page.click(".sched button:text-is('Run now')")
-    page.wait_for_function("() => document.querySelector('.sched .last .o.done')", timeout=15000)
+    page.wait_for_function("() => document.querySelector('.sched .last .o.done')", timeout=LONG)
     last = page.text_content(".sched .last")
     assert "You said: hello scheduler" in last and "$0.00" in last, last
     # the row's "open chat" link lands the web UI on the run's chat (a ?chat= link)
     href = page.get_attribute(".sched .last a", "href")
-    chat = page.context.new_page(); chat.goto(server.base + href); chat.wait_for_selector("#log .msg.user", timeout=10000)
+    chat = page.context.new_page(); chat.goto(server.base + href); chat.wait_for_selector("#log .msg.user", timeout=LONG)
     assert "hello scheduler" in chat.text_content("#log .msg.user")
     chat.close()
-    page.click(".sched button:text-is('Pause')"); page.wait_for_selector(".sched.paused", timeout=5000)
-    page.click(".sched button:text-is('Resume')"); page.wait_for_selector(".sched:not(.paused)", timeout=5000)
+    page.click(".sched button:text-is('Pause')"); page.wait_for_selector(".sched.paused", timeout=SHORT)
+    page.click(".sched button:text-is('Resume')"); page.wait_for_selector(".sched:not(.paused)", timeout=SHORT)
 
 
 def test_question_card_multi_select(page, server):
@@ -1198,7 +1209,7 @@ def test_question_card_multi_select(page, server):
     takes several answers, and Answer waits until every question has one."""
     open_ui(page, server)
     send(page, "multi-me")
-    page.wait_for_selector(".q[data-tool=question]", timeout=10000)
+    page.wait_for_selector(".q[data-tool=question]", timeout=LONG)
     groups = page.locator(".q .qgroup")
     assert groups.count() == 2
     assert "choose one" in page.text_content(".q .qgroup:nth-child(1) .qt")
