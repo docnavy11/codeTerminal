@@ -188,7 +188,11 @@
   .pane-hd { padding:4px 10px; font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
              color:var(--dim); border-bottom:1px solid var(--line); background:var(--panel); flex-shrink:0;
              display:flex; align-items:center; gap:8px; }
-  .pane-hd .warn { color:var(--warn); text-transform:none; letter-spacing:0; margin-left:auto; font-size:0.917rem; }
+  /* min-width:0 and the ellipsis: the note carries the attached session's
+     directory now, and without these a long one pushes the tabs off the left
+     of a narrow right pane instead of shortening itself. */
+  .pane-hd .warn { color:var(--warn); text-transform:none; letter-spacing:0; margin-left:auto; font-size:0.917rem;
+                   min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   #grip { width:5px; cursor:col-resize; background:var(--line); flex-shrink:0; }
   #grip:hover { background:var(--accent); }

@@ -676,7 +676,9 @@ The right pane has three tabs: **terminal**, **sessions**, **files**. The
 sessions tab lists the tmux sessions on this machine, with the directory the
 current pane is in, what it is running, how long since it printed something,
 and whether anybody is attached. Click one and the terminal tab attaches to
-it; **+ new** makes one in the current chat's directory; a session can be
+it, and the terminal header then reads `session: <name> · <directory>` — the
+directory is read back from tmux each time you return to the terminal, so it
+follows the session when it `cd`s rather than showing where you attached; **+ new** makes one in the current chat's directory; a session can be
 renamed or killed from the row.
 
 These are the machine's sessions, not the server's. The other project on this

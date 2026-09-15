@@ -51,6 +51,10 @@ setInterval(() => checkPtyLiveness(), 15_000);
    here rather than in the socket. */
 let attachedTo = (() => { try { return sessionStorage.getItem("ct.session") || null; } catch { return null; } })();
 const rememberSession = (n) => { try { n ? sessionStorage.setItem("ct.session", n) : sessionStorage.removeItem("ct.session"); } catch { /* private window */ } };
+/* The attached session's current directory, for the header. Not remembered
+   with the name: a session can `cd` while you are away, so it is read back
+   from tmux rather than restored from a stale copy. */
+let attachedPath = "";
 async function connectShell() {
   clearTimeout(ptyRetry);
   const url = (await PLATFORM.wsUrl()).replace(/\/ws$/, "/pty");
@@ -113,7 +117,9 @@ PLATFORM.showView = (view) => {
   termEl.hidden = view !== "shell"; filesEl.hidden = view !== "files"; sessionsEl.hidden = view !== "sessions";
   note.textContent = view === "files" ? filesRoot
     : view === "sessions" ? "tmux sessions on this machine"
-    : attachedTo ? `session: ${attachedTo}` : "no approval gate";
+    : attachedTo ? sessionNote() : "no approval gate";
+  // tmux knows where the session is now; the copy in hand may be old.
+  if (view === "shell" && attachedTo) refreshAttachedPath();
   if (view === "sessions") loadSessions();
   if (view === "shell") sendResize();
 };
@@ -124,6 +130,22 @@ fetch("/files/info").then((r) => r.json()).then((i) => { filesRoot = i.root ?? "
    a real terminal) started is here too, with its working directory — one set
    of sessions, several front doors. Attaching points this pane's terminal at
    one; the session keeps running when you leave. */
+/* "session: build · ~/projects/x". The directory is the pane's, so it is what
+   the session is actually working on, not where it was started. */
+const sessionNote = () => `session: ${attachedTo}` + (attachedPath ? ` · ${shortPath(attachedPath)}` : "");
+/* Read the attached session's directory back from tmux and repaint the header
+   if it moved. Quiet on failure: the header keeps the name, which is the part
+   that matters. */
+async function refreshAttachedPath() {
+  const want = attachedTo;
+  try {
+    const found = (await sapi("/sessions")).sessions.find((s) => s.name === want);
+    if (!found || attachedTo !== want) return;
+    if (found.path === attachedPath) return;
+    attachedPath = found.path;
+    if (!termEl.hidden) note.textContent = sessionNote();
+  } catch { /* the header keeps the name */ }
+}
 const slist = document.getElementById("slist"), snote = document.getElementById("snote"), snew = document.getElementById("snew");
 let homeDir = "";
 /* `~/projects/x`, and the middle dropped when it is long. The first attempt
@@ -152,8 +174,8 @@ async function sapi(path, opts) {
   if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
   return body;
 }
-function attach(name) {
-  attachedTo = name; rememberSession(name);
+function attach(name, path) {
+  attachedTo = name; rememberSession(name); attachedPath = path ?? "";
   try { ptyWs?.close(); } catch { /* already gone */ }
   ptyWs = null;
   term.reset();
@@ -162,7 +184,7 @@ function attach(name) {
 }
 function detach() {
   if (!attachedTo) return;
-  attachedTo = null; rememberSession(null);
+  attachedTo = null; rememberSession(null); attachedPath = "";
   try { ptyWs?.close(); } catch { /* already gone */ }
   ptyWs = null;
   term.reset();
@@ -180,6 +202,7 @@ function renderSessions(sessions) {
   }
   for (const s of sessions) {
     const row = document.createElement("div");
+    if (s.name === attachedTo) attachedPath = s.path;          // the list is a free, fresh reading
     row.className = "s" + (s.name === attachedTo ? " live" : "");
     row.title = `${s.name} · ${s.windows} window${s.windows === 1 ? "" : "s"} · created ${new Date(s.createdAt).toLocaleString()}`;
     const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = s.name;
@@ -200,7 +223,7 @@ function renderSessions(sessions) {
            `rememberSession` too, or a reload reattaches to a name that is gone
            and quietly opens a plain shell instead. The tmux client itself
            survives a rename, so the pane keeps running untouched. */
-        if (attachedTo === s.name) { attachedTo = to; rememberSession(to); }   // the note is recomputed when you go back to the terminal
+        if (attachedTo === s.name) { attachedTo = to; rememberSession(to); }   // renaming does not move the pane, so attachedPath stands
         renderSessions(body.sessions);
       } catch (err) { sfail(err.message); }
     };
@@ -214,7 +237,7 @@ function renderSessions(sessions) {
       } catch (err) { sfail(err.message); }
     };
     row.append(ren, kill);
-    row.onclick = () => attach(s.name);
+    row.onclick = () => attach(s.name, s.path);
     slist.append(row);
   }
 }
@@ -262,7 +285,7 @@ fetch("/config").then((r) => r.json()).then((c) => {
   if (shellOn && c.sessions) document.querySelector('.pane-hd .tab[data-view="sessions"]').hidden = false;
   // A reload comes back to the session this tab was on, not a fresh shell.
   if (!c.sessions) { attachedTo = null; rememberSession(null); }
-  if (attachedTo) note.textContent = `session: ${attachedTo}`;
+  if (attachedTo) { note.textContent = sessionNote(); refreshAttachedPath(); }
   if (shellOn) { connectShell(); return; }
   document.querySelector('.pane-hd .tab[data-view="shell"]')?.remove();
   document.querySelector('.pane-hd .tab[data-view="sessions"]')?.remove();

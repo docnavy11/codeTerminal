@@ -1236,6 +1236,34 @@ def test_question_card_multi_select(page, server):
     assert '"Which title should the profile use?":"A — Agent Development"' in last_reply(page)
 
 
+def test_header_shows_the_attached_session_directory(page, server):
+    """The header says where the session is, not only what it is called — and
+    it follows the session when it cds, because the directory is read back
+    from tmux rather than remembered from when you attached."""
+    import subprocess, uuid, os
+    if subprocess.run(["tmux", "-V"], capture_output=True).returncode != 0:
+        import pytest; pytest.skip("no tmux on this machine")
+    name = "cttest-d-" + uuid.uuid4().hex[:8]
+    try:
+        open_ui(page, server)
+        page.wait_for_selector('.pane-hd .tab[data-view="sessions"]:not([hidden])', timeout=SHORT)
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        page.fill("#snew", name); page.click("#screate")
+        page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
+        wait(page, "() => document.getElementById('rightnote').textContent.includes(' · ')",
+             what="the header carries a directory beside the name")
+
+        # cd inside the session, then come back to the terminal: the header follows
+        page.click("#term"); page.keyboard.type("cd /tmp\n")
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        page.click('.pane-hd .tab[data-view="shell"]')
+        wait(page, "() => document.getElementById('rightnote').textContent.endsWith(' · /tmp')",
+             what="the header followed the session to /tmp")
+        assert page.errors == []
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+
+
 def test_renaming_the_attached_session_keeps_the_attachment(page, server):
     """Rename the session the pane is attached to, then reload. The attachment
     is remembered by name, so if the rename does not update what is
@@ -1263,7 +1291,7 @@ def test_renaming_the_attached_session_keeps_the_attachment(page, server):
 
         page.reload()
         wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
-        wait(page, f"() => document.getElementById('rightnote').textContent === 'session: {renamed}'",
+        wait(page, f"() => document.getElementById('rightnote').textContent.startsWith('session: {renamed}')",
              what="came back to the renamed session, not a plain shell")
         wait(page, "() => document.querySelector('#term').innerText.includes('RENAME-42')",
              what="and it is the same session, with its scrollback")
@@ -1289,7 +1317,7 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         # create → attaches, and the terminal view comes forward
         page.fill("#snew", name); page.click("#screate")
         page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
-        wait(page, f"() => document.getElementById('rightnote').textContent === 'session: {name}'", what="header names the session")
+        wait(page, f"() => document.getElementById('rightnote').textContent.startsWith('session: {name}')", what="header names the session")
         # something long-running, then leave the session entirely
         page.click("#term"); page.keyboard.type("echo MARKER-$((6*7))\n")
         wait(page, "() => document.querySelector('#term').innerText.includes('MARKER-42')", what="the session ran it")
@@ -1298,7 +1326,7 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
         wait(page, "() => document.querySelector('#term').innerText.includes('MARKER-42')", 30,
              "the session and its scrollback came back after the restart")
-        assert page.text_content("#rightnote") == f"session: {name}"
+        assert page.text_content("#rightnote").startswith(f"session: {name}")
         # it is listed as attached, and killing it returns the pane to a plain shell
         page.click('.pane-hd .tab[data-view="sessions"]')
         wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
