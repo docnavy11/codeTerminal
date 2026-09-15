@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# What CI would have told you, before the push instead of after.
+#
+# Always: typecheck and the unit suite (~60 s). That is what catches the
+# ordinary mistake — a syntax error, a broken type, a test the change forgot.
+# Conditionally: the browser suite (~30 s), when anything a browser loads has
+# changed, and the real-Chromium suite when the server browser has.
+#
+# Bypass for a doc typo or a work-in-progress branch:  git push --no-verify
+# Turn it off for a session:                           SKIP_PRECHECK=1 git push
+set -uo pipefail
+[ "${SKIP_PRECHECK:-0}" = "1" ] && { echo "pre-push: skipped (SKIP_PRECHECK=1)"; exit 0; }
+cd "$(git rev-parse --show-toplevel)"
+
+# What is being pushed, against what the remote already has. A new branch has
+# no remote side, so compare against the default branch instead of everything.
+range=""
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue     # a delete
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    base=$(git merge-base "$local_sha" origin/main 2>/dev/null || echo "")
+    range="${base:+$base..}$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+done
+changed=$(git diff --name-only ${range:-HEAD~1..HEAD} 2>/dev/null || git diff --name-only HEAD)
+
+run() { printf '\n\033[1mpre-push: %s\033[0m\n' "$1"; shift; "$@" || { printf '\n\033[31mpre-push: that failed — push refused. --no-verify overrides.\033[0m\n'; exit 1; }; }
+
+run "typecheck and unit tests" npm run --silent check
+
+if grep -qE '^(src/|public/|extension/|test/browser/)' <<<"$changed"; then
+  run "browser suite" npm run --silent test:browser
+else
+  echo "pre-push: browser suite skipped (nothing it covers changed)"
+fi
+
+if grep -qE '^(src/server-browser\.ts|extension/|test/server-browser)' <<<"$changed"; then
+  run "server browser (real Chromium)" npm run --silent test:chromium
+else
+  echo "pre-push: server-browser suite skipped (nothing it covers changed)"
+fi
+
+printf '\n\033[32mpre-push: green.\033[0m\n'

@@ -35,6 +35,12 @@ gate both work.
     npm run test:e2e     # boots a real server and session; needs credentials
     npm run test:real    # the actual SDK; costs about $0.30 a run, opt-in
 
+`npm run hooks` points git at `.githooks`, whose `pre-push` runs the same
+things before a push leaves the machine — typecheck and unit always, the
+browser suites when what they cover has changed — and refuses when one fails
+(`--no-verify` overrides). It was added after a commit with a syntax error in
+it reached CI.
+
 Which suite a test belongs in is decided by what it needs to launch. Anything
 that starts a browser is out of `npm test`: the server-browser suite lived
 there until 2026-09-15 and failed twice on GitHub's runner, where the image's

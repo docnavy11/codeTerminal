@@ -10,7 +10,18 @@ logged in). The quick start in the [README](README.md) covers the rest.
 
 ## Before you open a pull request
 
-    npm run check          # typecheck + 546 unit tests, no network, seconds
+    npm run hooks          # once: run the checks on every push, in this clone
+
+That sets `core.hooksPath` to `.githooks`, whose `pre-push` runs what CI runs:
+typecheck and the unit suite always, the browser suite when anything a browser
+loads has changed, the real-Chromium suite when the server browser has. A
+failure refuses the push. `git push --no-verify` overrides it for a doc typo,
+and `SKIP_PRECHECK=1` for a session. It exists because a syntax error reached
+CI on 2026-09-15 that sixty seconds of local checking would have caught.
+
+By hand, the same things:
+
+    npm run check          # typecheck + 546 unit tests, no network, ~60 s
     npm run test:browser   # the real client in Chromium against a fixture server
     npm run test:chromium  # the server browser, driving a real Chromium
 
