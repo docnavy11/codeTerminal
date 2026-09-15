@@ -641,6 +641,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
      those same two files here keeps mobile and the panel from drifting apart
      instead of maintaining a second copy. */
   app.get("/m/app.js", (_req, res) => res.type("js").sendFile(join(ROOT, "extension/sidepanel.js")));
+  app.get("/m/term.js", (_req, res) => res.type("js").sendFile(join(ROOT, "extension/term.js")));
   app.get("/m/panel.css", (_req, res) => res.type("css").sendFile(join(ROOT, "extension/panel.css")));
   /* Bare /m is what you type on a phone. */
   app.get("/m", (_req, res) => res.redirect(302, "/m.html"));

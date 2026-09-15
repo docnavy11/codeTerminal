@@ -643,11 +643,17 @@ new profile, so `CODETERM_EXT_ORIGIN` pinning needs the id from
 
 ## The shell pane
 
-The right pane can be put away. The **›** in its header collapses it to a
-narrow rail, and double-clicking the divider does the same; the rail names the
-view it is standing in for, so you can see whether you left the terminal, the
-sessions or the files open, and one click brings it back. The choice is
-remembered per browser.
+Either pane can be put away. The **›** in the right header collapses the
+terminal to a narrow rail, and double-clicking the divider does the same; the
+rail names the view it is standing in for, so you can see whether you left the
+terminal, the sessions or the files open, and one click brings it back. The
+**‹** in the left header does the mirror image for the conversation, for when
+you are working in the terminal and only want to see that Claude is still
+there. The choice is remembered per browser, under a key each.
+
+Only one at a time: collapsing one side opens the other, because two rails and
+nothing to read is not a state worth being able to reach — and a stored pair
+saying both are away restores the right one only.
 
 The **↻** beside it redraws the terminal, for when the pane's picture has
 drifted from what is really on the other end — a resize that landed while it
@@ -665,11 +671,12 @@ Redialling now takes the old socket's handlers with it. It used to leave them:
 tmux sizes to the smaller of the two. That was a way to *get* a skewed pane
 from the button meant to fix one.
 
-It is narrowed, never removed. xterm loses its scrollback when its element is
-detached, and the file list would have to be fetched again. The one thing that
-had to change for it is the resize: fitting a terminal against a zero-width
-pane asks the pty for a nonsense geometry, so the fit is skipped while the
-pane has no size and runs again when it reopens.
+The pane is narrowed, never removed. xterm loses its scrollback when its
+element is detached, the file list would have to be fetched again, and the
+transcript comes back scrolled where you left it. The one thing that had to
+change for it is the resize: fitting a terminal against a zero-width pane asks
+the pty for a nonsense geometry, so the fit is skipped while the pane has no
+size and runs again when it reopens.
 
 
 `CODETERM_SHELL=0` leaves it out altogether: the `/pty` upgrade answers 404,
@@ -701,14 +708,25 @@ links open in a new tab with no referrer.
 
 ## Sessions
 
-The right pane has three tabs: **terminal**, **sessions**, **files**. The
+The Chrome side panel has the same two tabs beside **chat** and **files**, so
+a shell and the chooser are there as well; the panel is one column, so they are
+views its tabs swap in rather than a second pane. The terminal is about forty
+columns wide there — fine for a build, a git command or watching a session, not
+for vim. Both hosts run the same file, `extension/term.js`, which the server
+also serves to the web UI as `/m/term.js`; the phone page does not load it, so
+`/m` keeps chat and files alone.
+
+The right pane of the web UI has three tabs: **terminal**, **sessions**, **files**. The
 sessions tab lists the tmux sessions on this machine, with the directory the
 current pane is in, what it is running, how long since it printed something,
 and whether anybody is attached. Click one and the terminal tab attaches to
 it, and the terminal header then reads `session: <name> · <directory>` — the
 directory is read back from tmux each time you return to the terminal, so it
 follows the session when it `cd`s rather than showing where you attached; **+ new** makes one in the current chat's directory; a session can be
-renamed or killed from the row.
+renamed or killed from the row. Renaming happens in an inline field and
+killing takes two clicks (**kill**, then **sure?**) rather than a browser
+dialog, because an MV3 side panel is not a place to rely on `prompt()` and
+`confirm()`.
 
 These are the machine's sessions, not the server's. The other project on this
 box (tty) makes `wt_<uuid>` sessions on the same tmux socket and they show up

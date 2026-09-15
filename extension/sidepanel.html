@@ -1,12 +1,13 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>claude</title>
+<link rel="stylesheet" href="vendor/xterm.css">
 <link rel="stylesheet" href="panel.css">
 
 <header>
   <div class="row">
     <span class="dot" id="dot"></span>
-    <span class="tabs"><span class="tab on" data-view="chat">chat</span><span class="tab" data-view="files">files</span></span>
+    <span class="tabs"><span class="tab on" data-view="chat">chat</span><span class="tab" data-view="shell" hidden>shell</span><span class="tab" data-view="sessions" hidden>sessions</span><span class="tab" data-view="files">files</span></span>
     <button id="newchat" title="Start a new conversation">New</button>
     <button id="chatsbtn" title="Switch conversation">Chats ▾</button>
     <button id="more" title="Settings" aria-haspopup="menu" aria-expanded="false">⋯</button>
@@ -44,6 +45,17 @@
 
 <div id="clist"></div>
 <div id="log"></div>
+<div id="pnote" hidden></div>
+<div id="term" hidden></div>
+<div id="sessions" hidden>
+  <div class="sbar">
+    <input id="snew" placeholder="new session name" spellcheck="false" autocomplete="off">
+    <button id="screate">Create</button>
+    <button id="srefresh" title="Refresh">⟳</button>
+    <span id="snote"></span>
+  </div>
+  <div id="slist"></div>
+</div>
 <div id="files" hidden>
   <div class="fbar">
     <button id="fup" title="Up">↑</button>
@@ -68,7 +80,12 @@
   <button id="stop" disabled>Stop</button>
 </footer>
 
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="vendor/addon-web-links.js"></script>
 <script src="vendor/marked.umd.js"></script>
 <script src="vendor/purify.min.js"></script>
 <script src="platform.js"></script>
 <script src="sidepanel.js"></script>
+<script src="term.js"></script>
+<script src="panel-term.js"></script>

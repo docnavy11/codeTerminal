@@ -33,9 +33,9 @@ def test_reconnect_does_not_duplicate_the_transcript(page, server):
 
 def test_pty_pane_reconnects_after_a_restart(page, server):
     open_ui(page, server)
-    wait(page, "() => ptyWs && ptyWs.readyState === 1", what="pty open")
+    wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", what="pty open")
     server.restart()
-    wait(page, "() => ptyWs && ptyWs.readyState === 1", 20, "pty reopen")
+    wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", 20, "pty reopen")
     wait(page, "() => (document.querySelector('#term .xterm-rows')?.textContent || '').includes('reconnected')", 10, "reconnected banner")
 
 
@@ -1287,8 +1287,12 @@ def test_header_shows_the_attached_session_directory(page, server):
         wait(page, "() => document.getElementById('rightnote').textContent.includes(' · ')",
              what="the header carries a directory beside the name")
 
-        # cd inside the session, then come back to the terminal: the header follows
-        page.click("#term"); page.keyboard.type("cd /tmp\n")
+        # cd inside the session, then come back to the terminal: the header
+        # follows. Wait for the socket and for the cd to have actually landed —
+        # keystrokes sent before the pty is open are dropped on the floor.
+        wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", what="the pty is open")
+        page.click("#term"); page.keyboard.type("cd /tmp && echo AT-$PWD\n")
+        wait(page, "() => document.querySelector('#term').innerText.includes('AT-/tmp')", what="the session changed directory")
         page.click('.pane-hd .tab[data-view="sessions"]')
         page.click('.pane-hd .tab[data-view="shell"]')
         wait(page, "() => document.getElementById('rightnote').textContent.endsWith(' · /tmp')",
@@ -1318,8 +1322,9 @@ def test_renaming_the_attached_session_keeps_the_attachment(page, server):
 
         page.click('.pane-hd .tab[data-view="sessions"]')
         wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
-        page.once("dialog", lambda d: d.accept(renamed))
         page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('rename')")
+        page.fill("#slist .s input.rn", renamed)
+        page.press("#slist .s input.rn", "Enter")
         wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {renamed!r})", what="renamed in the list")
         assert page.evaluate("() => sessionStorage.getItem('ct.session')") == renamed
 
@@ -1364,8 +1369,8 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         # it is listed as attached, and killing it returns the pane to a plain shell
         page.click('.pane-hd .tab[data-view="sessions"]')
         wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
-        page.once("dialog", lambda d: d.accept())
         page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('kill')")
+        page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('sure?')")
         wait(page, f"() => ![...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="gone from the list")
         wait(page, "() => document.getElementById('rightnote').textContent === 'no approval gate'", what="back to a plain shell")
         assert page.errors == []
@@ -1391,7 +1396,7 @@ def test_refresh_redraws_the_terminal_without_losing_the_session(page, server):
         wait(page, "() => document.querySelector('#term').innerText.includes('REDRAW-42')", what="the session ran it")
 
         page.click("#rrefresh")
-        wait(page, "() => ptyWs && ptyWs.readyState === 1", 20, "the pane redialled")
+        wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", 20, "the pane redialled")
         wait(page, "() => document.querySelector('#term').innerText.includes('REDRAW-42')", 20,
              "tmux repainted the same session, scrollback and all")
         assert page.text_content("#rightnote").startswith(f"session: {name}")
@@ -1420,3 +1425,106 @@ def test_refresh_button_is_only_offered_for_the_terminal(page, server):
     page.click('.pane-hd .tab[data-view="shell"]')
     wait(page, "() => !document.getElementById('rrefresh').hidden", what="back for the terminal")
     assert page.errors == []
+
+
+def test_left_pane_collapses_to_a_rail_and_is_remembered(page, server):
+    """The mirror of the right one: working in the terminal, put the
+    conversation away and it becomes a rail. The transcript is narrowed rather
+    than removed, so the turns are still there when it comes back, and the
+    terminal refits to the width it gained."""
+    open_ui(page, server)
+    send(page, "before the collapse")
+    wait_reply(page, "You said: before the collapse")
+    wide = page.evaluate("() => document.getElementById('right').clientWidth")
+
+    page.click("#lhide")
+    wait(page, "() => document.getElementById('left').clientWidth < 40", what="the chat is a rail")
+    assert page.evaluate("() => document.getElementById('right').clientWidth") > wide
+    assert page.is_visible("#lshow"), "the rail offers a way back"
+    wait(page, "() => { const t = document.querySelector('#term .xterm-screen'); return t && t.clientWidth > 100; }",
+         what="the terminal took the width")
+
+    page.click("#lshow")
+    wait(page, "() => document.getElementById('left').clientWidth > 100", what="back to a pane")
+    assert "You said: before the collapse" in page.inner_text("#log")
+
+    # remembered, like the right one, and under its own key
+    page.click("#lhide")
+    wait(page, "() => document.getElementById('left').clientWidth < 40", what="collapsed again")
+    page.reload()
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+    wait(page, "() => document.getElementById('left').clientWidth < 40", what="still collapsed after a reload")
+    page.click("#lshow")
+    wait(page, "() => document.getElementById('left').clientWidth > 100", what="and can be opened again")
+    assert page.errors == []
+
+
+def test_collapsing_one_pane_opens_the_other(page, server):
+    """Both collapsed would be a window of two rails and nothing to read, so
+    collapsing one side opens the other — and the widths the divider wrote are
+    handed back rather than lost in the swap."""
+    open_ui(page, server)
+    page.wait_for_selector("#term", timeout=SHORT)
+    page.click("#rhide")
+    wait(page, "() => document.getElementById('right').clientWidth < 40", what="right is a rail")
+    page.click("#lhide")
+    wait(page, "() => document.getElementById('left').clientWidth < 40", what="left is a rail now")
+    assert page.evaluate("() => document.getElementById('right').clientWidth") > 100, "and the right came back"
+    assert not page.evaluate("() => document.getElementById('split').classList.contains('collapsed')")
+    # the reload restores one side, not two rails
+    page.reload()
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+    wait(page, "() => document.getElementById('left').clientWidth < 40", what="left still put away")
+    assert page.evaluate("() => document.getElementById('right').clientWidth") > 100
+    assert page.errors == []
+
+
+@pytest.mark.xdist_group("chromium")
+def test_side_panel_has_a_shell_and_the_session_chooser(ext_pages, server):
+    """The real extension in Chromium, its own sidepanel.html loaded as a page:
+    the shell and sessions tabs appear once the server says it has them, the
+    terminal is a live pty, and attaching to a session from the chooser puts
+    the panel's shell inside it. This is term.js — the same file the web UI
+    runs — with the panel's markup around it."""
+    import subprocess, uuid
+    if subprocess.run(["tmux", "-V"], capture_output=True).returncode != 0:
+        pytest.skip("no tmux on this machine")
+    name = "cttest-p-" + uuid.uuid4().hex[:8]
+    ctx = ext_pages
+    ctx.sw.evaluate("(url) => chrome.storage.local.set({ serverUrl: url })", f"ws://127.0.0.1:{server.port}/ext")
+    ext_id = ctx.sw.url.split("/")[2]
+    pg = ctx.new_page()
+    try:
+        pg.goto(f"chrome-extension://{ext_id}/sidepanel.html")
+        wait(pg, "() => document.querySelector('#dot').classList.contains('on')", 20, "the panel connected")
+        # the tabs are hidden until /config says this server has them
+        wait(pg, "() => !document.querySelector('.tabs .tab[data-view=\"shell\"]').hidden", 20, "a shell tab")
+        wait(pg, "() => !document.querySelector('.tabs .tab[data-view=\"sessions\"]').hidden", 20, "a sessions tab")
+
+        pg.click('.tabs .tab[data-view="shell"]')
+        wait(pg, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", 20, "the panel's pty is open")
+        # the composer gives way to the terminal, and the terminal has real size
+        assert pg.is_hidden("footer") and pg.is_hidden("#log")
+        wait(pg, "() => { const t = document.querySelector('#term .xterm-screen'); return t && t.clientWidth > 50; }",
+             what="the terminal was fitted to the panel")
+        pg.click("#term"); pg.keyboard.type("echo PANEL-$((6*7))\n")
+        wait(pg, "() => document.querySelector('#term').innerText.includes('PANEL-42')", 20, "the panel's shell ran it")
+
+        # the chooser: create a session and land in it
+        pg.click('.tabs .tab[data-view="sessions"]')
+        pg.fill("#snew", name); pg.click("#screate")
+        wait(pg, "() => !document.getElementById('term').hidden", 20, "attaching brought the terminal forward")
+        wait(pg, f"() => document.getElementById('pnote').textContent.startsWith('session: {name}')",
+             20, "the panel says which session it is in")
+        pg.click('.tabs .tab[data-view="sessions"]')
+        wait(pg, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})",
+             20, "the session is listed")
+        # kill takes two clicks here: no native confirm() in an MV3 panel
+        pg.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('kill')")
+        pg.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('sure?')")
+        wait(pg, f"() => ![...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})",
+             20, "gone from the list")
+        assert pg.errors == [] if hasattr(pg, "errors") else True
+    finally:
+        pg.close()
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)

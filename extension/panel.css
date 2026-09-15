@@ -475,3 +475,54 @@
   #setup { padding:12px; color:var(--dim); }
   #setup input { width:100%; box-sizing:border-box; background:var(--code); color:var(--fg);
                  border:1px solid var(--line); border-radius:4px; padding:5px 7px; font:inherit; margin:6px 0; }
+
+/* ---------------- the terminal and the tmux chooser ----------------
+   Both are term.js, the same file the web UI's right pane runs. The panel is
+   narrow, so this is a real shell in about forty columns: fine for a build, a
+   git command or watching a session, not for vim. The styles are copied from
+   public/index.html rather than shared — MV3 cannot load a stylesheet off the
+   server, which is the same reason panel.css duplicates the token block. */
+  #term { flex:1; min-height:0; padding:5px 0 0 6px; background:var(--code); }
+  #term.on-session { box-shadow:inset 2px 0 0 var(--accent); }
+  .xterm-viewport::-webkit-scrollbar { width:9px; }
+  .xterm-viewport::-webkit-scrollbar-thumb { background:var(--line); border-radius:5px; }
+
+  /* Says which session the shell is in, and clicking it leaves the session. */
+  #pnote { flex-shrink:0; padding:3px 8px; font-size:0.75rem; color:var(--warn); cursor:pointer;
+           border-bottom:1px solid var(--line); background:var(--panel);
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  #sessions { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .sbar { display:flex; align-items:center; gap:5px; padding:5px 6px; flex-shrink:0; flex-wrap:wrap;
+          border-bottom:1px solid var(--line); background:var(--panel); }
+  .sbar input { flex:1 1 110px; min-width:0; font:inherit; font-size:0.792rem; font-family:var(--mono);
+                background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 7px; }
+  .sbar input:focus { outline:none; border-color:var(--accent); }
+  .sbar button { font-size:0.792rem; padding:1px 8px; }
+  .sbar #snote { color:var(--dim); font-size:0.75rem; margin-left:auto; overflow:hidden;
+                 text-overflow:ellipsis; white-space:nowrap; }
+  .sbar #snote.bad { color:var(--bad); }
+  #slist { flex:1; min-height:0; overflow-y:auto; }
+  /* Two lines per row here, not one: a name, a command, a path and an age do
+     not fit across a side panel, and the path is what you least want elided.
+     Every cell is placed by hand — auto-placement puts the buttons wherever
+     they fall, which is a different layout per row. */
+  #slist .s { display:grid; grid-template-columns:1fr auto auto; gap:2px 6px; padding:6px 8px; cursor:pointer;
+              border-bottom:1px solid var(--line); align-items:center; }
+  #slist .s:hover { background:var(--btn); }
+  #slist .s.live { box-shadow:inset 2px 0 0 var(--accent); }
+  #slist .s .nm { grid-area:1/1; font-family:var(--mono); min-width:0;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #slist .s .cmd { grid-area:1/2; color:var(--warn); font-size:0.792rem; }
+  #slist .s .when { grid-area:1/3; color:var(--dim); font-size:0.75rem; font-variant-numeric:tabular-nums; }
+  #slist .s .pth { grid-area:2/1; color:var(--dim); font-size:0.75rem; font-family:var(--mono);
+                   min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #slist .s button:nth-of-type(1) { grid-area:2/2; }
+  #slist .s button:nth-of-type(2) { grid-area:2/3; }
+  #slist .s button { font-size:0.708rem; padding:1px 6px; }
+  /* The inline rename field sits where the name was, so it inherits its look. */
+  #slist .s input.rn { font:inherit; font-family:var(--mono); min-width:0; width:100%;
+                       background:var(--bg); color:var(--fg); border:1px solid var(--accent);
+                       border-radius:3px; padding:0 4px; }
+  #slist .s button.danger { color:var(--bad); }
+  #slist .empty { color:var(--dim); padding:16px 10px; }

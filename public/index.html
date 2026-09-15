@@ -197,24 +197,32 @@
   #grip { width:5px; cursor:col-resize; background:var(--line); flex-shrink:0; }
   #grip:hover { background:var(--accent); }
 
-  /* Collapsing the right pane. It stays in the DOM — xterm loses its buffer if
-     it is detached, and the file list would have to be fetched again — so it
-     is narrowed to a rail instead, and only the rail is drawn. A collapsed
-     #term has zero size, which is why sendResize() refuses to fit one. */
+  /* Collapsing either pane. Neither is removed from the DOM — xterm loses its
+     buffer if its element is detached, the file list would have to be fetched
+     again, and the transcript is a long scroll you want to come back to where
+     you left it — so the pane is narrowed to a rail instead, and only the rail
+     is drawn. A collapsed #term has zero size, which is why sendResize()
+     refuses to fit one. */
   .pane-hd .paneb { background:none; border:0; color:var(--dim); cursor:pointer; font-size:0.917rem;
                     line-height:1; padding:2px 4px; border-radius:3px; flex-shrink:0; }
   .pane-hd .paneb:hover { color:var(--fg); background:var(--btn); }
-  #split.collapsed > #grip { display:none; }
+  /* The left header is a bare title, so its button needs the push right that
+     the right header gets for free from #rightnote's margin-left:auto. */
+  #lhide { margin-left:auto; }
+  #split.collapsed > #grip, #split.lcollapsed > #grip { display:none; }
   #split.collapsed > #right { flex:0 0 auto; width:26px; }
   #split.collapsed > #right > :not(#rrail) { display:none; }
-  #rrail { display:none; }
-  #split.collapsed > #right > #rrail { flex:1; display:flex; flex-direction:column; align-items:center; gap:10px; padding:6px 0; }
-  #rrail button { background:none; border:0; color:var(--dim); cursor:pointer; font-size:1rem; line-height:1;
-                  padding:3px 4px; border-radius:3px; }
-  #rrail button:hover { color:var(--fg); background:var(--btn); }
+  #split.lcollapsed > #left { flex:0 0 auto; width:26px; }
+  #split.lcollapsed > #left > :not(#lrail) { display:none; }
+  .rail { display:none; }
+  #split.collapsed > #right > #rrail,
+  #split.lcollapsed > #left > #lrail { flex:1; display:flex; flex-direction:column; align-items:center; gap:10px; padding:6px 0; }
+  .rail button { background:none; border:0; color:var(--dim); cursor:pointer; font-size:1rem; line-height:1;
+                 padding:3px 4px; border-radius:3px; }
+  .rail button:hover { color:var(--fg); background:var(--btn); }
   /* Vertical, reading top-to-bottom like the tab it stands in for. */
-  #rrail .rlabel { writing-mode:vertical-rl; font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
-                   color:var(--dim); user-select:none; }
+  .rail .rlabel { writing-mode:vertical-rl; font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
+                  color:var(--dim); user-select:none; }
 
   #log { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding:10px; display:flex; flex-direction:column; gap:6px; }
   .msg { white-space:pre-wrap; word-break:break-word; }
@@ -402,6 +410,10 @@
                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #slist .s .when { color:var(--dim); font-size:0.75rem; flex-shrink:0; font-variant-numeric:tabular-nums; }
   #slist .s button { font-size:0.708rem; padding:1px 6px; flex-shrink:0; }
+  #slist .s input.rn { font:inherit; font-family:var(--mono); min-width:0; flex:0 1 220px;
+                       background:var(--bg); color:var(--fg); border:1px solid var(--accent);
+                       border-radius:3px; padding:0 4px; }
+  #slist .s button.danger { color:var(--bad); }
   #slist .empty { color:var(--dim); padding:18px 10px; }
   #term.on-session { box-shadow:inset 2px 0 0 var(--accent); }
 
@@ -511,7 +523,11 @@ globalThis.PLATFORM = {
 
 <div id="split">
   <div class="pane" id="left">
-    <div class="pane-hd">claude</div>
+    <div class="pane-hd">claude<button id="lhide" class="paneb" title="Collapse this pane" aria-label="Collapse the left pane" aria-expanded="true">‹</button></div>
+    <div id="lrail" class="rail">
+      <button id="lshow" title="Show the chat" aria-label="Show the left pane">›</button>
+      <span class="rlabel">claude</span>
+    </div>
     <div id="log"></div>
     <div id="status"><div id="plist"></div><button id="promptsbtn" title="Prepared prompts">prompts</button><span class="pip"></span><span id="statustext">connecting…</span><span class="t" id="statustime"></span></div>
     <footer>
@@ -532,7 +548,7 @@ globalThis.PLATFORM = {
       <button id="rrefresh" class="paneb" title="Redraw the terminal (fix a skewed pane)" aria-label="Redraw the terminal">↻</button>
       <button id="rhide" class="paneb" title="Collapse this pane (or double-click the divider)" aria-label="Collapse the right pane" aria-expanded="true">›</button>
     </div>
-    <div id="rrail">
+    <div id="rrail" class="rail">
       <button id="rshow" title="Show the right pane" aria-label="Show the right pane">‹</button>
       <span class="rlabel" id="rlabel">terminal</span>
     </div>
@@ -569,4 +585,5 @@ globalThis.PLATFORM = {
 <script src="/vendor/marked/marked.umd.js"></script>
 <script src="/vendor/dompurify/purify.min.js"></script>
 <script src="/m/app.js"></script>
+<script src="/m/term.js"></script>
 <script src="/desktop.js"></script>

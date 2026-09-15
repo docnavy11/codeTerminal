@@ -16,6 +16,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
+    "sync:vendor": "cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css node_modules/@xterm/addon-fit/lib/addon-fit.js node_modules/@xterm/addon-web-links/lib/addon-web-links.js node_modules/marked/lib/marked.umd.js node_modules/dompurify/dist/purify.min.js extension/vendor/",
     "test": "node --import tsx --test test/*.test.ts",
     "test:chromium": "node --import tsx --test test/*.chromium.ts",
     "check": "npm run typecheck && npm test",

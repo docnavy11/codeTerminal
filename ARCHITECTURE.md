@@ -104,10 +104,18 @@ files, prompts, settings — every one of the 20 event kinds) is the only
 implementation of the protocol. The Chrome side panel loads it from disk (MV3
 forbids remote code); the mobile page and the desktop page load the same file
 from the server as `/m/app.js`. A `PLATFORM` shim per host supplies what
-differs: URLs, the extension's storage and tabs, and — for the desktop, which
-has room for both — where the file browser appears (`showFiles`). The desktop
-adds only what it alone has, in `public/desktop.js`: the xterm pane on `/pty`
-and the draggable split, 89 lines.
+differs: URLs, the extension's storage and tabs, and where a view appears
+(`showFiles`, `showView`).
+
+`extension/term.js` is the second shared file, on the same terms: the xterm
+pane on `/pty` and the tmux session chooser, loaded from disk by the side panel
+and served to the desktop as `/m/term.js`. It knows nothing about either
+layout — the host says which view it just made visible and supplies a way to
+bring the terminal forward. What is left per host is only the layout: the
+desktop's split, collapsing panes and three-view right pane in
+`public/desktop.js`, the panel's four-view tab switch in
+`extension/panel-term.js`. The mobile page loads neither, so a phone keeps chat
+and files alone.
 
 That replaced a second, 973-line inline implementation in `index.html` that
 duplicated 19 of the 20 handlers and had already drifted (the AskUserQuestion
@@ -121,9 +129,11 @@ Three surfaces sharing one client:
 
 | surface | what it is | lines |
 |---|---|---|
-| `extension/sidepanel.js` + `panel.css` | **the** chat client: side panel, mobile, and desktop all run it | 800 JS + 334 CSS |
-| `public/index.html` + `desktop.js` | desktop host: layout + xterm/pty pane over the shared client | 493 (CSS + markup) + 89 |
-| `public/m.html` | mobile host over the shared client | 272 |
+| `extension/sidepanel.js` + `panel.css` | **the** chat client: side panel, mobile, and desktop all run it | 1674 JS + 528 CSS |
+| `extension/term.js` | **the** terminal + tmux chooser: side panel and desktop both run it | 390 |
+| `public/index.html` + `desktop.js` | desktop host: layout, split, collapsing panes | 589 (CSS + markup) + 117 |
+| `extension/panel-term.js` | side panel host: which of its four views is up | 54 |
+| `public/m.html` | mobile host over the shared client | 290 |
 | `public/manage.*` | curation page: chats, prompts, projects | 303 JS + 137 |
 | `extension/background.js` | the agent's hands: executes browser commands in MAIN world | 475 |
 
