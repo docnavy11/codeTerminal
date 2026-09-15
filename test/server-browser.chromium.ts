@@ -96,7 +96,7 @@ describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Pl
     const cur = (v.last("viewing") as { id: string }).id;
     v.frame({ type: "closetab", id: cur });
     await until(() => (v.last("tabs") as { tabs: unknown[] })?.tabs.length === 1, PATIENT, "back to one tab",
-      async () => ({ closed: cur, lastTabs: v.last("tabs"), lastViewing: v.last("viewing"), errors: v.kind("error"), gone: v.kind("gone"), status: await sb.status() })));
+      async () => ({ closed: cur, lastTabs: v.last("tabs"), lastViewing: v.last("viewing"), errors: v.kind("error"), gone: v.kind("gone"), status: await sb.status() }));
     assert.deepEqual(v.kind("error"), [], "the viewer reported no error");
     v.close();
     await until(async () => (await sb.status()).viewers === 0, PATIENT, "viewer detached");
