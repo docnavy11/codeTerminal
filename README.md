@@ -10,6 +10,12 @@ when a tab changes. It uses your Claude Code login — no API key, no credits.
 |---|---|---|
 | ![desktop](docs/desktop.png) | ![side panel](docs/panel.png) | ![mobile](docs/mobile.png) |
 
+> **Read this before you expose it.** The terminal pane is a real shell as
+> your user, with no approval gate, and the agent can drive your logged-in
+> browser. It is built to be reachable only from where you already are — a
+> tailnet, a VPN, or localhost — and it refuses to bind `0.0.0.0` on purpose.
+> There is no password login, by design. See [SECURITY.md](SECURITY.md).
+
 ## Quick start
 
 You need **Node ≥ 22** and a **Claude Code login** — the agent runs on the

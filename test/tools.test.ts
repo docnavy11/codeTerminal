@@ -241,8 +241,8 @@ describe("browser tools", () => {
     assert.deepEqual(asks, ["handle_dialog:act"]);
     assert.deepEqual(r.at, { host: "shop.example", title: "Cart" }, "stamped like any other call, without the dialog");
     assert.match(await call(srv, "read_page", { tabId: 1 }), /page/, "unblocked");
-    await call(srv, "handle_dialog", { accept: true, text: "Yvan" });
-    assert.deepEqual(seen[1], { accept: true, text: "Yvan" });
+    await call(srv, "handle_dialog", { accept: true, text: "Alex" });
+    assert.deepEqual(seen[1], { accept: true, text: "Alex" });
   });
 
   test("results are stamped with where they happened; navigate with its destination; no tab_url is not an error", async () => {
@@ -280,11 +280,11 @@ describe("browser tools", () => {
   test("confirm before submit: a submitting click/Enter is put in front of the user; stop fails the tool without clicking; non-submits and other keys never ask", async () => {
     const asked: Record<string, unknown>[] = []; const clicks: number[] = []; const probes: Record<string, unknown>[] = [];
     let answer = true;
-    let probe: Record<string, unknown> = { submit: true, via: "click", form: { action: "https://shop.example/checkout", method: "post", button: "Place order", fields: [{ name: "name", value: "Yvan" }, { name: "card", value: "•••" }], filled: 2 } };
+    let probe: Record<string, unknown> = { submit: true, via: "click", form: { action: "https://shop.example/checkout", method: "post", button: "Place order", fields: [{ name: "name", value: "Alex" }, { name: "card", value: "•••" }], filled: 2 } };
     const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://shop.example/cart", title: "Cart" }), submit_probe: (p) => { probes.push(p); return probe; }, click: () => { clicks.push(1); return { clicked: "button" }; }, press: (p) => ({ pressed: p.key }) });
     const srv = browserTools(bridge, () => undefined, undefined, undefined, undefined, undefined, async (d) => { asked.push(d); return answer; });
     assert.match(await call(srv, "click", { tabId: 1, selector: "#order" }), /clicked/);
-    assert.deepEqual(asked[0], { host: "shop.example", via: "click", action: "https://shop.example/checkout", method: "post", button: "Place order", fields: [{ name: "name", value: "Yvan" }, { name: "card", value: "•••" }], filled: 2 });
+    assert.deepEqual(asked[0], { host: "shop.example", via: "click", action: "https://shop.example/checkout", method: "post", button: "Place order", fields: [{ name: "name", value: "Alex" }, { name: "card", value: "•••" }], filled: 2 });
     assert.deepEqual(probes[0], { tabId: 1, selector: "#order" });
     answer = false;
     await assert.rejects(call(srv, "click", { tabId: 1, selector: "#order" }), /the user stopped the submit to shop\.example \(POST https:\/\/shop\.example\/checkout\)/);
@@ -383,9 +383,9 @@ describe("browser tools", () => {
     const policy = { allowed: () => false, evalAllowed: () => false, ask: async (_h: string, action: string, _d: string | undefined, level: string) => { asks.push(action + ":" + level); return "allow" as const; } };
     const { bridge } = bridged({ tab_url: () => ({ tabId: 1, url: "https://shop.example/checkout", title: "Checkout" }), fill_form: (p) => { seen.push(p); return { tabId: 1, filled: 2, total: 3, results: [{ field: "f1", ok: true, length: 4 }, { field: "f2", ok: true, set: "Belgium" }, { field: "f9", ok: false, error: "element not found" }] }; } });
     const srv = browserTools(bridge, () => undefined, undefined, policy);
-    const r = JSON.parse(await call(srv, "fill_form", { tabId: 1, fields: [{ ref: "f1", value: "Yvan" }, { ref: "f2", value: "Belgium" }, { selector: "#gift", value: true }] }));
+    const r = JSON.parse(await call(srv, "fill_form", { tabId: 1, fields: [{ ref: "f1", value: "Alex" }, { ref: "f2", value: "Belgium" }, { selector: "#gift", value: true }] }));
     assert.deepEqual(asks, ["fill_form:act"], "one ask for the whole form");
-    assert.deepEqual(seen[0], { tabId: 1, fields: [{ ref: "f1", value: "Yvan" }, { ref: "f2", value: "Belgium" }, { selector: "#gift", value: true }] });
+    assert.deepEqual(seen[0], { tabId: 1, fields: [{ ref: "f1", value: "Alex" }, { ref: "f2", value: "Belgium" }, { selector: "#gift", value: true }] });
     assert.equal(r.filled, 2); assert.equal(r.results[2].error, "element not found");
     await assert.rejects(call(srv, "fill_form", { tabId: 1, fields: [] }), /at least one field/, "an empty form is refused");
   });

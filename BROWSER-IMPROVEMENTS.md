@@ -81,7 +81,7 @@ and the probe it came from):
   So the worker attaches before the first act-level call in a tab (click,
   fill, press, eval, navigate) and detaches when the server says the turn is
   over (`release`, sent by the session when a turn used any browser tool).
-  Measured: confirm → Cancel gives the page `false`, prompt → "Yvan", alert →
+  Measured: confirm → Cancel gives the page `false`, prompt → "Alex", alert →
   OK, "no dialog is open" when none; after `release` a page-raised dialog is
   detected and flagged on `list_tabs`/`tab_url` but reported as not
   answerable, with "ask the user to click it" for the agent.

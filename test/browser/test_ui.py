@@ -807,8 +807,8 @@ def test_extension_detects_and_answers_dialogs(ext_pages):
         assert call(sw, "read_page", {"tabId": tab, "mode": "text"})["ok"] is True
         call(sw, "click", {"tabId": tab, "selector": "#pr"}, 12000); time.sleep(0.3)
         assert call(sw, "dialog_state", {"tabId": tab})["r"]["defaultValue"] == "anon"
-        assert call(sw, "handle_dialog", {"tabId": tab, "accept": True, "text": "Yvan"})["r"]["handled"] is True
-        time.sleep(0.3); assert page.evaluate("() => window.p") == "Yvan"
+        assert call(sw, "handle_dialog", {"tabId": tab, "accept": True, "text": "Alex"})["r"]["handled"] is True
+        time.sleep(0.3); assert page.evaluate("() => window.p") == "Alex"
         call(sw, "click", {"tabId": tab, "selector": "#al"}, 12000); time.sleep(0.3)
         assert call(sw, "handle_dialog", {"tabId": tab, "accept": True})["r"]["handled"] is True
         time.sleep(0.3); assert page.evaluate("() => window.a") == 1
@@ -902,7 +902,7 @@ def test_extension_fills_forms(ext_pages):
         ref = {f["name"]: f["ref"] for f in forms[0]["fields"]}
         assert forms[0]["submit"]["text"] == "Order" and set(ref) >= {"name", "notes", "country", "gift", "ship"}
         r = call(sw, "fill_form", {"tabId": tab, "fields": [
-            {"ref": ref["name"], "value": "Yvan"}, {"ref": ref["notes"], "value": "two\nlines"},
+            {"ref": ref["name"], "value": "Alex"}, {"ref": ref["notes"], "value": "two\nlines"},
             {"ref": ref["country"], "value": "netherlands"}, {"ref": ref["gift"], "value": True},
             {"ref": ref["ship"], "value": "Express"}, {"ref": "nope", "value": "x"}, {"selector": "select[name=country]", "value": "Mars"}]})
         assert (r["filled"], r["total"]) == (5, 7), r
@@ -911,7 +911,7 @@ def test_extension_fills_forms(ext_pages):
         assert by["select[name=country]"]["error"] == 'no option matches "Mars"' and by["select[name=country]"]["options"] == ["--", "Belgium", "Netherlands"]
         assert by[ref["country"]]["set"] == "Netherlands" and by[ref["gift"]]["set"] is True and by[ref["ship"]]["set"] == "exp"
         state = page.evaluate("() => ({ name: f.name.value, notes: f.notes.value, country: f.country.value, gift: f.gift.checked, ship: f.ship.value, ev: window.ev, submitted: !!window.submitted })")
-        assert state["name"] == "Yvan" and state["notes"] == "two\nlines" and state["country"] == "nl" and state["gift"] is True and state["ship"] == "exp", state
+        assert state["name"] == "Alex" and state["notes"] == "two\nlines" and state["country"] == "nl" and state["gift"] is True and state["ship"] == "exp", state
         assert "i:name" in state["ev"] and "c:country" in state["ev"] and "c:gift" in state["ev"] and "c:ship" in state["ev"], state["ev"]
         assert state["submitted"] is False, "fill_form must not submit"
         # single fill understands the same controls
@@ -1013,7 +1013,7 @@ def test_submit_card(page, server):
     send(page, "submit-me")
     page.wait_for_selector(".card.submit", timeout=10000)
     assert page.text_content(".card.submit h4") == "Submit this form on shop.example?"
-    assert page.text_content(".card.submit pre") == 'POST /checkout?step=2 · button "Place order"\nname: Yvan\ncard: •••'
+    assert page.text_content(".card.submit pre") == 'POST /checkout?step=2 · button "Place order"\nname: Alex\ncard: •••'
     assert page.evaluate("() => [...document.querySelectorAll('.card.submit .row button')].map(b => b.textContent)") == ["Submit", "Stop"]
     assert page.text_content("#statustext") == "waiting for you — a form submit"
     page.click(".card.submit button[data-decision=deny]"); wait_reply(page, "submit: deny")
@@ -1026,7 +1026,7 @@ def test_extension_probes_submits(ext_pages):
     (fields, masked password, button, method), says no for a plain button,
     a search box with nothing typed, or another key; and press Enter in a
     form field now really submits (a synthetic key alone never did)."""
-    html = b"""<form id=login method=post action="/login"><input name=user value=yvan><input name=pw type=password value=secret>
+    html = b"""<form id=login method=post action="/login"><input name=user value=alex><input name=pw type=password value=secret>
         <label><input type=checkbox name=remember checked> remember</label><button>Sign in</button></form>
       <form id=search action="/s"><input name=q></form>
       <form id=js method=post action="/js"><input name=a value=1><button type=button id=plain>Not a submit</button><button type=submit id=go>Go</button></form>
@@ -1040,7 +1040,7 @@ def test_extension_probes_submits(ext_pages):
         tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
         r = call(sw, "submit_probe", {"tabId": tab, "selector": "#login button"})
         assert r["submit"] is True and r["via"] == "click" and r["form"]["method"] == "post" and r["form"]["action"].endswith("/login") and r["form"]["button"] == "Sign in", r
-        assert r["form"]["fields"] == [{"name": "user", "value": "yvan"}, {"name": "pw", "value": "•••"}, {"name": "remember", "value": "checked"}], r["form"]
+        assert r["form"]["fields"] == [{"name": "user", "value": "alex"}, {"name": "pw", "value": "•••"}, {"name": "remember", "value": "checked"}], r["form"]
         assert call(sw, "submit_probe", {"tabId": tab, "selector": "#plain"})["submit"] is False, "a type=button is not a submit"
         assert call(sw, "submit_probe", {"tabId": tab, "selector": "#go"})["submit"] is True
         page.focus("#search input")
