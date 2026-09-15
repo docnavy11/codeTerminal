@@ -204,5 +204,10 @@ def serve_html(html):
 def pytest_configure(config):
     """The tests that launch a real Chromium (the extension suite, the server
     browser) share one xdist group, so `-n 4 --dist loadgroup` runs them on a
-    single worker instead of starting four browsers at once."""
+    single worker instead of starting four browsers at once.
+
+    The flag is not optional: without it xdist ignores the group entirely and
+    the marker is decoration. CI and the pre-push hook ran without it for
+    weeks, which is where their intermittent Chromium timeouts came from —
+    `npm run test:browser` carries it now."""
     config.addinivalue_line("markers", "xdist_group(name): run these on one xdist worker")
