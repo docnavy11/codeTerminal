@@ -45,6 +45,8 @@ export type ServerBrowserOptions = {
   lang?: string;
   /** A proxy for all of the browser's traffic, e.g. socks5://laptop.tailnet:1080 — a way round datacenter-IP blocks. */
   proxy?: string;
+  /** How long to wait for the extension inside to come up (default 30 s; a shared CI runner wants more). */
+  startTimeoutMs?: number;
   log?: (l: string) => void;
   warn?: (l: string) => void;
 };
@@ -235,29 +237,35 @@ export class ServerBrowser {
   /** Point the extension inside at this server: set its storage the way the popup would. */
   async #bootstrapExtension(): Promise<void> {
     const cdp = this.#cdp!;
-    // Chromium ships built-in component extensions whose workers are also
-    // called background.js (measured: two candidates besides ours); the one
-    // that is ours says so in its manifest.
-    const isOurs = async (t: Target): Promise<string | null> => {
+    /* Chromium ships built-in component extensions whose workers are also
+       called background.js (measured: two candidates besides ours), so the
+       right one is the one whose manifest carries our name. A worker that is
+       not ready yet answers nothing useful — on a slow machine ours appeared
+       before `chrome.runtime` did — so only a worker that positively names a
+       *different* extension is crossed off; everything else is asked again
+       (CI, 2026-09-15: crossing ours off on the first, too-early answer made
+       the whole thing time out). */
+    const nameOf = async (t: Target): Promise<{ name: string | null; sessionId: string }> => {
       const { sessionId } = await cdp.send<{ sessionId: string }>("Target.attachToTarget", { targetId: t.targetId, flatten: true });
       try {
-        const r = await cdp.send<{ result: { value?: unknown } }>("Runtime.evaluate", { expression: "chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest().name : null", returnByValue: true }, sessionId);
-        if (r.result.value === EXTENSION_NAME) return sessionId;
-      } catch { /* not ours, or not ready */ }
-      await cdp.send("Target.detachFromTarget", { sessionId }).catch(() => {});
-      return null;
+        const r = await cdp.send<{ result: { value?: unknown } }>("Runtime.evaluate",
+          { expression: "chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest().name : null", returnByValue: true }, sessionId);
+        return { name: typeof r.result.value === "string" ? r.result.value : null, sessionId };
+      } catch { return { name: null, sessionId }; }
     };
     let worker: Target | undefined; let sessionId: string | null = null;
-    const tried = new Set<string>();
-    for (let i = 0; i < 100 && !sessionId; i++) {
+    const notOurs = new Set<string>();
+    const deadline = Date.now() + (this.#o.startTimeoutMs ?? 30_000);
+    while (!sessionId && Date.now() < deadline) {
       const { targetInfos } = await cdp.send<{ targetInfos: Target[] }>("Target.getTargets");
       for (const t of targetInfos) {
-        if (t.type !== "service_worker" || !t.url.startsWith("chrome-extension://") || tried.has(t.targetId)) continue;
-        tried.add(t.targetId);
-        const sid = await isOurs(t);
-        if (sid) { worker = t; sessionId = sid; break; }
+        if (t.type !== "service_worker" || !t.url.startsWith("chrome-extension://") || notOurs.has(t.targetId)) continue;
+        const { name, sessionId: sid } = await nameOf(t);
+        if (name === EXTENSION_NAME) { worker = t; sessionId = sid; break; }
+        if (name) notOurs.add(t.targetId);            // a different extension: never ask again
+        await cdp.send("Target.detachFromTarget", { sessionId: sid }).catch(() => {});
       }
-      if (!sessionId) await new Promise((r) => setTimeout(r, 100));
+      if (!sessionId) await new Promise((r) => setTimeout(r, 150));
     }
     if (!worker || !sessionId) throw new Error(`the extension's service worker did not appear (is ${this.#o.extensionDir} the unpacked MV3 extension?)`);
     this.#extensionId = /^chrome-extension:\/\/([a-z]+)\//.exec(worker.url)?.[1];

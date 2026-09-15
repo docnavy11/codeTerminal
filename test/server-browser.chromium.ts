@@ -30,7 +30,8 @@ describe("server browser", { skip: !CHROMIUM && "no Chromium on this machine (Pl
   before(async () => {
     s = await startTestServer();
     profile = await mkdtemp(join(tmpdir(), "ct-sb-profile-"));
-    sb = new ServerBrowser({ profileDir: profile, extensionDir: join(ROOT, "extension"), serverWsUrl: `ws://127.0.0.1:${s.port}/ext`, timezone: "Europe/Brussels" });
+    sb = new ServerBrowser({ profileDir: profile, extensionDir: join(ROOT, "extension"), serverWsUrl: `ws://127.0.0.1:${s.port}/ext`,
+      timezone: "Europe/Brussels", startTimeoutMs: PATIENT });
   });
   after(async () => { await sb?.stop(); await s?.stop(); await rm(profile, { recursive: true, force: true }); });
 

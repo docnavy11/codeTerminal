@@ -288,6 +288,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     profileDir: sbCfg.profileDir, chromium: sbCfg.chromium, extensionDir: sbCfg.extensionDir ?? join(ROOT, "extension"),
     serverWsUrl: () => `ws://${HOST}:${port}/ext`, log, warn,
     timezone: sbCfg.timezone, lang: sbCfg.lang, proxy: sbCfg.proxy, plain: sbCfg.plain,
+    ...(process.env.CT_CHROMIUM_WAIT ? { startTimeoutMs: Number(process.env.CT_CHROMIUM_WAIT) } : {}),
   });
   const auth = await createAuth({
     host: HOST, port: PORT, extraOrigins: cfg.extraOrigins,
