@@ -375,9 +375,22 @@
              color:var(--accent); border:1px solid var(--accent); border-radius:3px;
              padding:1px 4px; margin-bottom:5px; }
   .q .qt { margin:0 0 6px; font-size:0.875rem; }
-  .q .opt { display:block; width:100%; text-align:left; margin:0 0 4px; padding:5px 7px;
-            background:var(--btn); border-radius:4px; }
+  /* Several questions in one card: a rule between them, and each says how
+     many answers it takes. */
+  .q .qgroup + .qgroup { margin-top:10px; padding-top:9px; border-top:1px solid var(--line); }
+  .q .qt .how { color:var(--dim); font-size:0.75rem; margin-left:7px; font-weight:400; }
+  .q .opt { display:block; width:100%; text-align:left; margin:0 0 4px; padding:5px 7px 5px 24px;
+            background:var(--btn); border-radius:4px; position:relative; }
+  /* ◯ for one answer, ☐ for any — the shape says what the click will do. */
+  .q .opt::before { content:""; position:absolute; left:8px; top:8px; width:9px; height:9px;
+                    border:1px solid var(--dim); border-radius:50%; }
+  .q .qgroup.multi .opt::before { border-radius:2px; }
+  .q .opt.sel::before { border-color:var(--accent); background:var(--accent);
+                        box-shadow:inset 0 0 0 2px var(--qcard); }
+  .q .qgroup.multi .opt.sel::before { box-shadow:none; }
   .q .opt.sel { border-color:var(--accent); background:var(--sel,#cfdcf7); }
+  .q .qfoot { display:flex; align-items:center; gap:8px; }
+  .q .qleft { color:var(--dim); font-size:0.75rem; }
   .q .opt .d { display:block; color:var(--dim); font-size:0.875rem; margin-top:2px; }
   .q .other { width:100%; background:var(--code); color:var(--fg); border:1px solid var(--line);
               border-radius:4px; padding:4px 6px; font:inherit; font-size:0.833rem; }

@@ -1190,3 +1190,33 @@ def test_schedules_tab_create_run_now(page, server):
     chat.close()
     page.click(".sched button:text-is('Pause')"); page.wait_for_selector(".sched.paused", timeout=5000)
     page.click(".sched button:text-is('Resume')"); page.wait_for_selector(".sched:not(.paused)", timeout=5000)
+
+
+def test_question_card_multi_select(page, server):
+    """A card with two questions: choosing in one must not clear the other
+    (the deselect used to search the whole card), a multiSelect question
+    takes several answers, and Answer waits until every question has one."""
+    open_ui(page, server)
+    send(page, "multi-me")
+    page.wait_for_selector(".q[data-tool=question]", timeout=10000)
+    groups = page.locator(".q .qgroup")
+    assert groups.count() == 2
+    assert "choose one" in page.text_content(".q .qgroup:nth-child(1) .qt")
+    assert "choose any that apply" in page.text_content(".q .qgroup.multi .qt")
+    answer = page.locator(".q button.allow:has-text('Answer')")
+    assert answer.is_disabled(), "nothing answered yet"
+    assert "0 of 2 answered" in page.text_content(".q .qleft")
+    page.click(".q .qgroup:nth-child(1) .opt:has-text('B — Integration Engineer')")
+    assert answer.is_disabled(), "one question still open"
+    # several answers in the multi-select question, and the first answer survives
+    page.click(".q .qgroup.multi .opt:has-text('LinkedIn')")
+    page.click(".q .qgroup.multi .opt:has-text('VDAB')")
+    assert page.locator(".q .qgroup.multi .opt.sel").count() == 2
+    assert page.locator(".q .qgroup:nth-child(1) .opt.sel").count() == 1, "the first question kept its answer"
+    assert "2 of 2 answered" in page.text_content(".q .qleft")
+    # a single-select question still swaps rather than adds
+    page.click(".q .qgroup:nth-child(1) .opt:has-text('A — Agent Development')")
+    assert page.locator(".q .qgroup:nth-child(1) .opt.sel").count() == 1
+    answer.click()
+    wait_reply(page, '"Which sites should it cover?":"LinkedIn, VDAB"')
+    assert '"Which title should the profile use?":"A — Agent Development"' in last_reply(page)

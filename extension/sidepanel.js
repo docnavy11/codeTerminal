@@ -767,63 +767,99 @@ function renderDiff(d) {
   return box;
 }
 
+/* Claude asking you something. A card carries several questions, each with
+   its own options, and a question may take several answers (multiSelect).
+   Two things were wrong and both made it look single-answer:
+   deselecting searched the whole CARD for .opt, so choosing in one question
+   visibly cleared the answer to the one above it; and nothing on screen said
+   which questions take more than one. Each question now owns its options,
+   says "choose any" or "choose one", and marks them ☐/◯ accordingly. */
 function renderQuestion(m) {
   const card = el("q");
   card.dataset.approval = m.id; card.dataset.tool = "question";
   const picked = new Map();
+  const refresh = [];
 
   for (const q of m.questions) {
     picked.set(q.question, new Set());
+    const box = document.createElement("div");
+    box.className = "qgroup" + (q.multiSelect ? " multi" : "");
     const chip = document.createElement("span"); chip.className = "chip"; chip.textContent = q.header || "question";
     const title = document.createElement("p"); title.className = "qt"; title.textContent = q.question;
-    card.append(chip, title);
+    const how = document.createElement("span"); how.className = "how";
+    how.textContent = q.multiSelect ? "choose any that apply" : "choose one";
+    title.append(how);
+    box.append(chip, title);
+
+    // The free-text answer is held apart from the chosen labels, so typing in
+    // it does not wipe the other picks of a multi-select question.
+    let otherText = "";
+    const sync = () => {
+      const set = picked.get(q.question);
+      set.clear();
+      for (const b of box.querySelectorAll(".opt.sel")) if (!b.dataset.other) set.add(b.dataset.label);
+      if (box.querySelector(".opt.sel[data-other]") && otherText.trim()) set.add(otherText.trim());
+      updateSend();
+    };
 
     for (const o of [...q.options, { label: "Other", description: "Type your own", other: true }]) {
       const b = document.createElement("button");
       b.className = "opt"; b.type = "button";
+      b.dataset.label = o.label;
+      if (o.other) b.dataset.other = "1";
       b.append(document.createTextNode(o.label));
       if (o.description) {
         const d = document.createElement("span"); d.className = "d"; d.textContent = o.description; b.append(d);
       }
       let other = null;
       b.onclick = () => {
-        const set = picked.get(q.question);
-        if (!q.multiSelect) {
-          set.clear();
-          card.querySelectorAll(".opt").forEach((x) => x.classList.remove("sel"));
-        }
+        // Only this question's options: a card holds several, and clearing
+        // them all is what made the card look like it took one answer.
+        if (!q.multiSelect) box.querySelectorAll(".opt").forEach((x) => { if (x !== b) x.classList.remove("sel"); });
         b.classList.toggle("sel");
         if (b.classList.contains("sel")) {
           if (o.other) {
             if (!other) {
               other = document.createElement("input");
               other.className = "other"; other.placeholder = "your answer…";
-              other.oninput = () => { set.clear(); if (other.value.trim()) set.add(other.value.trim()); };
+              other.oninput = () => { otherText = other.value; sync(); };
               b.after(other);
             }
             other.focus();
-          } else set.add(o.label);
-        } else {
-          set.delete(o.label);
-          if (other) { other.remove(); other = null; }
-        }
+          }
+        } else if (o.other && other) { other.remove(); other = null; otherText = ""; }
+        sync();
       };
-      card.append(b);
+      box.append(b);
     }
+    card.append(box);
+    refresh.push(() => picked.get(q.question).size > 0);
   }
 
   const send = document.createElement("button");
   send.textContent = "Answer"; send.className = "allow"; send.style.marginTop = "6px";
+  const left = document.createElement("span"); left.className = "qleft";
+  /* Every question wants an answer: the button says how many are still open
+     rather than silently doing nothing when you press it. */
+  function updateSend() {
+    const done = refresh.filter((f) => f()).length;
+    const all = refresh.length;
+    send.disabled = done < all;
+    left.textContent = all > 1 ? `${done} of ${all} answered` : "";
+  }
   send.onclick = () => {
     const answers = {};
     for (const [q, set] of picked) if (set.size) answers[q] = [...set].join(", ");
-    if (!Object.keys(answers).length) return;
+    if (Object.keys(answers).length < picked.size) return;
     if (ws?.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "answer", id: m.id, answers }));
     card.querySelectorAll("button,input").forEach((x) => (x.disabled = true));
     card.classList.add("done");
   };
-  card.append(send);
+  const foot = document.createElement("div"); foot.className = "qfoot";
+  foot.append(send, left);
+  card.append(foot);
+  updateSend();
   log.scrollTop = log.scrollHeight;
 }
 

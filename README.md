@@ -992,9 +992,22 @@ component"), keyed by the exact question text, so the host returns
 `{behavior: "allow", updatedInput: {...input, answers}}`.
 
 The UI renders a distinct blue card: a header chip, the question, one button
-per option with its description (and preview, when the option has one), an
-automatic **Other** field for a free-text answer, and multi-select where the
-question asks for it. The status bar reads `waiting for you — a question`.
+per option with its description (and preview, when the option has one), and
+an automatic **Other** field for a free-text answer. The status bar reads
+`waiting for you — a question`.
+
+**One card can hold several questions, and a question can take several
+answers.** Both were invisible, and worse than invisible: deselecting
+searched the whole *card* for options, so answering the second question
+visibly cleared the answer to the first, and the card looked as if it took
+one answer in total (reported 2026-09-15). Each question now owns its
+options; the question line says **choose one** or **choose any that apply**;
+the marker is a circle for one and a box for any, so the shape says what the
+click will do; typing in **Other** no longer wipes the other picks of a
+multi-select question; and **Answer** stays disabled, counting "1 of 2
+answered", until every question has one — it used to submit what it had and
+drop the rest. Multi-select answers go back comma-separated, which is what
+the SDK documents. Measured in `test_question_card_multi_select`.
 
 ## Prepared prompts
 

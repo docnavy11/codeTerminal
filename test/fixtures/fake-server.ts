@@ -117,6 +117,15 @@ const sdk = fakeSdk({ setup: (q) => {
     (reg.offer.callback ?? reg.offer.handler)!({ path: "notes.txt", note: "your export" }, {}).then(() => { q.text("Here it is."); q.result({ total_cost_usd: 0.001 * ++turnsOf(q).n, ...usageFor(q) }); });
     return;
   }
+  if (content.includes("multi-me")) {
+    q.ask("AskUserQuestion", { questions: [
+      { question: "Which title should the profile use?", header: "Title", multiSelect: false,
+        options: [{ label: "A — Agent Development", description: "leads with the string" }, { label: "B — Integration Engineer", description: "reads like a role" }] },
+      { question: "Which sites should it cover?", header: "Sites", multiSelect: true,
+        options: [{ label: "LinkedIn", description: "" }, { label: "Indeed", description: "" }, { label: "VDAB", description: "" }] },
+    ] }).promise.then((r) => { q.text(`answers: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? {})}`); q.result(); });
+    return;
+  }
   if (content.includes("ask-me")) {
     q.ask("AskUserQuestion", { questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }] }] })
       .promise.then((r) => { q.text(`answer: ${JSON.stringify((r as { updatedInput?: { answers?: unknown } }).updatedInput?.answers ?? null)}`); q.result(); });
