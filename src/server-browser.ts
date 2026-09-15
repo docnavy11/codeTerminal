@@ -106,11 +106,21 @@ class Cdp {
     ws.on("close", () => { for (const p of this.#pending.values()) p.reject(new Error("browser connection closed")); this.#pending.clear(); this.onClose(); });
     ws.on("error", () => { /* close follows */ });
   }
-  send<T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
+  /* Every command is bounded. A command sent to a target that has just gone —
+     stopping the screencast on a tab being closed — can get no reply at all,
+     and an unbounded promise wedged the viewer: it never reached the code that
+     announces the new tab list (CI, twice, "timed out: back to one tab";
+     never reproduced on a fast machine). */
+  send<T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}, sessionId?: string, timeoutMs = 15_000): Promise<T> {
     const id = ++this.#id;
     return new Promise<T>((resolve, reject) => {
-      this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.#ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }), (e) => { if (e) { this.#pending.delete(id); reject(e); } });
+      const timer = setTimeout(() => { this.#pending.delete(id); reject(new Error(`${method} did not answer in ${timeoutMs / 1000}s`)); }, timeoutMs);
+      timer.unref?.();
+      this.#pending.set(id, {
+        resolve: (v) => { clearTimeout(timer); (resolve as (x: unknown) => void)(v); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
+      this.#ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }), (e) => { if (e) { clearTimeout(timer); this.#pending.delete(id); reject(e); } });
     });
   }
   on(f: (sessionId: string | undefined, method: string, params: Record<string, unknown>) => void): () => void { this.#listeners.add(f); return () => this.#listeners.delete(f); }
@@ -422,8 +432,12 @@ export class ServerBrowser {
         const id = String(m.id ?? v.targetId);
         const pages = await this.#pages();
         if (pages.length <= 1) { await cdp.send("Target.createTarget", { url: "about:blank" }); }
+        // Detach while the target still exists: stopping a screencast on a
+        // closed tab is a command nothing answers.
+        const wasViewing = v.targetId === id;
+        if (wasViewing) await this.#detach(v);
         await cdp.send("Target.closeTarget", { targetId: id });
-        if (v.targetId === id) { v.sessionId = null; v.targetId = null; await this.#view(v, null); } else await this.#sendTabs(v);
+        if (wasViewing) await this.#view(v, null); else await this.#sendTabs(v);
         return;
       }
       case "resize": return;   // viewers scale the fixed-size frame; no viewport change per viewer

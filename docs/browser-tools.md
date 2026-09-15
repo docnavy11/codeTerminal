@@ -412,6 +412,14 @@ the extension inside still connects direct. Measured: `curl` through the
 port and a page inside the browser both report the home IP; direct from the
 VPS, Hetzner's.
 
+**A command with no answer wedges a viewer** (found on CI, 2026-09-15, twice).
+Stopping the screencast on a tab that is being closed can get no reply at
+all, and the promise waiting for it was unbounded, so the viewer never
+reached the code that announces the new tab list. Two changes: every
+DevTools command times out (15 s, rejecting), and closing the viewed tab
+detaches the session first, while the target still exists. Never reproduced
+on a fast machine; the runner found it twice.
+
 **Notes.** Chromium runs with `--no-sandbox` (a VPS without user namespaces
 cannot start it otherwise); the profile holds real logins, so it is in
 `.gitignore` and belongs to the server's user only. The extension inside
