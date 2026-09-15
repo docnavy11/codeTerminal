@@ -25,7 +25,7 @@ function kv(root, rows) {
 const GROUPS = [
   ["Does it run", ["node", "login", "tools"]],
   ["Who can reach it", ["network", "extension", "mobile"]],
-  ["What it may do", ["permissions", "browser"]],
+  ["What it may do", ["permissions", "shell", "browser"]],
   ["Working on its own", ["schedules", "notifications"]],
   ["This machine", ["service", "paths"]],
 ];

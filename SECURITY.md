@@ -7,7 +7,8 @@ machine, under your login. Three things in it are dangerous by design, and no
 configuration makes them safe to expose:
 
 - **`/pty` is a real shell**, as your user, with no approval gate. Anyone who
-  reaches it has your account.
+  reaches it has your account. `CODETERM_SHELL=0` removes it entirely — no
+  route, no pane, and no terminal tool for the agent.
 - **The agent can read and drive your logged-in browser** through the
   extension, and can act on sites you have allowed.
 - **The file browser and the agent's tools reach your home directory** by

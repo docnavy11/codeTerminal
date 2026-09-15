@@ -11,6 +11,17 @@ import { settle } from "./fakes/sdk.js";
 /** The HTTP and upgrade surface, booted in-process with a fake SDK. */
 let s: TestServer;
 before(async () => { s = await startTestServer(); });
+
+/** A raw HTTP upgrade against any test server, to read the status line the socket gets. */
+function upgradeTo(port: number, path: string, headers: string[]): Promise<string> {
+  return new Promise((res) => {
+    const c = connect(port, "127.0.0.1", () => {
+      c.write([`GET ${path} HTTP/1.1`, `Host: 127.0.0.1:${port}`, "Upgrade: websocket", "Connection: Upgrade",
+               "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version: 13", ...headers, "", ""].join("\r\n"));
+    });
+    let out = ""; c.on("data", (d) => { out += d.toString(); c.destroy(); }); c.on("close", () => res(out)); c.on("error", () => res(out));
+  });
+}
 after(async () => { await s.stop(); });
 
 describe("headers and static", () => {
@@ -290,6 +301,22 @@ describe("upgrades", () => {
     assert.match(await rawUpgrade("/ws", ["Origin: https://evil.example"]), /^HTTP\/1\.1 403/);
     assert.match(await rawUpgrade("/pty", ["Sec-Fetch-Site: cross-site"]), /^HTTP\/1\.1 403/);
   });
+  test("CODETERM_SHELL=0: no /pty, /config says so, and the agent gets no terminal tool", async () => {
+    const noShell = await startTestServer({ cfg: { shell: false } });
+    try {
+      assert.deepEqual((await noShell.json("/config")).body, { shell: false });
+      assert.match(await upgradeTo(noShell.port, "/pty", []), /^HTTP\/1\.1 404/);
+      const ws = await noShell.socket("/ws");
+      await ws.wait((m) => m.kind === "replayed");
+      const servers = (noShell.sdk.last.options.mcpServers ?? {}) as Record<string, unknown>;
+      assert.ok(!("terminal" in servers), "no terminal MCP server");
+      assert.ok(!(noShell.sdk.last.options.allowedTools as string[]).some((t) => t.startsWith("mcp__terminal__")));
+      ws.ws.close();
+    } finally { await noShell.stop(); }
+    // the default still has all three
+    assert.deepEqual((await s.json("/config")).body, { shell: true });
+  });
+
   test("server browser: status without Chromium running; navigate refused; the live socket exists and is gated", async () => {
     const st = (await (await fetch(`${s.base}/browser/server`, { headers: { Origin: s.base } })).json()) as { running: boolean; profileDir: string; viewers: number };
     assert.equal(st.running, false); assert.ok(st.profileDir); assert.equal(st.viewers, 0);

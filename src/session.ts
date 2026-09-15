@@ -64,6 +64,8 @@ export type SessionDeps = {
   bridge: BrowserBridge | null;
   /** Resolved lazily: the shell pane comes and goes as tabs open and close. */
   getShell: () => Shell | null;
+  /** False when the server runs without a shell pane: the terminal tool is not registered at all. */
+  shell?: boolean;
   watches: WatchRegistry | null;
   prompts: PromptStore | null;
   /** Which browser this conversation's browser tools should act in. */
@@ -187,9 +189,9 @@ export class Session {
         // Without this an assistant message only arrives complete, so a long
         // turn shows nothing at all until the model finishes its first block.
         includePartialMessages: true,
-        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...TERMINAL_TOOLS, ...WATCH_TOOLS, ...PROMPT_TOOLS, ...FILE_TOOLS],
+        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...(d.shell === false ? [] : TERMINAL_TOOLS), ...WATCH_TOOLS, ...PROMPT_TOOLS, ...FILE_TOOLS],
         mcpServers: {
-          terminal: terminalTools(this.#deps.getShell),
+          ...(d.shell === false ? {} : { terminal: terminalTools(this.#deps.getShell) }),
           ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy, () => this.#workspace, d.filesRoot,
             d.confirmSubmit === false ? undefined : (detail) => this.#askSubmit(detail)) } : {}),
           // The chat id is this session's own, so a watch is always attributed

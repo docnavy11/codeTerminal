@@ -58,6 +58,8 @@ export type ServerConfig = {
   browserAllowSeed: string[];
   /** Confirm-before-submit cards for browser clicks/Enter that submit a form (default true). */
   confirmSubmit?: boolean;
+  /** The terminal pane and its /pty route; false removes both (CODETERM_SHELL=0). */
+  shell?: boolean;
   maxUpload: number;
   maxZip: number;
   extraOrigins: string[];
@@ -112,6 +114,7 @@ export function envConfig(): ServerConfig {
       plain: process.env.CODETERM_SERVER_BROWSER_PLAIN !== "0" },
     browserAllowSeed: csv(process.env.CODETERM_BROWSER_ALLOW, /,/),
     confirmSubmit: process.env.CODETERM_CONFIRM_SUBMIT !== "0",
+    shell: process.env.CODETERM_SHELL !== "0",
     maxUpload: Number(process.env.CODETERM_MAX_UPLOAD ?? 100 * 1024 * 1024),
     maxZip: Number(process.env.CODETERM_MAX_ZIP ?? 500 * 1024 * 1024),
     extraOrigins: csv(process.env.CODETERM_ORIGINS, /,/),
@@ -193,6 +196,10 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const log = cfg.log ?? ((l) => console.log(l));
   const warn = cfg.warn ?? ((l) => console.warn(l));
   const { host: HOST, port: PORT, workspace: WORKSPACE, filesRoot: FILES_ROOT, maxUpload: MAX_UPLOAD, maxZip: MAX_ZIP } = cfg;
+  /* The shell pane is the one part of this that has no approval gate, so it
+     can be left out entirely: no /pty route, no terminal tool for the agent,
+     no pane in the UI. Everything else works unchanged. */
+  const SHELL = cfg.shell !== false;
 
   if (HOST === "0.0.0.0" || HOST === "::") {
     throw new AuthRefused("Refusing to bind all interfaces. /pty is an ungated shell; keep it on the tailnet.");
@@ -227,7 +234,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     cfg.chatsDir,
     cfg.projectsRoot,
     // prefer is replaced per-chat by LiveChat, which knows its own browser.
-    { bridge, getShell: () => state.activeShell, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false, warn,
+    { bridge, getShell: () => (SHELL ? state.activeShell : null), shell: SHELL, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false, warn,
       ...(cfg.spawnQuery ? { spawnQuery: cfg.spawnQuery } : {}),
       ...(cfg.titler ? { titler: cfg.titler } : {}) },
   );
@@ -398,6 +405,10 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     res.json({ ok: usage.record(String((req.body as { control?: unknown })?.control ?? "")) });
   });
 
+  /** What the UI must know before it draws itself. Small on purpose: the
+      desktop page asks this before opening a terminal socket that may not exist. */
+  app.get("/config", guard, (_req, res) => { res.json({ shell: SHELL }); });
+
   app.get("/usage", guard, (_req, res) => {
     res.json({ counts: usage.counts() });
   });
@@ -413,7 +424,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       browserSites: browserAllow ? browserAllow.all().length : null,
       mcpServers: convo.mcpServers,
       notifyTargets: notifier.targets,
-      statePaths: statePaths(ROOT), envPath: join(ROOT, ".env"),
+      statePaths: statePaths(ROOT), envPath: join(ROOT, ".env"), shell: SHELL,
       schedules: (() => { const all = schedules.list().filter((s) => !s.paused); const next = all.map((s) => s.nextAt).filter((n): n is number => n !== null).sort((a, b) => a - b)[0]; return { count: schedules.list().length, next: next ?? null }; })(),
     }));
   });
@@ -678,6 +689,12 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
 
   server.on("upgrade", async (req: IncomingMessage, socket, head) => {
     const route = new URL(req.url ?? "/", `http://${req.headers.host}`).pathname;
+    if (route === "/pty" && !SHELL) {
+      logDeny(route, "the shell pane is off (CODETERM_SHELL=0)");
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     if (route !== "/ws" && route !== "/pty" && route !== "/ext" && route !== "/browser/live") {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
@@ -735,7 +752,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   scheduler.start(cfg.scheduleTickMs ?? 30_000);
   for (const line of auth.banner()) log(line);
   log(`workspace      ${WORKSPACE}`);
-  log(`shell          /pty — real PTY, NO approval gate`);
+  log(SHELL ? `shell          /pty — real PTY, NO approval gate` : `shell          off (CODETERM_SHELL=0) — no /pty, no terminal tool`);
   log(`browser        /ext — extension bridge, tools ungated`);
   log(`files          ${FILES_ROOT} (browse, upload, download)`);
   log(`projects       ${cfg.projectsRoot}`);

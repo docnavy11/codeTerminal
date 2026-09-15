@@ -36,6 +36,8 @@ export type SetupInput = {
   statePaths?: Record<string, string>;
   /** The .env this install reads (it may not exist). */
   envPath?: string;
+  /** The shell pane and its /pty route (CODETERM_SHELL=0 turns them off). */
+  shell?: boolean;
   /** Set by systemd for every process it starts. */
   systemd: boolean;
   /** Test hook: how to look at the filesystem. */
@@ -94,6 +96,11 @@ export function buildSetup(i: SetupInput) {
     notifications: i.notifyTargets?.length
       ? { ok: true, level: "ok", text: `Phone notifications: ${i.notifyTargets.join(", ")}`, hint: "The Schedules tab has a “send test” button." }
       : { ok: true, level: "warn", text: "No phone notifications configured", hint: "Scheduled runs then report only in the browser: the extension's notification, a strip in open chats, the Schedules tab. For a phone, set CODETERM_TELEGRAM_TOKEN + CODETERM_TELEGRAM_CHAT, or CODETERM_NOTIFY_WEBHOOK (ntfy or a Home Assistant webhook), in .env and restart." },
+    shell: i.shell === false
+      ? { ok: true, level: "ok", text: "Shell pane off — no /pty route, and the agent has no terminal tool",
+          hint: "Set by CODETERM_SHELL=0. Everything else works; the agent still runs commands through its own Bash tool, which the approval gate covers." }
+      : { ok: true, level: "warn", text: "Shell pane on — /pty is a real shell as this user, with no approval gate",
+          hint: "That is what it is for, and why the server refuses to bind a public address. CODETERM_SHELL=0 removes it." },
     extension: ext.length
       ? { ok: true, level: "ok", text: `Browser extension connected (${ext.length} browser${ext.length > 1 ? "s" : ""})` }
       : { ok: true, level: "warn", text: "No browser extension connected",

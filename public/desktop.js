@@ -28,10 +28,15 @@ function applyTermTheme() {
 applyTermTheme();
 
 let ptyWs, ptyRetry, ptyWasDown = false, ptySeen = 0;
+/* A server started with CODETERM_SHELL=0 has no /pty route. Without asking
+   first the page would dial it and retry every 3 s forever, so the pane is
+   removed and the right side is the file browser alone. */
+let shellOn = true;
 const PTY_STALE_MS = 75_000;
 /* The server beats every 30s on this socket too; silence past that is a dead
    connection the browser has not noticed. Drop it and dial again. */
 function checkPtyLiveness(now = Date.now()) {
+  if (!shellOn) return false;
   if (!ptyWs || ptyWs.readyState !== WebSocket.OPEN || !ptySeen || now - ptySeen < PTY_STALE_MS) return false;
   const dead = ptyWs; ptyWs = null; dead.onclose = null; dead.onmessage = null;
   try { dead.close(); } catch { /* half-open */ }
@@ -86,6 +91,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTermT
 
 /* ---------------- right pane: shell | files ---------------- */
 const termEl = document.getElementById("term"), filesEl = document.getElementById("files");
+
 const note = document.getElementById("rightnote");
 let filesRoot = "";
 // Called by the shared client's chat|files tabs; the transcript stays put.
@@ -111,5 +117,14 @@ grip.addEventListener("pointerdown", (e) => {
   grip.addEventListener("pointerup", up);
 });
 
-connectShell();
+/* Ask what this server has before dialling: with CODETERM_SHELL=0 there is no
+   /pty route, and the retry loop would knock on a 404 every three seconds. */
+fetch("/config").then((r) => r.json()).then((c) => {
+  shellOn = c.shell !== false;
+  if (shellOn) { connectShell(); return; }
+  document.querySelector('.tabs .tab[data-view="shell"]')?.remove();
+  PLATFORM.showFiles(true);
+  document.querySelector('.tabs .tab[data-view="files"]')?.classList.add("on");
+  termEl.remove();
+}).catch(() => connectShell());
 sendResize();

@@ -27,6 +27,14 @@ describe("buildSetup", () => {
     assert.deepEqual(s.urls.extension, ["ws://127.0.0.1:8123/ext"]);
   });
 
+  test("the shell check names the one route with no approval gate, and says when it is off", () => {
+    const on = buildSetup(input());
+    assert.equal(on.checks.shell.level, "warn"); assert.match(on.checks.shell.text, /real shell as this user/);
+    const off = buildSetup(input({ shell: false }));
+    assert.equal(off.checks.shell.level, "ok"); assert.match(off.checks.shell.text, /no \/pty route/);
+    assert.equal(off.ready, on.ready, "turning the shell off does not change readiness");
+  });
+
   test("tool servers: unknown before a session, ok when all connected, not ready when one failed", () => {
     assert.equal(buildSetup(input()).checks.tools.level, "warn");
     const ok = buildSetup(input({ readySeen: true, mcpServers: [{ name: "browser", status: "connected" }, { name: "files", status: "connected" }] }));

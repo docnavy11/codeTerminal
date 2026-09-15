@@ -14,7 +14,8 @@ when a tab changes. It uses your Claude Code login — no API key, no credits.
 > your user, with no approval gate, and the agent can drive your logged-in
 > browser. It is built to be reachable only from where you already are — a
 > tailnet, a VPN, or localhost — and it refuses to bind `0.0.0.0` on purpose.
-> There is no password login, by design. See [SECURITY.md](SECURITY.md).
+> There is no password login, by design. `CODETERM_SHELL=0` removes the shell
+> if you want everything else without it. See [SECURITY.md](SECURITY.md).
 
 ## Quick start
 
@@ -306,6 +307,14 @@ turns rather than re-resuming per message — so `interrupt()` and the approval
 gate both work.
 
 ## The shell pane
+
+`CODETERM_SHELL=0` leaves it out altogether: the `/pty` upgrade answers 404,
+the desktop page asks `/config` before dialling (otherwise its retry loop
+would knock every three seconds) and shows the file browser alone, the agent
+is not given the `terminal.read` tool at all, and the setup page says so. Its
+own `Bash` tool is untouched — that one goes through the approval gate. Worth
+setting when the server is reachable by anyone but you, and in CI.
+
 
 `/pty` is a real PTY (`node-pty` + xterm.js): colors, vim, htop, tab-completion,
 resize. It starts in the workspace as a login shell, so nvm/PATH are correct.
