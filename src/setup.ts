@@ -124,6 +124,8 @@ export function buildSetup(i: SetupInput) {
     login: { credentials: hasCreds, path: credPath, readySeen: i.readySeen },
     service: { systemd: i.systemd },
     paths,
+    // Where this installation keeps what makes it yours (deploy/backup.sh).
+    statePaths: i.statePaths ?? {}, envPath: i.envPath ?? null,
     chats: i.chats,
     permissions: { bypassAllowed: i.bypassAllowed },
     checks,
