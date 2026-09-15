@@ -204,6 +204,13 @@
      a real terminal) started is here too, with its working directory — one set
      of sessions, several front doors. */
   const sfail = (msg) => { const n = $("snote"); if (n) { n.textContent = msg; n.className = "bad"; } };
+  /* Which kill button is waiting for its second click, and until when. Kept
+     out here, not in the row: the list re-renders whenever anything changes
+     it, and an armed button that lives only in the row silently goes back to
+     saying "kill" underneath your second click. (Measured on CI: the panel
+     test clicked kill, the list repainted, and "sure?" never appeared.) */
+  let armedKill = { name: null, until: 0 };
+  const killArmed = (name) => armedKill.name === name && Date.now() < armedKill.until;
 
   function renderSessions(sessions) {
     const slist = $("slist"), snote = $("snote");
@@ -261,16 +268,22 @@
         box.focus(); box.select();
       };
       /* Two clicks, not a confirm(): whatever is running in there stops. */
-      const kill = document.createElement("button"); kill.textContent = "kill";
-      let armed = 0;
+      const kill = document.createElement("button");
+      const paintKill = () => {
+        const armed = killArmed(s.name);
+        kill.textContent = armed ? "sure?" : "kill";
+        kill.className = armed ? "danger" : "";
+      };
+      paintKill();
       kill.onclick = async (e) => {
         e.stopPropagation();
-        if (Date.now() > armed) {
-          armed = Date.now() + 4000;
-          kill.textContent = "sure?"; kill.className = "danger";
-          setTimeout(() => { if (Date.now() > armed) { kill.textContent = "kill"; kill.className = ""; } }, 4100);
+        if (!killArmed(s.name)) {
+          armedKill = { name: s.name, until: Date.now() + 5000 };
+          paintKill();
+          setTimeout(paintKill, 5100);
           return;
         }
+        armedKill = { name: null, until: 0 };
         try {
           renderSessions((await api(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" })).sessions);
           if (attachedTo === s.name) detach();

@@ -1369,7 +1369,12 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         # it is listed as attached, and killing it returns the pane to a plain shell
         page.click('.pane-hd .tab[data-view="sessions"]')
         wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
+        wait_stable(page, "#slist .s")
         page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('kill')")
+        # the list repaints under it — the arming has to survive that, or the
+        # second click lands on a button that quietly says "kill" again
+        page.click("#srefresh")
+        wait_stable(page, "#slist .s")
         page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('sure?')")
         wait(page, f"() => ![...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="gone from the list")
         wait(page, "() => document.getElementById('rightnote').textContent === 'no approval gate'", what="back to a plain shell")
@@ -1520,7 +1525,10 @@ def test_side_panel_has_a_shell_and_the_session_chooser(ext_pages, server):
         wait(pg, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})",
              20, "the session is listed")
         # kill takes two clicks here: no native confirm() in an MV3 panel
+        wait_stable(pg, "#slist .s")
         pg.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('kill')")
+        wait(pg, f"() => [...document.querySelectorAll('#slist .s button')].some(b => b.textContent === 'sure?')",
+             20, "the kill button armed")
         pg.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('sure?')")
         wait(pg, f"() => ![...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})",
              20, "gone from the list")
