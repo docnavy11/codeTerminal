@@ -172,7 +172,9 @@ export const CSP = [
   "font-src 'self' data:",
   "connect-src 'self'",
   "object-src 'none'",
-  "frame-src 'self'",   // the pages download through a hidden same-origin iframe
+  "frame-src 'self'",   // the pages download through a hidden same-origin iframe,
+                         // and the desktop's right pane frames manage.html as a tab
+  "frame-ancestors 'self'",   // and nothing outside this origin may frame us
   "base-uri 'none'",
   "form-action 'self'",
 ].join("; ");

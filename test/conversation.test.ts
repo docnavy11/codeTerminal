@@ -248,6 +248,16 @@ describe("LiveChat: the record", () => {
     assert.equal(c.record.titleProvisional, false);
   });
 
+  test("markScheduled persists a scheduleId; an ordinary chat has none", () => {
+    const { mgr } = fresh();
+    const manual = mgr.create();
+    assert.equal(manual.record.scheduleId, undefined);
+    const scheduled = mgr.create();
+    scheduled.markScheduled("sched-1");
+    assert.equal(scheduled.record.scheduleId, "sched-1");
+    assert.equal(manual.record.scheduleId, undefined, "marking one chat leaves the other alone");
+  });
+
   test("a failed save is reported to clients once per outage", async () => {
     const { mgr, client, dir } = fresh();
     const c = mgr.create();

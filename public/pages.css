@@ -42,7 +42,7 @@
 
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
-html { font-size:13px; }
+html { font-size:12px; }   /* matches the terminal's default; pages-boot.js overrides both to the remembered size */
 body { margin:0; background:var(--bg); color:var(--fg); font:1rem/1.5 var(--ui); }
 
 /* Slim scrollbars, as in the panel: Chrome's default slab is wider than some
@@ -142,6 +142,13 @@ button.danger:hover:not(:disabled) { border-color:var(--bad); color:var(--bad); 
 .row.active { border-color:var(--accent); }
 .row.active .tag { color:var(--accent); border-color:var(--accent); }
 .row button, .row select { font-size:0.78rem; padding:3px 8px; flex-shrink:0; }
+
+/* A label between two runs of rows in the same list — manual vs. scheduled
+   chats, so far the only user — not a whole new section, so it borrows the
+   pane header's small caps rather than h2's weight. */
+.grouphd { margin:16px 0 6px; font-size:0.75rem; letter-spacing:.08em; text-transform:uppercase;
+           color:var(--dim); }
+.grouphd:first-child { margin-top:0; }
 .empty { color:var(--dim); padding:22px 2px; text-align:center;
          border:1px dashed var(--line); border-radius:7px; }
 .hint { color:var(--dim); font-size:0.82rem; }

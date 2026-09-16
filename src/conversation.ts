@@ -198,6 +198,14 @@ export class LiveChat {
     return true;
   }
 
+  /** Called once, right after create(), by the schedule runner — never by a
+      person renaming or moving a chat. Marks it as that schedule's, for the
+      manage page's manual/scheduled split; nothing else reads it. */
+  markScheduled(scheduleId: string): void {
+    this.#rec.scheduleId = scheduleId;
+    this.#save();
+  }
+
   async setMode(mode: PermissionMode): Promise<void> {
     await this.#session.setMode(mode);
     this.#mode = this.#session.mode;

@@ -418,6 +418,9 @@
   #term.on-session { box-shadow:inset 2px 0 0 var(--accent); }
 
   #files { flex:1; min-height:0; display:flex; flex-direction:column; }
+
+  #managepane { flex:1; min-height:0; }
+  #manageframe { display:block; width:100%; height:100%; border:0; background:var(--bg); }
   .fbar { display:flex; align-items:center; gap:5px; padding:5px 8px; flex-shrink:0;
           border-bottom:1px solid var(--line); background:var(--panel); }
   .fbar button { font-size:0.833rem; padding:2px 7px; }
@@ -547,7 +550,7 @@ globalThis.PLATFORM = {
 
   <div class="pane" id="right">
     <div class="pane-hd">
-      <span class="tabs"><span class="tab on" data-view="shell">terminal</span><span class="tab" data-view="sessions" hidden>sessions</span><span class="tab" data-view="files">files</span></span>
+      <span class="tabs"><span class="tab on" data-view="shell">terminal</span><span class="tab" data-view="sessions" hidden>sessions</span><span class="tab" data-view="files">files</span><span class="tab" data-view="manage">manage</span></span>
       <span class="warn" id="rightnote">no approval gate</span>
       <button id="rrefresh" class="paneb" title="Redraw the terminal (fix a skewed pane)" aria-label="Redraw the terminal">↻</button>
       <button id="rhide" class="paneb" title="Collapse this pane (or double-click the divider)" aria-label="Collapse the right pane" aria-expanded="true">›</button>
@@ -579,6 +582,9 @@ globalThis.PLATFORM = {
       <div id="fsel" class="fsel" hidden></div>
       <div id="flist" class="flist"></div>
       <div id="fview" class="fview" hidden></div>
+    </div>
+    <div id="managepane" hidden>
+      <iframe id="manageframe" title="Manage chats, prompts &amp; projects"></iframe>
     </div>
   </div>
 </div>
