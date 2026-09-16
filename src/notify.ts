@@ -24,19 +24,23 @@ export class Notifier {
 
   get targets(): string[] { return [...(this.#c.telegram ? ["telegram"] : []), ...(this.#c.webhook ? [this.#c.webhook.format === "ntfy" ? "ntfy" : "webhook"] : [])]; }
 
-  /** Send to every target; resolves with what was delivered and what failed. Never rejects. */
-  async send(n: Notice): Promise<{ sent: string[]; failed: { target: string; error: string }[] }> {
+  /** Send to every target; resolves with what was delivered and what failed. Never rejects.
+      telegramMessageId, when present, is the sent message's own id — the two-way listener
+      (src/telegram-listener.ts) tracks it, so a reply to this exact message is bound back
+      to whichever chat the caller passes as the notice's subject. */
+  async send(n: Notice): Promise<{ sent: string[]; failed: { target: string; error: string }[]; telegramMessageId?: number }> {
     const sent: string[] = []; const failed: { target: string; error: string }[] = [];
+    let telegramMessageId: number | undefined;
     const jobs: Promise<void>[] = [];
-    if (this.#c.telegram) jobs.push(this.#telegram(n).then(() => { sent.push("telegram"); }, (e) => { failed.push({ target: "telegram", error: String(e?.message ?? e) }); }));
+    if (this.#c.telegram) jobs.push(this.#telegram(n).then((id) => { sent.push("telegram"); telegramMessageId = id; }, (e) => { failed.push({ target: "telegram", error: String(e?.message ?? e) }); }));
     if (this.#c.webhook) jobs.push(this.#webhook(n).then(() => { sent.push(this.#c.webhook!.format === "ntfy" ? "ntfy" : "webhook"); }, (e) => { failed.push({ target: "webhook", error: String(e?.message ?? e) }); }));
     await Promise.all(jobs);
     for (const f of failed) this.#warn(`[notify] ${f.target}: ${f.error}`);
     if (sent.length) this.#log(`[notify] ${n.title} → ${sent.join(", ")}`);
-    return { sent, failed };
+    return { sent, failed, ...(telegramMessageId !== undefined ? { telegramMessageId } : {}) };
   }
 
-  async #telegram(n: Notice): Promise<void> {
+  async #telegram(n: Notice): Promise<number | undefined> {
     const { token, chatId } = this.#c.telegram!;
     const text = `*${escapeMd(n.title)}*\n${escapeMd(n.message)}${n.url ? `\n${escapeMd(n.url)}` : ""}`.slice(0, 4000);
     const r = await withTimeout(this.#fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -44,6 +48,10 @@ export class Notifier {
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: "MarkdownV2", disable_web_page_preview: true }),
     }));
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
+    // Best effort: a reply not being bindable to this exact message is a smaller loss than
+    // treating a malformed-but-200 response as a failed send.
+    const body = await r.json().catch(() => null) as { result?: { message_id?: number } } | null;
+    return body?.result?.message_id;
   }
 
   async #webhook(n: Notice): Promise<void> {

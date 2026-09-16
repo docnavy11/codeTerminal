@@ -21,6 +21,16 @@ and no password login — the server admits you by network position and identity
 with a password is not supported and is not a configuration we will help make
 work. Behind an authenticating reverse proxy on a private network is fine.
 
+**`CODETERM_TELEGRAM_CONTROL=1` is the one deliberate exception to "never by
+a shared secret."** It lets a reply in the configured Telegram chat answer a
+pending card or send a new prompt — i.e. whoever controls that chat can now
+drive the agent, with whatever mode and shell access the target chat's
+session already has, from outside the tailnet/identity model entirely. Its
+"secret" is the bot token plus your phone's own access to that Telegram
+chat; treat a leaked token or a lost, unlocked phone accordingly. Off by
+default, and a separate opt-in from the plain Telegram notify pair, which
+only ever sends, never reads.
+
 ## The gates that do exist
 
 They constrain *Claude*, not an intruder:

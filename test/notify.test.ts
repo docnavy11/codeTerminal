@@ -15,6 +15,15 @@ describe("notifier", () => {
     const body = JSON.parse(String(log[0].init.body)); assert.equal(body.chat_id, "42"); assert.equal(body.parse_mode, "MarkdownV2");
     assert.equal(body.text, "*Jobs — done · $1\\.55*\n12 new \\(3 worth a look\\)\\.\nhttp://x/?chat\\=abc");
   });
+  test("telegram: a real API response's message_id comes back for the two-way listener to bind a reply to", async () => {
+    const fakeSendMessage = (async (url: string | URL | Request) => {
+      if (String(url).includes("sendMessage")) return new Response(JSON.stringify({ ok: true, result: { message_id: 42 } }), { status: 200 });
+      return new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    const n = new Notifier({ telegram: { token: "T", chatId: "9" }, fetch: fakeSendMessage });
+    const r = await n.send({ title: "t", message: "m" });
+    assert.deepEqual(r, { sent: ["telegram"], failed: [], telegramMessageId: 42 });
+  });
   test("webhook json and ntfy shapes; a token becomes a bearer header", async () => {
     const log: { url: string; init: RequestInit }[] = [];
     const j = new Notifier({ webhook: { url: "https://ha.local/api/webhook/abc", format: "json", token: "s3" }, fetch: fakeFetch(log) });

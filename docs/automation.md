@@ -70,6 +70,26 @@ skipped, never blocks a run. Measured with a fake HTTP layer in
 failures reported, not thrown); not measured against the real services —
 "send test" is the measurement.
 
+**Two-way Telegram.** With `CODETERM_TELEGRAM_CONTROL=1` set alongside the
+Telegram pair above, a reply is read back, not just sent to. Reply to a
+"waiting for you" notification with yes / always / no to answer that card
+(any text answers an `AskUserQuestion`), or reply to a "done" notification
+with anything else to send it as a fresh prompt in that same chat — from a
+phone with nothing else open. A message that does not reply to anything
+falls back to whichever chat was last mentioned. Long-polling
+(`getUpdates`), never a webhook — Telegram's servers reaching in would be
+the one inbound exposure everything else here is built to avoid — and only
+messages from `CODETERM_TELEGRAM_CHAT` are ever read.
+
+Off by default, on top of the notify pair, because it is a bigger step than
+being told about a run: anyone who can message that chat can now drive the
+agent, with whatever mode and shell access that chat's session already has.
+A pending card it cannot parse (a permission gate, unclear text) is left
+open rather than guessed on. A prompt sent this way has no completion
+notification of its own — only a scheduled run's own end does that — so
+check the app for the reply. See `src/telegram-listener.ts` for what a
+restart does with Telegram's own backlog (drained, never acted on).
+
 **It deliberately does not** run two copies at once (the second is recorded
 as skipped), catch up on times missed while the server was down (recorded
 as missed — "Run now" is there for that), retry, or chain schedules. Run

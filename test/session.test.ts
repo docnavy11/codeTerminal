@@ -339,6 +339,30 @@ describe("the approval gate", () => {
     assert.equal(m.last("approval_closed")!.decision, "allow");
   });
 
+  test("resolveOldestPending: yes/always/no on a card, any text on a question, unclear text left open, none when nothing pending", async () => {
+    assert.equal(m.s.resolveOldestPending("yes"), "none");
+    const { promise } = m.q.ask("Bash");
+    assert.equal(m.s.resolveOldestPending("later"), "unclear", "a plain permission card only understands yes/always/no");
+    assert.equal(m.s.resolveOldestPending(" Yes "), "answered");
+    assert.deepEqual(await promise, { behavior: "allow" });
+
+    const q2 = m.q.ask("Bash");
+    assert.equal(m.s.resolveOldestPending("always"), "answered");
+    const r2 = await q2.promise as { updatedPermissions?: unknown };
+    assert.ok(r2.updatedPermissions, "always still grants, same as decide(id,\"always\")");
+
+    const q3 = m.q.ask("Bash");
+    assert.equal(m.s.resolveOldestPending("No"), "answered");
+    const r3 = await q3.promise as { behavior: string };
+    assert.equal(r3.behavior, "deny");
+
+    const questions = [{ question: "Which city?", header: "City", multiSelect: false, options: [{ label: "Ghent", description: "" }] }];
+    const q4 = m.q.ask("AskUserQuestion", { questions });
+    assert.equal(m.s.resolveOldestPending("Ghent, please"), "answered", "any free text answers a question");
+    const r4 = await q4.promise as { updatedInput: { answers: unknown } };
+    assert.deepEqual(r4.updatedInput.answers, { "Which city?": "Ghent, please" });
+  });
+
   test("an Edit approval carries the diff; a withdrawn request never shows a card", async () => {
     const { mkdtemp, writeFile } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
     const dir = await mkdtemp(join(tmpdir(), "ct-sess-diff-")); await writeFile(join(dir, "f.txt"), "a\nb\nc\n");

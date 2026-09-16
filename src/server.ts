@@ -19,6 +19,7 @@ import type { ClientEvent } from "./protocol.js";
 import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe as describeCron, type Schedule } from "./schedule.js";
 import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
+import { TelegramListener } from "./telegram-listener.js";
 import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture } from "./tmux.js";
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
@@ -54,6 +55,11 @@ export type ServerConfig = {
   scheduleTickMs?: number;
   /** Phone notifications (Telegram, webhook/ntfy); from the environment by default. */
   notify?: Pick<NotifyConfig, "telegram" | "webhook" | "fetch">;
+  /** Replies control the chat a notification was about — answer a pending card,
+      or send a new prompt — instead of only reading. Off by default: this widens
+      "who can be answered by" to "whoever texts your configured Telegram chat",
+      which the plain notify targets above do not. */
+  telegramControl?: boolean;
   /** Standing list of sites the browser tools may use without asking; null disables the gate. */
   browserAllowPath: string | null;
   browserAllowSeed: string[];
@@ -107,6 +113,7 @@ export function envConfig(): ServerConfig {
     promptsPath: state.prompts,
     schedulesPath: state.schedules,
     notify: notifyConfigFromEnv(),
+    telegramControl: process.env.CODETERM_TELEGRAM_CONTROL === "1",
     usagePath: state.usage,
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : state.browserAllow,
     serverBrowser: { profileDir: state.serverBrowserProfile,
@@ -465,6 +472,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       browserSites: browserAllow ? browserAllow.all().length : null,
       mcpServers: convo.mcpServers,
       notifyTargets: notifier.targets,
+      telegramControl: telegramListener !== null,
       statePaths: statePaths(ROOT), envPath: join(ROOT, ".env"), shell: SHELL,
       schedules: (() => { const all = schedules.list().filter((s) => !s.paused); const next = all.map((s) => s.nextAt).filter((n): n is number => n !== null).sort((a, b) => a - b)[0]; return { count: schedules.list().length, next: next ?? null }; })(),
     }));
@@ -670,6 +678,14 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
   const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"));
   const notifier = new Notifier({ ...(cfg.notify ?? {}), log, warn });
+  /* Two-way: a reply answers the pending card, or prompts, whichever chat the
+     notification named. Requires both a configured Telegram target and the
+     separate opt-in — sending notifications does not by itself mean replies
+     get to drive the agent. */
+  const telegramListener = cfg.notify?.telegram && cfg.telegramControl
+    ? new TelegramListener({ convo, token: cfg.notify.telegram.token, chatId: cfg.notify.telegram.chatId, log, warn })
+    : null;
+  telegramListener?.start();
   /* Where a notification tells you to go. The bind address is right for a
      laptop on the same tailnet, but it is an IP: it reads badly on a phone
      and it breaks the day the machine gets a new one. CODETERM_PUBLIC_URL
@@ -684,9 +700,9 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     const mins = Math.max(1, Math.round(s.waitMs / 60_000));
     void notifier.send({
       title: `${s.title} — waiting for you`,
-      message: `${what}\n\nOpen the chat to answer. If nobody does within ${mins} min it is refused and the run carries on without it.`,
+      message: `${what}${telegramListener ? "\n\nReply here, or open the chat." : "\n\nOpen the chat to answer."} If nobody does within ${mins} min it is refused and the run carries on without it.`,
       url: `${publicBase}/?chat=${encodeURIComponent(chatId)}`, tags: ["question"],
-    });
+    }).then((r) => telegramListener?.noteSent(r.telegramMessageId, chatId));
   };
   const scheduler = new Scheduler({
     store: schedules, log, warn,
@@ -700,7 +716,8 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     for (const send of broadcast) send(e);
     const extra = [...(run.needed.length ? [`needed: ${run.needed.join(", ")}`] : []), ...(run.cards.length ? [`answered no: ${run.cards.join(", ")}`] : []), ...(run.files.length ? [`files: ${run.files.map((f) => f.split("/").pop()).join(", ")}`] : [])];
     void notifier.send({ title: `${s.title} — ${run.outcome.replace("-", " ")}${run.costUsd != null ? ` · $${run.costUsd.toFixed(2)}` : ""}`, message: [run.summary, ...extra].filter(Boolean).join("\n"),
-      ...(run.chatId ? { url: `${publicBase}/?chat=${encodeURIComponent(run.chatId)}` } : {}), tags: [run.outcome === "done" ? "white_check_mark" : run.outcome === "failed" ? "x" : "warning"] });
+      ...(run.chatId ? { url: `${publicBase}/?chat=${encodeURIComponent(run.chatId)}` } : {}), tags: [run.outcome === "done" ? "white_check_mark" : run.outcome === "failed" ? "x" : "warning"] })
+      .then((r) => { if (run.chatId) telegramListener?.noteSent(r.telegramMessageId, run.chatId); });
   };
   /** Which notification targets are set, and a test message so you know they work before 08:00. */
   app.get("/notify", guard, (_req, res) => { res.json({ targets: notifier.targets }); });
@@ -816,6 +833,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   log(`browser        /ext — extension bridge, tools ungated`);
   log(`files          ${FILES_ROOT} (browse, upload, download)`);
   log(`projects       ${cfg.projectsRoot}`);
+  if (telegramListener) log(`telegram       two-way — a reply answers a card or prompts the chat it named`);
 
   // A restart is a good moment to drop what the previous run left behind.
   void pruneScreenshots().then((n) => { if (n) log(`[shots] pruned ${n} old screenshots`); }).catch(() => {});
@@ -831,6 +849,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       log(`[${signal}] shutting down`);
       clearInterval(sweeper);
       scheduler.stop();
+      void telegramListener?.stop().catch((e) => warn(`shutdown: telegram listener ${String(e)}`));
       try { convo.shutdown(); } catch (e) { warn(`shutdown: chats ${String(e)}`); }
       void serverBrowser.stop().catch((e) => warn(`shutdown: server browser ${String(e)}`));
       try { usage.save(); } catch (e) { warn(`shutdown: usage ${String(e)}`); }

@@ -428,6 +428,30 @@ export class Session {
     return true;
   }
 
+  /**
+   * Resolve the oldest pending card with plain text — for a channel that
+   * only ever carries free text and no specific card id (a Telegram reply).
+   * The same "first" `status()`'s own detail line already picks when there
+   * is more than one. An AskUserQuestion accepts any text as its answer (its
+   * first question only — this is one reply, not a form); an ordinary
+   * permission card only understands yes/always/no and leaves anything else
+   * open rather than guess on it.
+   */
+  resolveOldestPending(text: string): "answered" | "unclear" | "none" {
+    const first = [...this.#pending][0];
+    if (!first) return "none";
+    const [id, p] = first;
+    if (p.question) {
+      this.answer(id, { [p.question.questions[0]?.question ?? ""]: text });
+      return "answered";
+    }
+    const t = text.trim().toLowerCase();
+    if (/^(y|yes|allow|ok|okay|approve)$/.test(t)) { this.decide(id, "allow"); return "answered"; }
+    if (/^(a|always)$/.test(t)) { this.decide(id, "always"); return "answered"; }
+    if (/^(n|no|deny|refuse|stop)$/.test(t)) { this.decide(id, "deny"); return "answered"; }
+    return "unclear";
+  }
+
   async setMode(mode: PermissionMode): Promise<void> {
     if (mode === "bypassPermissions" && !ALLOW_BYPASS) {
       this.#emit({ kind: "error", message: "\"Never ask\" is disabled. Set CODETERM_ALLOW_BYPASS=1 in .env and restart to enable it." });
