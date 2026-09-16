@@ -17,6 +17,9 @@ export type ChatRecord = {
   titleProvisional?: boolean;
   /** Project id this chat belongs to; absent means the General project. */
   project?: string;
+  /** The schedule whose run created this chat; absent means a person started it.
+      Set once, at creation — a schedule renamed or deleted later does not change it. */
+  scheduleId?: string;
   events: ClientEvent[];
   granted: PermissionUpdate[];
   mode: PermissionMode;
@@ -24,7 +27,7 @@ export type ChatRecord = {
 
 /** Summary shown in the chat picker — never carries the whole transcript. */
 export type ChatSummary =
-  Pick<ChatRecord, "id" | "title" | "createdAt" | "updatedAt" | "cwd"> &
+  Pick<ChatRecord, "id" | "title" | "createdAt" | "updatedAt" | "cwd" | "scheduleId"> &
   { turns: number; project: string | null };
 
 export class Store {
@@ -54,6 +57,7 @@ export class Store {
       updatedAt: d.updatedAt ?? 0,
       cwd: d.cwd ?? null,
       project: d.project ?? null,
+      scheduleId: d.scheduleId,
       turns: d.events.filter((e) => e.kind === "user").length,
     };
   }

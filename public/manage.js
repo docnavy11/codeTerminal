@@ -82,58 +82,74 @@ function renderChats() {
   const found = el("div", "found"); found.id = "found"; host.append(found);
   if (!shown.length) { host.append(el("div", "empty", chatState.q.trim().length >= 2 ? "No titles match." : "Nothing matches.")); return; }
 
-  for (const c of shown) {
-    const row = el("div", "row" + (c.id === chatState.active ? " active" : ""));
-    const main = el("div", "main");
-    main.append(el("div", "title", c.title));
-    main.append(el("div", "meta",
-      `${c.turns} turn${c.turns === 1 ? "" : "s"} · ${ago(c.updatedAt)}${c.cwd ? ` · ${c.cwd}` : ""}`));
-    row.append(main);
-    row.append(el("span", "tag", c.project ?? "general"));
-
-    const view = el("button", "quiet", "view");
-    view.onclick = () => showChat(c.id);
-    const rename = el("button", "quiet", "rename");
-    rename.onclick = async () => {
-      const t = prompt("Rename this chat", c.title);
-      if (!t?.trim()) return;
-      try { await api(`/chats/${c.id}`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: t.trim() }) }); show(""); await loadChats(); }
-      catch (e) { show(e.message); }
-    };
-
-    /* Moving a chat rebuilds its session, so the server only allows it on the
-       chat that is currently open. A disabled select saying so on every row
-       was the widest thing in the list and useful on one row in twelve; the
-       control now appears only where it works, and the others say why. */
-    let move;
-    if (c.id === chatState.active) {
-      move = el("select");
-      move.append(new Option("move to…", ""));
-      for (const p of chatState.projects) move.append(new Option(p.name, p.id));
-      move.onchange = async () => {
-        if (!move.value) return;
-        try { await api(`/chats/${c.id}`, { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ project: move.value }) }); show(""); await loadChats(); }
-        catch (e) { show(e.message); move.value = ""; }
-      };
-    } else {
-      move = el("button", "quiet", "move");
-      move.onclick = () => show("Open that chat in the terminal first — moving it rebuilds its session, so the server only allows it on the open one.");
-    }
-
-    const del = el("button", "quiet danger", "delete");
-    del.onclick = async () => {
-      if (!confirm(`Delete "${c.title}"? This cannot be undone.`)) return;
-      try { await api(`/chats/${c.id}`, { method: "DELETE" }); show(""); await loadChats(); }
-      catch (e) { show(e.message); }
-    };
-
-    row.append(view, rename, move, del);
-    main.style.cursor = "pointer";
-    main.onclick = () => showChat(c.id);
-    host.append(row);
+  // A schedule's own runs — "run now" from the Schedules tab included — are
+  // not something you typed; split them from the chats you actually started,
+  // so a server with a few busy schedules does not bury those in its list.
+  const manual = shown.filter((c) => !c.scheduleId);
+  const scheduled = shown.filter((c) => c.scheduleId);
+  if (manual.length && scheduled.length) {
+    host.append(el("div", "grouphd", `manual — ${manual.length}`));
+    for (const c of manual) host.append(chatRow(c));
+    host.append(el("div", "grouphd", `scheduled — ${scheduled.length}`));
+    for (const c of scheduled) host.append(chatRow(c));
+  } else {
+    // Nothing to separate — an all-manual server, or the current filter
+    // happens to have emptied one side. The plain list it always was.
+    for (const c of shown) host.append(chatRow(c));
   }
+}
+
+function chatRow(c) {
+  const row = el("div", "row" + (c.id === chatState.active ? " active" : ""));
+  const main = el("div", "main");
+  main.append(el("div", "title", c.title));
+  main.append(el("div", "meta",
+    `${c.turns} turn${c.turns === 1 ? "" : "s"} · ${ago(c.updatedAt)}${c.cwd ? ` · ${c.cwd}` : ""}`));
+  row.append(main);
+  row.append(el("span", "tag", c.project ?? "general"));
+
+  const view = el("button", "quiet", "view");
+  view.onclick = () => showChat(c.id);
+  const rename = el("button", "quiet", "rename");
+  rename.onclick = async () => {
+    const t = prompt("Rename this chat", c.title);
+    if (!t?.trim()) return;
+    try { await api(`/chats/${c.id}`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: t.trim() }) }); show(""); await loadChats(); }
+    catch (e) { show(e.message); }
+  };
+
+  /* Moving a chat rebuilds its session, so the server only allows it on the
+     chat that is currently open. A disabled select saying so on every row
+     was the widest thing in the list and useful on one row in twelve; the
+     control now appears only where it works, and the others say why. */
+  let move;
+  if (c.id === chatState.active) {
+    move = el("select");
+    move.append(new Option("move to…", ""));
+    for (const p of chatState.projects) move.append(new Option(p.name, p.id));
+    move.onchange = async () => {
+      if (!move.value) return;
+      try { await api(`/chats/${c.id}`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: move.value }) }); show(""); await loadChats(); }
+      catch (e) { show(e.message); move.value = ""; }
+    };
+  } else {
+    move = el("button", "quiet", "move");
+    move.onclick = () => show("Open that chat in the terminal first — moving it rebuilds its session, so the server only allows it on the open one.");
+  }
+
+  const del = el("button", "quiet danger", "delete");
+  del.onclick = async () => {
+    if (!confirm(`Delete "${c.title}"? This cannot be undone.`)) return;
+    try { await api(`/chats/${c.id}`, { method: "DELETE" }); show(""); await loadChats(); }
+    catch (e) { show(e.message); }
+  };
+
+  row.append(view, rename, move, del);
+  main.style.cursor = "pointer";
+  main.onclick = () => showChat(c.id);
+  return row;
 }
 
 /* ---------------- one chat, read-only ---------------- */

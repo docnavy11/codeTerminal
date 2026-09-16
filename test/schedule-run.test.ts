@@ -59,9 +59,10 @@ describe("scheduled prompts through the server", () => {
     const sc = await waitRun(id);
     const run = sc.runs[0] as unknown as { outcome: string; costUsd: number; summary: string; chatId: string; trigger: string; needed: string[]; cards: string[] };
     assert.equal(run.outcome, "done"); assert.equal(run.costUsd, 0.31); assert.equal(run.summary, "Jobs today"); assert.equal(run.trigger, "now"); assert.deepEqual(run.needed, []); assert.deepEqual(run.cards, []);
-    const chats = (await s.json("/chats")).body!.chats as { id: string; title: string }[];
+    const chats = (await s.json("/chats")).body!.chats as { id: string; title: string; scheduleId?: string }[];
     const chat = chats.find((x) => x.id === run.chatId)!;
     assert.match(chat.title, /^Jobs · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    assert.equal(chat.scheduleId, id, "the manage page's manual/scheduled split reads this");
     const done = await ws.wait((m) => m.kind === "schedule_done", 3000);
     assert.equal(done.title, "Jobs"); assert.equal(done.outcome, "done"); assert.equal(done.chatId, run.chatId); assert.equal(done.summary, "Jobs today");
     await settle(6);

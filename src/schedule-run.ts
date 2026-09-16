@@ -40,6 +40,7 @@ export function makeRunner(d: RunDeps): Runner {
       return { chatId: null, endedAt: now(), outcome: "failed", costUsd: null, summary: "failed: the server browser is not running (start it on the manage page, or set the schedule's browser to auto)", files, needed, cards };
     }
     const chat: LiveChat = d.convo.create();
+    chat.markScheduled(s.id);
     const stamp = new Date(now()).toLocaleString("sv-SE", { timeZone: s.when.tz }).slice(0, 16).replace("T", " ");
     chat.rename(`${s.title} · ${stamp}`);
     run.chatId = chat.id;
