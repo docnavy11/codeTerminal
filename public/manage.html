@@ -3,6 +3,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>code terminal — manage</title>
 <link rel="stylesheet" href="/pages.css">
+<script src="/pages-boot.js"></script>
 
 <div class="masthead">
   <div class="inner">
@@ -43,14 +44,24 @@
 <script src="/manage.js"></script>
 
 <script>
-  /* Reached from the phone's settings menu, so "back" has to mean the mobile
-     UI — the desktop split view is not somewhere you want to land on a phone. */
-  (() => {
-    const fromMobile = document.referrer.includes("/m.html")
-      || matchMedia("(max-width: 700px)").matches;
-    if (!fromMobile) return;
-    const a = document.getElementById("back");
-    a.href = "/m.html";
-    a.textContent = "← back";
-  })();
+  /* The desktop's right pane frames this page as its own "manage" tab (see
+     desktop.js) instead of opening it as a standalone page. Both of the
+     masthead's links stop making sense there: "← terminal" would navigate the
+     frame to the whole app nested inside itself, and "setup & status" is
+     already one click away in the app's own settings menu. Hide the pair
+     rather than rewire them — nothing else on the page depends on them. */
+  if (new URLSearchParams(location.search).get("embed") === "1") {
+    document.querySelector(".links").hidden = true;
+  } else {
+    /* Reached from the phone's settings menu, so "back" has to mean the mobile
+       UI — the desktop split view is not somewhere you want to land on a phone. */
+    (() => {
+      const fromMobile = document.referrer.includes("/m.html")
+        || matchMedia("(max-width: 700px)").matches;
+      if (!fromMobile) return;
+      const a = document.getElementById("back");
+      a.href = "/m.html";
+      a.textContent = "← back";
+    })();
+  }
 </script>

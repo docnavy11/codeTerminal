@@ -8,26 +8,39 @@
  */
 const termEl = document.getElementById("term"), filesEl = document.getElementById("files");
 const sessionsEl = document.getElementById("sessions");
+const managePaneEl = document.getElementById("managepane"), manageFrame = document.getElementById("manageframe");
 const note = document.getElementById("rightnote");
 const refreshBtn = document.getElementById("rrefresh");
 const railLabel = document.getElementById("rlabel");   // names the view the collapsed rail stands in for
 let filesRoot = "";
+let manageLoaded = false;
 
 // Called by the shared client's chat|files tabs; the transcript stays put.
 PLATFORM.showFiles = (on) => PLATFORM.showView(on ? "files" : "shell");
-/* Three views in one pane: the terminal (a throwaway shell, or a tmux session
-   you attached to), the session chooser, and the file browser. */
+/* Four views in one pane: the terminal (a throwaway shell, or a tmux session
+   you attached to), the session chooser, the file browser, and manage (chats,
+   prompts, projects, schedules — manage.html itself, framed rather than
+   rebuilt, so this pane does not have to duplicate its whole page). */
 let rightView = "shell";
 /* The note belongs to this pane, not to term.js: only this host knows its
    files view puts a root path there. term.js asks for a repaint when the
    session moves underneath it. */
-const repaintNote = () => { note.textContent = rightView === "files" ? filesRoot : TERMPANE.noteFor(rightView); };
+const repaintNote = () => {
+  note.textContent = rightView === "files" ? filesRoot : rightView === "manage" ? "" : TERMPANE.noteFor(rightView);
+};
 PLATFORM.showView = (view) => {
   rightView = view;
   termEl.hidden = view !== "shell"; filesEl.hidden = view !== "files"; sessionsEl.hidden = view !== "sessions";
+  managePaneEl.hidden = view !== "manage";
+  // Loaded once, on first visit — a tab nobody opens costs nothing, and the
+  // page keeps its own state (scroll, open tab) for the rest of the session.
+  // embed=1 tells manage.html it is framed here, not standalone: its own
+  // "setup & status" / "← terminal" links would either duplicate or escape
+  // this pane, so it hides them (see the script at the end of manage.html).
+  if (view === "manage" && !manageLoaded) { manageLoaded = true; manageFrame.src = "/manage.html?embed=1"; }
   repaintNote();
   TERMPANE.showView(view);
-  if (railLabel) railLabel.textContent = view === "files" ? "files" : view === "sessions" ? "sessions" : "terminal";
+  if (railLabel) railLabel.textContent = view === "files" ? "files" : view === "sessions" ? "sessions" : view === "manage" ? "manage" : "terminal";
   // ↻ redraws the terminal, so it is only offered while the terminal is up.
   if (refreshBtn) refreshBtn.hidden = view !== "shell";
 };

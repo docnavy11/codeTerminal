@@ -191,7 +191,11 @@ async function showChat(id) {
       // Naming the chat in the URL as well as marking it open: that is what
       // tells the page you came to read this one, so it does not restore a
       // collapsed transcript over the top of it.
-      location.href = `/?chat=${encodeURIComponent(id)}`;
+      // The desktop's right pane embeds this page in an iframe (see its
+      // "manage" tab); navigating `self` there would load a second whole app
+      // nested inside the first. Navigate the real top-level page instead —
+      // same-origin, so this is allowed without postMessage plumbing.
+      top.location.href = `/?chat=${encodeURIComponent(id)}`;
     } catch (e) { show(e.message); }
   };
   const exp = el("button", "", "export .md");

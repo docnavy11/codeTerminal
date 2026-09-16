@@ -1068,7 +1068,13 @@ box.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"
 stop.onclick = () => ws?.send(JSON.stringify({ type: "interrupt" }));
 $("newchat").onclick = () => ws?.send(JSON.stringify({ type: "new" }));
 // A 400px column is the wrong place to curate; open the manage page in a tab.
-$("manage").onclick = async () => PLATFORM.openUrl((await base()) + "/manage.html");
+// The desktop's right pane has room for a fourth tab instead: click that one,
+// rather than navigating the whole app away from its terminal and chat.
+$("manage").onclick = async () => {
+  const tab = document.querySelector('.tabs .tab[data-view="manage"]');
+  if (tab) { tab.click(); return; }   // moreMenu's own handler closes the menu
+  PLATFORM.openUrl((await base()) + "/manage.html");
+};
 $("setup").onclick = async () => PLATFORM.openUrl((await base()) + "/setup.html");
 // The panel has no terminal and no split view; the full UI does.
 $("openui").onclick = async () => PLATFORM.openUrl((await base()) + "/");
