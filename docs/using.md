@@ -700,6 +700,20 @@ retries every 3 s and starts a fresh shell — the pane used to stay dead until
 the page was reloaded. At most `MAX_SHELLS` (8) shells are open at once; a
 page opening sockets in a loop gets close code 1013, not a fork bomb.
 
+**Paste an image into it.** The CLI running in the pane — Claude Code, say —
+reads files, not clipboards, so a pasted screenshot would otherwise be nothing
+at all: xterm only looks at the text flavour of a paste, and an image carries
+none. So the pane catches the paste itself, POSTs the bytes to `/paste/image`,
+and types the path it gets back into the pty, followed by a space and no
+Enter — the path joins whatever you were typing and you decide when the prompt
+goes. PNG, JPEG, GIF and WebP, up to 12 MB.
+
+The bytes land in `/tmp/code-terminal-pasted`, dir `0700` and files `0600`,
+beside the screenshot spool and swept by the same pruner (six hours, 40 files,
+and never anything written in the last five minutes — the CLI is about to read
+it). A paste can be a screenshot of a logged-in page, which is why it is not
+left world-readable in the shared `/tmp`. Text paste is untouched.
+
 xterm is served from `node_modules` under `/vendor/*` rather than a CDN, so the
 UI works with no outbound network. The same goes for `marked` + `DOMPurify`,
 which render Claude's replies as markdown: model output is untrusted (the page

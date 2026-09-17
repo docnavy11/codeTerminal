@@ -14,6 +14,8 @@ export type PruneOptions = {
   maxAgeMs?: number;
   maxFiles?: number;
   now?: number;
+  /** Which files in `dir` are ours to sweep; the paste spool holds jpg/gif/webp too. */
+  extensions?: string[];
 };
 
 /**
@@ -31,10 +33,11 @@ export async function pruneScreenshots(dir = SHOT_DIR, opts: PruneOptions = {}):
   const maxAgeMs = opts.maxAgeMs ?? MAX_AGE_MS;
   const maxFiles = opts.maxFiles ?? MAX_FILES;
   const now = opts.now ?? Date.now();
+  const exts = opts.extensions ?? [".png"];
 
   let names: string[];
   try {
-    names = (await readdir(dir)).filter((n) => n.endsWith(".png"));
+    names = (await readdir(dir)).filter((n) => exts.some((e) => n.endsWith(e)));
   } catch {
     return 0; // no directory yet
   }

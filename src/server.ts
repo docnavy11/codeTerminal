@@ -10,6 +10,7 @@ import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
 import { pruneScreenshots } from "./screenshots.js";
+import { MAX_PASTE_BYTES, PASTE_TYPES, savePastedImage } from "./pasted.js";
 import { UsageLog } from "./usage.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
@@ -634,6 +635,23 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       const dir = typeof req.query.path === "string" ? req.query.path : undefined;
       if (!name) throw new Error("missing ?name=");
       res.json(await files.saveUploadStream(FILES_ROOT, dir, name, req, MAX_UPLOAD));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  /**
+   * An image pasted into the terminal pane. The CLI in there takes file paths,
+   * not clipboards, so the bytes are spooled to a private file and the path
+   * goes back; the pane then types it into the pty.
+   */
+  app.post("/paste/image", guard, express.raw({ type: PASTE_TYPES, limit: MAX_PASTE_BYTES }), async (req, res) => {
+    try {
+      const body = req.body as Buffer | undefined;
+      if (!Buffer.isBuffer(body)) throw new Error("expected image bytes");
+      const saved = await savePastedImage(body, String(req.headers["content-type"] ?? ""));
+      log(`[paste] ${saved.path} (${(saved.bytes / 1024).toFixed(0)}KB)`);
+      res.json(saved);
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
     }

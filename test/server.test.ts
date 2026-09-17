@@ -1,6 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, stat, readdir } from "node:fs/promises";
+import { readFile, stat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { connect } from "node:net";
 import { startTestServer, freePort, type TestServer } from "./fakes/server.js";
@@ -285,6 +285,29 @@ describe("/files", () => {
     const left = await readdir(join(s.root, "files"));
     assert.ok(!left.some((f) => f.startsWith("over.bin")), `no partial file: ${left}`);
     assert.equal((await s.req("/files/upload?path=secret&name=x", { method: "POST", body: "x" })).status, 400, "denied subtree");
+  });
+});
+
+describe("/paste/image", () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const written: string[] = [];
+  after(async () => { for (const p of written) await rm(p, { force: true }); });
+
+  test("spools the bytes and hands back a path the CLI can read", async () => {
+    const r = await s.req("/paste/image", { method: "POST", headers: { Origin: s.origin, "Content-Type": "image/png" }, body: png });
+    assert.equal(r.status, 200);
+    const body = (await r.json()) as { path: string; bytes: number };
+    written.push(body.path);
+    assert.equal(body.bytes, png.length);
+    assert.ok(body.path.endsWith(".png"), body.path);
+    assert.deepEqual(await readFile(body.path), png);
+  });
+
+  test("refuses what is not an image, and stays behind the guard", async () => {
+    const bad = await s.req("/paste/image", { method: "POST", headers: { Origin: s.origin, "Content-Type": "application/pdf" }, body: png });
+    assert.equal(bad.status, 400);
+    const cross = await s.req("/paste/image", { method: "POST", headers: { origin: "https://evil.example", "Content-Type": "image/png" }, body: png });
+    assert.equal(cross.status, 403);
   });
 });
 
