@@ -31,6 +31,11 @@ if (browserSel) browserSel.onchange = () => { chosenBrowser = browserSel.value; 
 const statusEl = $("status"), statusText = $("statustext"), statusTime = $("statustime");
 
 let cwdShown = "";
+/* The browser tab names the directory you are working in, so several open
+   terminals are told apart in the tab strip rather than all reading
+   "code terminal". The Chrome side panel has no tab; setting it there is
+   harmless. */
+function setTabTitle(name) { if (name) document.title = `${name} — code terminal`; }
 let streaming = null, streamRaw = "";
 let ws = null, busy = false, lastText = null, lastRaw = "", cost = 0;
 let statusSince = 0, statusTick = null, statusState = "idle";
@@ -194,10 +199,11 @@ function handle(m) {
       cwdShown = m.path;
       meta.textContent = cwdShown.split("/").pop() || cwdShown;
       meta.title = cwdShown;
+      setTabTitle(meta.textContent);
       break;
     case "project":
       // The panel has room for one word; the project name beats a cwd basename.
-      if (m.name && m.name !== "General") { meta.textContent = m.name; meta.title = `Project: ${m.name} — ${cwdShown}`; }
+      if (m.name && m.name !== "General") { meta.textContent = m.name; meta.title = `Project: ${m.name} — ${cwdShown}`; setTabTitle(m.name); }
       break;
     case "ready":
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
