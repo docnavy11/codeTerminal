@@ -308,41 +308,70 @@ export class Scheduler {
     this.#log = o.log ?? (() => {}); this.#warn = o.warn ?? (() => {});
   }
 
-  /** Compute what is due; a schedule whose time passed while the server was down is recorded as missed, not run. */
+  /**
+   * Compute what is due. A schedule whose time passed while the server was
+   * down is recorded as missed, not run — however short the gap. (A 60 s
+   * grace here once meant a restart at 08:00:30 for 08:00 neither ran nor
+   * recorded the run: it was then planned from now, past 08:00. A missed row
+   * is what a longer outage leaves, so a short one leaves the same.)
+   * A run still marked running was cut off by the stop — no run survives a
+   * restart — and is closed as failed, so it stops blocking its prune.
+   */
   start(tickMs = 30_000): void {
     const now = this.#now();
     for (const s of this.#store.list()) {
-      if (s.nextAt !== null && s.nextAt < now - 60_000 && !s.paused) {
-        this.#store.patch(s.id, (x) => { x.runs.unshift({ id: randomUUID(), chatId: null, startedAt: s.nextAt!, endedAt: s.nextAt, outcome: "missed", costUsd: null, summary: "missed: the server was not running at that time", files: [], needed: [], cards: [], trigger: "schedule" }); x.runs.length = Math.min(x.runs.length, 50); });
-        this.#log(`[schedule] ${s.title}: missed ${new Date(s.nextAt).toISOString()}`);
-      }
-      this.#plan(s.id, now);
+      try {
+        if (s.runs.some((r) => r.outcome === "running")) {
+          this.#patch(s.id, (x) => { for (const r of x.runs) if (r.outcome === "running") Object.assign(r, { outcome: "failed", endedAt: now, summary: `failed: interrupted — the server stopped during this run${r.summary ? ` (${r.summary})` : ""}` }); });
+          this.#warn(`[schedule] ${s.title}: a run was interrupted by the restart`);
+        }
+        if (s.nextAt !== null && s.nextAt <= now && !s.paused) {
+          this.#patch(s.id, (x) => { x.runs.unshift({ id: randomUUID(), chatId: null, startedAt: s.nextAt!, endedAt: s.nextAt, outcome: "missed", costUsd: null, summary: "missed: the server was not running at that time", files: [], needed: [], cards: [], trigger: "schedule" }); x.runs.length = Math.min(x.runs.length, 50); });
+          this.#log(`[schedule] ${s.title}: missed ${new Date(s.nextAt).toISOString()}`);
+        }
+        this.#plan(s.id, now);
+      } catch (e) { this.#warn(`[schedule] ${s.title}: at start: ${e instanceof Error ? e.message : e}`); }
     }
-    this.#timer = setInterval(() => void this.tick(), tickMs);
+    /* No unhandledRejection handler exists: a tick that rejects ends the
+       process (reproduced: one failed write to schedules.json). */
+    this.#timer = setInterval(() => { this.tick().catch((e) => this.#warn(`[schedule] tick: ${e instanceof Error ? e.message : e}`)); }, tickMs);
     this.#timer.unref();
   }
   stop(): void { if (this.#timer) clearInterval(this.#timer); this.#timer = null; }
+
+  /**
+   * Every scheduler write goes through here. The store's save throws on a
+   * full or read-only disk; the change is already in memory, so the schedule
+   * keeps working and the failure is reported instead of taking the server
+   * (and every other schedule) down with it.
+   */
+  #patch(id: string, f: (s: Schedule) => void): void {
+    try { this.#store.patch(id, f); }
+    catch (e) { this.#warn(`[schedule] could not save schedules: ${e instanceof Error ? e.message : e} (kept in memory; saved with the next write that succeeds)`); }
+  }
 
   /** Recompute nextAt from the cron and zone. */
   #plan(id: string, from: number): void {
     const s = this.#store.get(id); if (!s) return;
     let next: number | null = null;
     try { next = s.paused ? null : nextRun(s.when.cron, s.when.tz, new Date(from))?.getTime() ?? null; } catch (e) { this.#warn(`[schedule] ${s.title}: ${e instanceof Error ? e.message : e}`); }
-    this.#store.patch(id, (x) => { x.nextAt = next; });
+    this.#patch(id, (x) => { x.nextAt = next; });
   }
   replan(id: string): void { this.#plan(id, this.#now()); }
 
   async tick(): Promise<void> {
     const now = this.#now();
     for (const s of this.#store.list()) {
-      if (s.paused || s.nextAt === null || s.nextAt > now) continue;
-      if (this.#running.has(s.id)) {
-        this.#store.patch(s.id, (x) => { x.runs.unshift({ id: randomUUID(), chatId: null, startedAt: now, endedAt: now, outcome: "skipped", costUsd: null, summary: "skipped: the previous run is still running", files: [], needed: [], cards: [], trigger: "schedule" }); });
+      try {
+        if (s.paused || s.nextAt === null || s.nextAt > now) continue;
+        if (this.#running.has(s.id)) {
+          this.#patch(s.id, (x) => { x.runs.unshift({ id: randomUUID(), chatId: null, startedAt: now, endedAt: now, outcome: "skipped", costUsd: null, summary: "skipped: the previous run is still running", files: [], needed: [], cards: [], trigger: "schedule" }); });
+          this.#plan(s.id, now);
+          continue;
+        }
         this.#plan(s.id, now);
-        continue;
-      }
-      this.#plan(s.id, now);
-      void this.#run(s.id, "schedule");
+        void this.#run(s.id, "schedule");
+      } catch (e) { this.#warn(`[schedule] ${s.title}: ${e instanceof Error ? e.message : e}`); }   // one schedule's trouble is not the others'
     }
   }
 
@@ -357,7 +386,7 @@ export class Scheduler {
     const s = this.#store.get(id)!;
     const run: Run = { id: randomUUID(), chatId: null, startedAt: this.#now(), endedAt: null, outcome: "running", costUsd: null, summary: "", files: [], needed: [], cards: [], trigger };
     this.#running.set(id, run);
-    this.#store.patch(id, (x) => { x.runs.unshift(run); x.runs.length = Math.min(x.runs.length, 50); });
+    this.#patch(id, (x) => { x.runs.unshift(run); x.runs.length = Math.min(x.runs.length, 50); });
     this.#log(`[schedule] ${s.title}: run started (${trigger})`);
     void (async () => {
       let result: RunResult;
@@ -365,11 +394,11 @@ export class Scheduler {
       catch (e) { result = { chatId: run.chatId, endedAt: this.#now(), outcome: "failed", costUsd: null, summary: `failed: ${e instanceof Error ? e.message : String(e)}`, files: [], needed: [], cards: [] }; }
       const finished: Run = { ...run, ...result, endedAt: result.endedAt ?? this.#now() };
       this.#running.delete(id);
-      this.#store.patch(id, (x) => { const i = x.runs.findIndex((r) => r.id === run.id); if (i >= 0) x.runs[i] = finished; else x.runs.unshift(finished); });
+      this.#patch(id, (x) => { const i = x.runs.findIndex((r) => r.id === run.id); if (i >= 0) x.runs[i] = finished; else x.runs.unshift(finished); });
       this.#log(`[schedule] ${s.title}: ${finished.outcome}${finished.costUsd != null ? ` · $${finished.costUsd.toFixed(2)}` : ""} — ${finished.summary.slice(0, 120)}`);
       const latest = this.#store.get(id);
       if (latest) this.onDone(latest, finished);
-    })();
+    })().catch((e) => { this.#running.delete(id); this.#warn(`[schedule] ${s.title}: after the run: ${e instanceof Error ? e.message : e}`); });   // a throwing onDone must not end the process either
     return run;
   }
 }

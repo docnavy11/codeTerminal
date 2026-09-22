@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, readdir, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWhen, describe as words, nextRun, ScheduleStore, Scheduler, type Schedule, type Run, type RunResult } from "../src/schedule.js";
@@ -205,6 +205,65 @@ describe("the store keeps a file it cannot read", () => {
       assert.equal(await readFile(join(dir, aside[0]), "utf8"), broken, "byte for byte");
       st.add({ title: "New", prompt: "p", when: { text: "daily", tz: "UTC" } });
       assert.equal(await readFile(join(dir, aside[0]), "utf8"), broken, "the next save did not touch it");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("the scheduler survives and recovers", () => {
+  test("a failed write (full or read-only disk) is reported; the tick, the run and the process carry on", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ct-schedw-"));
+    const unhandled: unknown[] = []; const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const path = join(dir, "s.json");
+      const store = new ScheduleStore(path);
+      const s = store.add({ title: "Jobs", prompt: "p", when: { text: "every day at 08:00", tz: "UTC" } });
+      let now = Date.parse("2026-09-13T07:59:00Z");
+      const ran: string[] = []; const warned: string[] = [];
+      const sch = new Scheduler({ store, now: () => now, warn: (l) => warned.push(l),
+        runner: async (x) => { ran.push(x.title); return { chatId: null, endedAt: now, outcome: "done", costUsd: null, summary: "ok", files: [], needed: [], cards: [] }; } });
+      const done = new Promise<Run>((r) => { sch.onDone = (_s, run) => r(run); });
+      sch.start(10);
+      // every save from here fails: the temp file's name is taken by a directory
+      await mkdir(`${path}.${process.pid}.tmp`);
+      now = Date.parse("2026-09-13T08:00:05Z");
+      const run = await Promise.race([done, new Promise<never>((_r, rej) => setTimeout(() => rej(new Error(`no run finished; unhandled: ${unhandled.map(String).join("; ")}`)), 2000))]);
+      await new Promise((r) => setTimeout(r, 50));   // a few more ticks, each failing to save
+      sch.stop();
+      assert.deepEqual(ran, ["Jobs"], "it ran, once");
+      assert.equal(run.outcome, "done");
+      assert.ok(warned.some((l) => /could not save schedules/.test(l)), "the failure was reported");
+      assert.deepEqual(unhandled, [], "nothing escaped to take the process down");
+      assert.equal(store.get(s.id)!.nextAt, Date.parse("2026-09-14T08:00:00Z"), "planned in memory all the same");
+    } finally { process.off("unhandledRejection", onUnhandled); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test("a restart seconds after a due time records it as missed, like a longer outage does", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ct-schedm-"));
+    try {
+      const store = new ScheduleStore(join(dir, "s.json"));
+      const s = store.add({ title: "Jobs", prompt: "p", when: { text: "every day at 08:00", tz: "UTC" } });
+      store.patch(s.id, (x) => { x.nextAt = Date.parse("2026-09-13T08:00:00Z"); });
+      const sch = new Scheduler({ store, runner: async () => { throw new Error("must not run"); }, now: () => Date.parse("2026-09-13T08:00:30Z") });
+      sch.start(1e9); sch.stop();
+      const st = store.get(s.id)!;
+      assert.equal(st.runs.length, 1, "the 08:00 run is accounted for");
+      assert.equal(st.runs[0].outcome, "missed"); assert.equal(st.runs[0].startedAt, Date.parse("2026-09-13T08:00:00Z"));
+      assert.equal(st.nextAt, Date.parse("2026-09-14T08:00:00Z"));
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test("a run left 'running' by a stop is closed as failed (interrupted) at start", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ct-schedi-"));
+    try {
+      const store = new ScheduleStore(join(dir, "s.json"));
+      const s = store.add({ title: "Jobs", prompt: "p", when: { text: "every day at 08:00", tz: "UTC" } });
+      store.patch(s.id, (x) => { x.runs.unshift({ id: "r1", chatId: "c1", startedAt: 1, endedAt: null, outcome: "running", costUsd: null, summary: "", files: [], needed: [], cards: [], trigger: "schedule" }); });
+      const now = Date.parse("2026-09-13T12:00:00Z");
+      const sch = new Scheduler({ store, runner: async () => { throw new Error("must not run"); }, now: () => now });
+      sch.start(1e9); sch.stop();
+      const r = new ScheduleStore(join(dir, "s.json")).get(s.id)!.runs.find((x) => x.id === "r1")!;
+      assert.equal(r.outcome, "failed"); assert.match(r.summary, /interrupted/); assert.equal(r.endedAt, now);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
