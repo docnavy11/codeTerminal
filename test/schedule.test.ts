@@ -143,3 +143,48 @@ describe("the scheduler", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
+
+describe("DST: nextRun steps local calendar days, and each edge is handled once", () => {
+  test("fall back (2026-10-25, 02:00-03:00 happens twice in Brussels): a fixed-time job runs once, at the first 02:30", () => {
+    assert.equal(iso(nextRun("30 2 * * *", BX, new Date("2026-10-24T23:00:00Z"))), "2026-10-25T00:30", "02:30 CEST");
+    // planned again from just after that run: not 01:30Z (02:30 CET, the second copy), but tomorrow
+    assert.equal(iso(nextRun("30 2 * * *", BX, new Date("2026-10-25T00:30:05Z"))), "2026-10-26T01:30");
+  });
+  test("fall back: a job on every hour runs in both copies of the repeated hour", () => {
+    const seen: string[] = []; let t = new Date("2026-10-24T23:50:00Z");
+    for (let i = 0; i < 5; i++) { t = nextRun("*/30 * * * *", BX, t)!; seen.push(iso(t)!); }
+    assert.deepEqual(seen, ["2026-10-25T00:00", "2026-10-25T00:30", "2026-10-25T01:00", "2026-10-25T01:30", "2026-10-25T02:00"]);
+  });
+  test("spring forward (2026-03-29, 02:00-03:00 does not exist in Brussels): a 02:30 job runs at 03:00, once", () => {
+    assert.equal(iso(nextRun("30 2 * * *", BX, new Date("2026-03-28T23:00:00Z"))), "2026-03-29T01:00", "03:00 CEST, when the clock lands");
+    assert.equal(iso(nextRun("30 2 * * *", BX, new Date("2026-03-29T01:00:05Z"))), "2026-03-30T00:30", "then 02:30 CEST the next day");
+    assert.equal(iso(nextRun("30 2 * * *", BX, new Date("2026-03-27T12:00:00Z"))), "2026-03-28T01:30", "the day before is untouched");
+  });
+  test("spring forward: a job on every hour has no runs in the missing hour, and no pile-up at 03:00", () => {
+    const seen: string[] = []; let t = new Date("2026-03-28T23:50:00Z");
+    for (let i = 0; i < 4; i++) { t = nextRun("*/30 * * * *", BX, t)!; seen.push(iso(t)!); }
+    assert.deepEqual(seen, ["2026-03-29T00:00", "2026-03-29T00:30", "2026-03-29T01:00", "2026-03-29T01:30"]);
+  });
+  test("a weekday after a 23-hour day is not skipped by a week", () => {
+    // Saturday 2026-03-28 → Monday 00:30 CEST 2026-03-30 (= 22:30Z Sunday), not April 6
+    assert.equal(iso(nextRun("30 0 * * 1", BX, new Date("2026-03-28T12:00:00Z"))), "2026-03-29T22:30");
+    // New York springs forward on 2026-03-08: Monday the 9th, 00:30 EDT, not the 16th
+    assert.equal(iso(nextRun("30 0 * * 1", "America/New_York", new Date("2026-03-07T12:00:00Z"))), "2026-03-09T04:30");
+    // and after a 25-hour day
+    assert.equal(iso(nextRun("30 0 * * 1", BX, new Date("2026-10-24T12:00:00Z"))), "2026-10-25T23:30");
+  });
+});
+
+describe("every N: only even intervals", () => {
+  test("an N that does not divide the day or the hour is refused with the reason", () => {
+    assert.throws(() => parseWhen("every 7 hours"), /every 7 hours does not divide the day evenly .* use 1, 2, 3, 4, 6, 8, 12/);
+    assert.throws(() => parseWhen("every 45 minutes"), /every 45 minutes does not divide the hour evenly .* 15, 20, 30/);
+    assert.equal(parseWhen("every 8 hours").cron, "0 */8 * * *");
+    assert.equal(parseWhen("every 15 minutes").cron, "*/15 * * * *");
+  });
+  test("a cron line with an uneven step is described as the cron line, not as an interval", () => {
+    assert.equal(words("0 */7 * * *"), "cron 0 */7 * * *");
+    assert.equal(words("*/45 * * * *"), "cron */45 * * * *");
+    assert.equal(words("0 */6 * * *"), "every 6 hours");
+  });
+});

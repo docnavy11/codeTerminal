@@ -63,6 +63,8 @@ export type ScheduleInput = Partial<Omit<Schedule, "id" | "createdAt" | "updated
 /* ---------------- when: words → cron, cron → next time ---------------- */
 
 const DOW: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+const EVEN_HOURS = [1, 2, 3, 4, 6, 8, 12];
+const EVEN_MINUTES = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30];
 const DOW_NAME = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** "every day at 08:00", "weekdays at 07:30", "every monday at 9", "every 6 hours", "every 30 minutes", or a five-field cron line. */
@@ -82,9 +84,14 @@ export function parseWhen(text: string): { cron: string; words: string } {
   if ((m = /^(?:every )?weekdays?(?: at (.+))?$/.exec(t))) { const { h, m: mm } = time(m[1] ?? "8:00"); return { cron: `${mm} ${h} * * 1-5`, words: describe(`${mm} ${h} * * 1-5`) }; }
   if ((m = /^(?:every )?weekends?(?: at (.+))?$/.exec(t))) { const { h, m: mm } = time(m[1] ?? "9:00"); return { cron: `${mm} ${h} * * 0,6`, words: describe(`${mm} ${h} * * 0,6`) }; }
   if ((m = /^every ([a-z]+)(?: at (.+))?$/.exec(t)) && DOW[m[1]] !== undefined) { const { h, m: mm } = time(m[2] ?? "8:00"); return { cron: `${mm} ${h} * * ${DOW[m[1]]}`, words: describe(`${mm} ${h} * * ${DOW[m[1]]}`) }; }
-  if ((m = /^every (\d+) hours?$/.exec(t))) { const n = Number(m[1]); if (n < 1 || n > 23) throw new Error("when: every N hours, N between 1 and 23"); return { cron: `0 */${n} * * *`, words: describe(`0 */${n} * * *`) }; }
+  // "every N" is a cron step, and a cron step restarts at every midnight (or
+  // every full hour): "every 7 hours" would be 00, 07, 14, 21 and then 00
+  // again, a 3-hour gap, not an interval. Only an N that divides the day (or
+  // the hour) is an even interval, so only that N is accepted; anything else
+  // is refused with the reason rather than quietly run on an uneven rhythm.
+  if ((m = /^every (\d+) hours?$/.exec(t))) { const n = Number(m[1]); if (n < 1 || n > 23) throw new Error("when: every N hours, N between 1 and 23"); if (24 % n) throw new Error(`when: every ${n} hours does not divide the day evenly (the count restarts at midnight) — use ${EVEN_HOURS.join(", ")}, or a cron line with the exact hours`); return { cron: `0 */${n} * * *`, words: describe(`0 */${n} * * *`) }; }
   if ((m = /^(?:every )?hour(?:ly)?$/.exec(t))) return { cron: "0 * * * *", words: describe("0 * * * *") };
-  if ((m = /^every (\d+) min(?:ute)?s?$/.exec(t))) { const n = Number(m[1]); if (n < 1 || n > 59) throw new Error("when: every N minutes, N between 1 and 59"); return { cron: `*/${n} * * * *`, words: describe(`*/${n} * * * *`) }; }
+  if ((m = /^every (\d+) min(?:ute)?s?$/.exec(t))) { const n = Number(m[1]); if (n < 1 || n > 59) throw new Error("when: every N minutes, N between 1 and 59"); if (60 % n) throw new Error(`when: every ${n} minutes does not divide the hour evenly (the count restarts every hour) — use ${EVEN_MINUTES.join(", ")}, or a cron line with the exact minutes`); return { cron: `*/${n} * * * *`, words: describe(`*/${n} * * * *`) }; }
   if ((m = /^(?:monthly|every month)(?: on (?:the )?(\d{1,2})(?:st|nd|rd|th)?)?(?: at (.+))?$/.exec(t))) { const d = Number(m[1] ?? 1); const { h, m: mm } = time(m[2] ?? "8:00"); return { cron: `${mm} ${h} ${d} * *`, words: describe(`${mm} ${h} ${d} * *`) }; }
   if ((m = /^at (.+)$/.exec(t))) { const { h, m: mm } = time(m[1]); return { cron: `${mm} ${h} * * *`, words: describe(`${mm} ${h} * * *`) }; }
   const fields = t.split(" ");
@@ -132,40 +139,82 @@ export function describe(cron: string): string {
   const days = c.anyDow ? "every day" : eq(c.dow, [1, 2, 3, 4, 5]) ? "weekdays" : eq(c.dow, [0, 6]) ? "weekends" : "every " + [...c.dow].sort().map((d) => DOW_NAME[d]).join(", ");
   if (times && c.anyDom && c.mon.size === 12) return `${days} at ${times}`;
   if (times && !c.anyDom && c.mon.size === 12 && c.dom.size === 1) return `monthly on the ${[...c.dom][0]} at ${times}`;
-  if (/^\*\/\d+$/.test(f[0]) && c.hour.size === 24) return `every ${f[0].slice(2)} minutes`;
-  if (f[0] === "0" && /^\*\/\d+$/.test(f[1])) return `every ${f[1].slice(2)} hours`;
+  // Only a step that divides the hour or the day is an interval; a cron line
+  // like `0 */7 * * *` is shown as the cron line it is, not as "every 7 hours".
+  if (/^\*\/\d+$/.test(f[0]) && c.hour.size === 24 && c.anyDom && c.anyDow && c.mon.size === 12 && 60 % Number(f[0].slice(2)) === 0) return `every ${f[0].slice(2)} minutes`;
+  if (f[0] === "0" && /^\*\/\d+$/.test(f[1]) && c.anyDom && c.anyDow && c.mon.size === 12 && 24 % Number(f[1].slice(2)) === 0) return `every ${f[1].slice(2)} hours`;
   if (f[0] === "0" && c.hour.size === 24) return "every hour";
   return `cron ${cron.trim()}`;
 }
 const eq = (s: Set<number>, arr: number[]) => s.size === arr.length && arr.every((v) => s.has(v));
 
 const fmtCache = new Map<string, Intl.DateTimeFormat>();
-function localParts(d: Date, tz: string): { min: number; hour: number; dom: number; mon: number; dow: number } {
+/** The wall clock in `tz` at instant `t`, as if that wall time were UTC (ms). */
+function wallAt(t: number, tz: string): number {
   let f = fmtCache.get(tz);
-  if (!f) { f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" }); fmtCache.set(tz, f); }
+  if (!f) { f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" }); fmtCache.set(tz, f); }
   const p: Record<string, string> = {};
-  for (const x of f.formatToParts(d)) p[x.type] = x.value;
-  return { min: Number(p.minute), hour: Number(p.hour) % 24, dom: Number(p.day), mon: Number(p.month), dow: DOW[p.weekday.toLowerCase()] };
+  for (const x of f.formatToParts(new Date(t))) p[x.type] = x.value;
+  return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour) % 24, Number(p.minute));
 }
+/** How far `tz` is ahead of UTC at instant `t` (ms). */
+const offsetAt = (t: number, tz: string) => wallAt(Math.floor(t / 60_000) * 60_000, tz) - Math.floor(t / 60_000) * 60_000;
 
 export function validTimeZone(tz: string): boolean {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
 }
 
-/** The first instant after `after` that matches the cron line in `tz`; null if none within ~400 days. */
+/**
+ * The first instant after `after` that matches the cron line in `tz`; null if none within ~400 days.
+ *
+ * It walks local calendar days and turns each matching wall time into an
+ * instant, rather than stepping a UTC clock by fixed 24 hours — measured
+ * before this: a fixed step landed at 01:00 after a 23-hour day and skipped
+ * a Monday 00:30 run by a week. The two DST edges follow Vixie cron:
+ *   - spring forward (02:30 does not exist): a job at a fixed hour runs at the
+ *     first valid minute after the gap (03:00), once; a job on every hour
+ *     (`*` in the hour field) simply has no runs in the missing hour.
+ *   - fall back (02:30 happens twice): a job at a fixed hour runs once, at
+ *     the first 02:30; a job on every hour runs in both copies of the hour,
+ *     so "every 30 minutes" keeps its real-time rhythm.
+ */
 export function nextRun(cron: string, tz: string, after: Date): Date | null {
   const c = parseCron(cron);
   if (!validTimeZone(tz)) throw new Error(`unknown time zone "${tz}"`);
-  const MIN = 60_000;
-  let t = Math.floor(after.getTime() / MIN) * MIN + MIN;
-  const end = t + 400 * 24 * 60 * MIN;
-  while (t < end) {
-    const p = localParts(new Date(t), tz);
-    const dayOk = c.mon.has(p.mon) && (c.anyDom && c.anyDow ? true : c.anyDom ? c.dow.has(p.dow) : c.anyDow ? c.dom.has(p.dom) : (c.dom.has(p.dom) || c.dow.has(p.dow)));
-    if (!dayOk) { t += (24 * 60 - (p.hour * 60 + p.min)) * MIN; continue; }   // to the next local midnight (DST-safe: re-read parts next loop)
-    if (!c.hour.has(p.hour)) { t += (60 - p.min) * MIN; continue; }
-    if (!c.min.has(p.min)) { t += MIN; continue; }
-    return new Date(t);
+  const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
+  const from = Math.floor(after.getTime() / MIN) * MIN + MIN;   // the exact minute of `after` is excluded
+  const everyHour = c.hour.size === 24;
+  const hours = [...c.hour].sort((x, y) => x - y), mins = [...c.min].sort((x, y) => x - y);
+  const fromOffset = offsetAt(from, tz);
+  const start = wallAt(from, tz);
+  let day = Date.UTC(new Date(start).getUTCFullYear(), new Date(start).getUTCMonth(), new Date(start).getUTCDate()) - DAY;
+  for (let i = 0; i < 402; i++, day += DAY) {
+    const d = new Date(day);
+    const mon = d.getUTCMonth() + 1, dom = d.getUTCDate(), dow = d.getUTCDay();
+    const dayOk = c.mon.has(mon) && (c.anyDom && c.anyDow ? true : c.anyDom ? c.dow.has(dow) : c.anyDow ? c.dom.has(dom) : (c.dom.has(dom) || c.dow.has(dow)));
+    if (!dayOk) continue;
+    // The zone's offset before and after this local day: they differ on the
+    // one day a year the clocks change (no zone changes twice in two days).
+    const before = offsetAt(day - 15 * HOUR, tz), afterDay = offsetAt(day + 37 * HOUR, tz);
+    let best: number | null = null;
+    walls: for (const h of hours) for (const m of mins) {
+      const wall = day + h * HOUR + m * MIN;
+      if (wall - fromOffset + 3 * HOUR < from) continue;   // far before `from`, whatever the offset does today
+      let hits: number[];
+      if (before === afterDay) hits = [wall - before];
+      else hits = [...new Set([wall - before, wall - afterDay])].filter((t) => wallAt(t, tz) === wall).sort((x, y) => x - y);
+      if (hits.length === 0) {
+        // In the spring-forward gap: a fixed-hour job runs when the clock lands.
+        if (everyHour) continue;
+        let lo = wall - afterDay, hi = wall - before;           // offset is `before` at lo, `afterDay` at hi
+        while (hi - lo > MIN) { const mid = lo + Math.floor((hi - lo) / 2 / MIN) * MIN; if (offsetAt(mid, tz) === before) lo = mid; else hi = mid; }
+        hits = [hi];
+      } else if (hits.length > 1 && !everyHour) hits = [hits[0]];   // fall back: a fixed-hour job runs once
+      for (const t of hits) if (t >= from && (best === null || t < best)) best = t;
+      if (best !== null && hits[0] > best) break walls;   // later wall times only land later
+    }
+    if (best !== null) return new Date(best);
+    if (day - from > 400 * DAY) break;
   }
   return null;
 }
