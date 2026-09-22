@@ -42,16 +42,21 @@ export class Notifier {
 
   async #telegram(n: Notice): Promise<number | undefined> {
     const { token, chatId } = this.#c.telegram!;
-    const text = `*${escapeMd(n.title)}*\n${escapeMd(n.message)}${n.url ? `\n${escapeMd(n.url)}` : ""}`.slice(0, 4000);
-    const r = await withTimeout(this.#fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "MarkdownV2", disable_web_page_preview: true }),
-    }));
-    if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
-    // Best effort: a reply not being bindable to this exact message is a smaller loss than
-    // treating a malformed-but-200 response as a failed send.
-    const body = await r.json().catch(() => null) as { result?: { message_id?: number } } | null;
-    return body?.result?.message_id;
+    // In order: a long message arrives as parts that read top to bottom. The
+    // id returned is the last part's, the one a reply naturally answers.
+    let id: number | undefined;
+    for (const text of telegramTexts(n)) {
+      const r = await withTimeout(this.#fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: "MarkdownV2", disable_web_page_preview: true }),
+      }));
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
+      // Best effort: a reply not being bindable to this exact message is a smaller loss than
+      // treating a malformed-but-200 response as a failed send.
+      const body = await r.json().catch(() => null) as { result?: { message_id?: number } } | null;
+      id = body?.result?.message_id ?? id;
+    }
+    return id;
   }
 
   async #webhook(n: Notice): Promise<void> {
@@ -73,6 +78,48 @@ export class Notifier {
 
 /** Telegram's MarkdownV2 wants every one of these escaped. */
 export function escapeMd(s: string): string { return s.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, (c) => `\\${c}`); }
+
+/** Telegram refuses a message longer than this. */
+const TELEGRAM_MAX = 4096;
+/** Past this many parts the rest is cut: a notification, not a transcript. */
+const TELEGRAM_MAX_PARTS = 5;
+
+/**
+ * A notice as MarkdownV2 messages, each within Telegram's limit. The text
+ * used to be escaped and then cut to 4000, which could split a `\.` pair
+ * (a lone trailing backslash: Telegram rejects the message) and always cut
+ * the chat link off a long one. Now the raw text is cut and each piece
+ * escaped, so every message is valid on its own, and every one carries the
+ * title (numbered when there are several) and the link.
+ */
+export function telegramTexts(n: Notice): string[] {
+  // Title and link are short in practice; bounded here so the body always has room.
+  const title = Array.from(n.title).slice(0, 256).join("");
+  const link = n.url && n.url.length <= 1024 ? `\n${escapeMd(n.url)}` : "";
+  const head = (i: number, of: number) => `*${escapeMd(of > 1 ? `${title} (${i}/${of})` : title)}*\n`;
+  const more = escapeMd("…");
+  // Room for the longest header ("(5/5)"), the link and a cut marker.
+  const room = TELEGRAM_MAX - head(TELEGRAM_MAX_PARTS, TELEGRAM_MAX_PARTS).length - link.length - more.length;
+  const chars = Array.from(n.message);   // code points: never split a surrogate pair either
+  const parts: string[] = [];
+  let i = 0;
+  while (i < chars.length && parts.length < TELEGRAM_MAX_PARTS) {
+    let used = 0, j = i, lastBreak = -1;
+    while (j < chars.length) {
+      const w = escapeMd(chars[j]).length;
+      if (used + w > room) break;
+      used += w; j++;
+      if (chars[j - 1] === "\n") lastBreak = j;
+    }
+    // Prefer to end a part at a line break, if one falls in its second half.
+    if (j < chars.length && lastBreak > i + (j - i) / 2) j = lastBreak;
+    parts.push(chars.slice(i, j).join(""));
+    i = j;
+  }
+  const cut = i < chars.length;
+  if (!parts.length) parts.push("");
+  return parts.map((p, k) => head(k + 1, parts.length) + escapeMd(p) + (cut && k === parts.length - 1 ? more : "") + link);
+}
 
 function withTimeout<T>(p: Promise<T>, ms = 10_000): Promise<T> {
   return new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error(`timed out after ${ms / 1000}s`)), ms); p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
