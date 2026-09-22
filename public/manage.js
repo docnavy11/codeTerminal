@@ -154,7 +154,13 @@ function chatRow(c) {
 
 /* ---------------- one chat, read-only ---------------- */
 
-const md = (raw) => DOMPurify.sanitize(marked.parse(raw ?? ""), { USE_PROFILES: { html: true } });
+/* The same limits as the panel's transcript (sidepanel.js MD_PURIFY): model
+   text may not bring styles, forms or class/style/id into this page. */
+const md = (raw) => DOMPurify.sanitize(marked.parse(raw ?? ""), {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: ["style", "link", "meta", "base", "form", "input", "button", "textarea", "select", "option", "optgroup", "datalist", "output", "fieldset", "label", "dialog"],
+  FORBID_ATTR: ["class", "style", "id", "name", "form", "formaction", "action", "method", "target"],
+});
 
 const summarise = (input) => {
   if (!input || typeof input !== "object") return "";

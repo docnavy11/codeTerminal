@@ -51,7 +51,17 @@ function el(cls, text) {
   return d;
 }
 const setBusy = (v) => { busy = v; stop.disabled = !v; };
-const renderMd = (t, raw) => { t.innerHTML = DOMPurify.sanitize(marked.parse(raw), { USE_PROFILES: { html: true } }); };
+/* What the model writes is rendered here, next to the approval cards, and the
+   html profile alone kept <style>, <form>, <button> and class/style/id: a
+   reply could restyle the panel or draw something that looks like a card and
+   submits somewhere. Markdown needs none of that — links, code, tables,
+   lists and images still come through. */
+const MD_PURIFY = {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: ["style", "link", "meta", "base", "form", "input", "button", "textarea", "select", "option", "optgroup", "datalist", "output", "fieldset", "label", "dialog"],
+  FORBID_ATTR: ["class", "style", "id", "name", "form", "formaction", "action", "method", "target"],
+};
+const renderMd = (t, raw) => { t.innerHTML = DOMPurify.sanitize(marked.parse(raw), MD_PURIFY); };
 
 // Deltas arrive faster than frames. Rendering on every one re-parsed the whole
 // accumulated reply per token — measured 3.2s of main-thread time for a 24KB
