@@ -89,6 +89,9 @@ describe("model message", () => {
     assert.deepEqual(parseAgentMessage({ type: "model", model: "claude-opus-5" }), { type: "model", model: "claude-opus-5" });
     assert.deepEqual(parseAgentMessage({ type: "model", model: "" }), { type: "model", model: "" });
     assert.equal(parseAgentMessage({ type: "model", model: "x y" }), null);
+    // The CLI's 1M-context variants: refusing these left the picker showing a model the chat was not on.
+    assert.deepEqual(parseAgentMessage({ type: "model", model: "opus[1m]" }), { type: "model", model: "opus[1m]" });
+    assert.deepEqual(parseAgentMessage({ type: "model", model: "claude-fable-5-1[1m]" }), { type: "model", model: "claude-fable-5-1[1m]" });
     assert.equal(parseAgentMessage({ type: "model", model: "a".repeat(65) }), null);
     assert.equal(parseAgentMessage({ type: "model" }), null);
   });

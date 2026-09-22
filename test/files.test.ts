@@ -195,6 +195,17 @@ describe("denied paths (credentials, keys)", () => {
   test("leaves everything else readable", async () => {
     assert.ok((await safePath(root, "a.txt")).endsWith("a.txt"));
   });
+
+  test("zipping a folder leaves out what the denylist covers inside it", async () => {
+    // Only the ticked names went through safePath: ticking a project zipped its .env.
+    await mkdir(join(root, "proj", "nested"), { recursive: true });
+    await writeFile(join(root, "proj", ".env"), "TOKEN=SENSITIVE");
+    await writeFile(join(root, "proj", "nested", "creds.json"), "SENSITIVE");
+    await writeFile(join(root, "proj", "readme.md"), "fine");
+    await setDeniedPaths([join(root, "secretdir"), join(root, "loose.key"), join(root, "proj", ".env"), join(root, "proj", "nested")]);
+    const { entries } = await collectForZip(root, "", ["proj"], 1e9);
+    assert.deepEqual(entries.map((e) => e.name), ["proj/readme.md"]);
+  });
 });
 
 describe("collectForZip", () => {

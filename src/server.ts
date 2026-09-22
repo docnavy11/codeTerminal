@@ -2,7 +2,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { mkdirSync } from "node:fs";
-import { pipeline } from "node:stream";
+import { pipeline, type Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -616,6 +616,11 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       log(`[zip] ${entries.length} file(s), ${(bytes / 1024).toFixed(0)}KB`);
 
       const zip = new ZipFile();
+      // yazl reports a file it cannot read (unreadable, or grown since it was
+      // stat'ed — a log being written) on the ZipFile, not on outputStream.
+      // Unheard, that 'error' ended the process. The zip is already streaming,
+      // so all that is left is to cut the response short.
+      zip.on("error", (e: Error) => { log(`[zip] aborted: ${e.message}`); res.destroy(); });
       for (const e of entries) zip.addFile(e.abs, e.name);
       pipeline(zip.outputStream, res, () => {});
       zip.end();
@@ -782,8 +787,19 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
   });
 
-  server.on("upgrade", async (req: IncomingMessage, socket, head) => {
-    const route = new URL(req.url ?? "/", `http://${req.headers.host}`).pathname;
+  server.on("upgrade", (req: IncomingMessage, socket, head) => {
+    // A throw in here is an unhandled rejection, and that ends the process. It
+    // ran before the auth check: one request with `Host: [` from any tailnet
+    // peer took every chat and shell down. Refuse the request instead.
+    upgrade(req, socket, head).catch((e: unknown) => {
+      logDeny("upgrade", `bad request: ${e instanceof Error ? e.message : String(e)}`);
+      if (!socket.destroyed) { socket.write("HTTP/1.1 400 Bad Request\r\n\r\n"); socket.destroy(); }
+    });
+  });
+
+  const upgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
+    // A constant base: the Host header is the client's to spoil.
+    const route = new URL(req.url ?? "/", "http://x").pathname;
     if (route === "/pty" && !SHELL) {
       logDeny(route, "the shell pane is off (CODETERM_SHELL=0)");
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
@@ -815,7 +831,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       else if (route === "/browser/live") serverBrowser.attachViewer(ws);
       else attachShell(ws, ctx);
     });
-  });
+  };
 
   /**
    * At boot this can start before tailscaled has assigned the address, and

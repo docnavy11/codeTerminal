@@ -50,6 +50,18 @@ describe("headers and static", () => {
     assert.equal((await s.req("/chats", { headers: { origin: s.origin } })).status, 200);
     assert.equal((await s.req("/chats")).status, 200, "loopback with no Origin (curl) is fine in localhost mode");
   });
+  test("a malformed upgrade is refused, not fatal: bad path, bad Host", async () => {
+    // Both threw inside the async upgrade handler, before the auth check, and
+    // the unhandled rejection ended the process for every chat and shell.
+    assert.match(await upgradeTo(s.port, "//[", []), /^HTTP\/1\.1 400/);
+    const raw = await new Promise<string>((res) => {
+      const c = connect(s.port, "127.0.0.1", () => c.write("GET /ws HTTP/1.1\r\nHost: [\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"));
+      let out = ""; c.on("data", (d) => { out += d.toString(); c.destroy(); }); c.on("close", () => res(out)); c.on("error", () => res(out));
+    });
+    assert.match(raw, /^HTTP\/1\.1 (400|403)/, raw);
+    assert.equal((await s.req("/chats")).status, 200, "still serving");
+  });
+
   test("refusals are logged at most DENY_LOG_BURST times a minute", async () => {
     const before = s.warns.filter((w) => w.startsWith("[deny]")).length;
     for (let i = 0; i < DENY_LOG_BURST + 15; i++) await s.req("/chats", { headers: { "sec-fetch-site": "cross-site" } });
@@ -231,6 +243,19 @@ describe("/files", () => {
     const unk = await s.req("/files/read?path=blob.xyz&inline=1");
     assert.match(unk.headers.get("content-disposition") ?? "", /^attachment/);
     assert.match((await s.req("/files/read?path=hello.txt")).headers.get("content-disposition") ?? "", /^attachment/, "without inline: a download, as before");
+  });
+
+  test("zip: a file that cannot be read cuts the download short instead of ending the process", async () => {
+    const { writeFile, mkdir, chmod } = await import("node:fs/promises");
+    await mkdir(join(s.root, "files", "locked"), { recursive: true });
+    await writeFile(join(s.root, "files", "locked", "ok.txt"), "ok");
+    await writeFile(join(s.root, "files", "locked", "no.txt"), "no");
+    await chmod(join(s.root, "files", "locked", "no.txt"), 0o000);
+    try {
+      const z = await s.req("/files/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: "", names: ["locked"] }) });
+      await z.arrayBuffer().catch(() => {});   // the stream is cut; that is the point
+      assert.equal((await s.req("/chats")).status, 200, "still serving");
+    } finally { await chmod(join(s.root, "files", "locked", "no.txt"), 0o600); }
   });
 
   test("zip: json and urlencoded, single name, and the refusals", async () => {

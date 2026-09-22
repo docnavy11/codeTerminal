@@ -230,6 +230,10 @@ export async function collectForZip(
     if (st.isSymbolicLink()) return;
     if (st.isDirectory()) {
       for (const child of await readdir(abs)) {
+        // safePath checked only the ticked names. Without this, ticking
+        // `.config` zipped `.config/gh/hosts.yml`, and ticking a project zipped
+        // its `.env` — the very files a direct download refuses.
+        if (isDenied(join(abs, child))) continue;
         await walk(join(abs, child), `${rel}/${child}`);
       }
       return;
