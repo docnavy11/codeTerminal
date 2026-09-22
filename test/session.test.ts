@@ -668,10 +668,10 @@ describe("granted rules are replayed at start", () => {
     assert.deepEqual(sdk.last.options.additionalDirectories, ["/srv/data"]);
     s.close(); await done;
   });
-  test("nothing granted: no settings option at all", async () => {
+  test("nothing usable granted (none, or a malformed saved entry): no settings option, and the session still starts", async () => {
     const sdk = fakeSdk();
     const s = new Session("/w", () => {}, { chatId: "c", bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
-    const done = s.start(); await settle();
+    const done = s.start(undefined, [{ type: "addRules" } as never, { type: "addDirectories" } as never]); await settle();
     assert.equal(sdk.last.options.settings, undefined);
     s.close(); await done;
   });

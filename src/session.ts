@@ -148,8 +148,11 @@ export function replayGrants(granted: PermissionUpdate[]): { rules: { allow: str
   const rules = { allow: [] as string[], deny: [] as string[], ask: [] as string[] };
   const directories: string[] = [];
   for (const u of granted) {
-    if (u.type === "addRules") for (const r of u.rules) rules[u.behavior].push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
-    else if (u.type === "addDirectories") directories.push(...u.directories);
+    // Read back from a saved chat record: skip anything malformed rather than
+    // refuse to start the session over it.
+    if (u?.type === "addRules" && Array.isArray(u.rules) && u.behavior in rules) {
+      for (const r of u.rules) if (typeof r?.toolName === "string") rules[u.behavior].push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
+    } else if (u?.type === "addDirectories" && Array.isArray(u.directories)) directories.push(...u.directories.filter((d) => typeof d === "string"));
   }
   const any = rules.allow.length + rules.deny.length + rules.ask.length > 0;
   return { rules: any ? rules : null, directories };
