@@ -14,7 +14,7 @@ export type PruneOptions = {
   maxAgeMs?: number;
   maxFiles?: number;
   now?: number;
-  /** Which files in `dir` are ours to sweep; the paste spool holds jpg/gif/webp too. */
+  /** Which files in `dir` are ours to sweep (default: screenshots, png and jpeg); the paste spool holds gif/webp too. */
   extensions?: string[];
 };
 
@@ -33,7 +33,9 @@ export async function pruneScreenshots(dir = SHOT_DIR, opts: PruneOptions = {}):
   const maxAgeMs = opts.maxAgeMs ?? MAX_AGE_MS;
   const maxFiles = opts.maxFiles ?? MAX_FILES;
   const now = opts.now ?? Date.now();
-  const exts = opts.extensions ?? [".png"];
+  // Screenshots are saved as .jpg since they are shrunk to JPEG; a default of
+  // .png alone swept none of them and the directory grew without bound.
+  const exts = opts.extensions ?? [".png", ".jpg", ".jpeg"];
 
   let names: string[];
   try {
