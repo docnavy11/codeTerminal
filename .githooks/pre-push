@@ -26,12 +26,35 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
 done
 changed=$(git diff --name-only ${range:-HEAD~1..HEAD} 2>/dev/null || git diff --name-only HEAD)
 
+# The browser suite drives real Chromium on four workers, and on a busy box a
+# page can stop answering for longer than a click's 30 s (three at once, in
+# three workers, 2026-09-22 — the run took 158 s instead of ~35). Failures are
+# rerun once, one at a time: a real regression fails again and refuses the
+# push; one that passes alone goes through, named, with the box's load and
+# memory pressure, so the next one can be told apart.
+browser_suite() {
+  local out failed load mem
+  out=$(mktemp)
+  (cd test/browser && python3 -m pytest -q -n 4 --dist loadgroup) 2>&1 | tee "$out"
+  if [ "${PIPESTATUS[0]}" -eq 0 ]; then rm -f "$out"; return 0; fi
+  # pytest.ini turns the cache off, so --lf has nothing to go on: the node ids
+  # come from the summary lines of the run that just failed.
+  failed=$(sed -n 's/^FAILED \([^ ]*\).*/\1/p' "$out" | sort -u); rm -f "$out"
+  [ -n "$failed" ] || return 1          # a crash, not a failing test: nothing to rerun
+  load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+  mem=$(head -1 /proc/pressure/memory 2>/dev/null)
+  printf '\n\033[33mpre-push: browser failures — rerunning just those, one at a time (load %s; memory %s)\033[0m\n' "${load:-?}" "${mem:-?}"
+  # shellcheck disable=SC2086  # one node id per word, on purpose
+  (cd test/browser && python3 -m pytest -q -n 0 $failed) || return 1
+  printf '\n\033[33mpre-push: they passed on their own: flaky under load, not a regression:\033[0m\n%s\n' "$failed"
+}
+
 run() { printf '\n\033[1mpre-push: %s\033[0m\n' "$1"; shift; "$@" || { printf '\n\033[31mpre-push: that failed — push refused. --no-verify overrides.\033[0m\n'; exit 1; }; }
 
 run "typecheck and unit tests" npm run --silent check
 
 if grep -qE '^(src/|public/|extension/|test/browser/)' <<<"$changed"; then
-  run "browser suite" npm run --silent test:browser
+  run "browser suite" browser_suite
 else
   echo "pre-push: browser suite skipped (nothing it covers changed)"
 fi

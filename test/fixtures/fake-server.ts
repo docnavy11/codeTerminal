@@ -11,6 +11,15 @@ import { boot } from "../../src/server.js";
 import { fakeSdk, type FakeQuery } from "../fakes/sdk.js";
 
 const ROOT = process.env.ROOT!; const PORT = Number(process.env.PORT);
+
+/* The test run holds the other end of stdin and never writes to it. When the
+   run dies without stopping this server — killed by a timeout, an aborted
+   push — the pipe closes, and so does this. Otherwise it lived on for days. */
+if (process.env.CT_EXIT_WITH_PARENT === "1") {
+  process.stdin.on("end", () => process.exit(0));
+  process.stdin.on("error", () => process.exit(0));
+  process.stdin.resume();
+}
 for (const d of ["ws", "chats", "files", "projects/p1", "home"]) mkdirSync(join(ROOT, d), { recursive: true });
 for (const d of ["ws", "files"]) {
   writeFileSync(join(ROOT, d, "hello.txt"), "hello from the fixture\n");
