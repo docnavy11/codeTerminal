@@ -70,14 +70,17 @@ export async function createSession(name: string, cwd: string): Promise<void> {
   await run("tmux", ["new-session", "-d", "-s", name, "-c", cwd], { timeout: 5000 });
 }
 
+/* A bare `-t name` is a prefix match when no session has that exact name:
+   `kill-session -t dev` killed "dev-server" (reproduced). The leading `=`
+   makes every target here exact, as hasSession and capture already were. */
 export async function renameSession(from: string, to: string): Promise<void> {
   if (!validName(from) || !validName(to)) throw new Error("a session name is letters, digits, dot, dash or underscore (1–64)");
-  await run("tmux", ["rename-session", "-t", from, to], { timeout: 5000 });
+  await run("tmux", ["rename-session", "-t", `=${from}`, to], { timeout: 5000 });
 }
 
 export async function killSession(name: string): Promise<void> {
   if (!validName(name)) throw new Error("no such session");
-  await run("tmux", ["kill-session", "-t", name], { timeout: 5000 });
+  await run("tmux", ["kill-session", "-t", `=${name}`], { timeout: 5000 });
 }
 
 export async function hasSession(name: string): Promise<boolean> {
