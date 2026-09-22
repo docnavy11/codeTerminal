@@ -31,6 +31,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Manager, LiveChat } from "./conversation.js";
 import type { Notifier } from "./notify.js";
+import type { ClientEvent } from "./protocol.js";
 
 export type TelegramListenerDeps = {
   convo: Manager;
@@ -39,14 +40,18 @@ export type TelegramListenerDeps = {
   chatId: string;
   /** The standing chat's own notifications link back into it, same as a schedule's do. */
   publicBase: string;
-  /** Loopback address this server answers its own API on — always trusted
-      regardless of network mode (see auth.ts), so the standing chat's own
-      curl calls need no token. */
+  /** The address this server answers its own API on. It is the bind address,
+      not 127.0.0.1: the server listens on nothing else. A request from this
+      machine to it passes auth as the owner (tailnet whois; loopback and
+      trusted-CIDR modes likewise), so the standing chat's curl needs no token. */
   apiBase: string;
   /** cwd for the standing chat: nothing but a CLAUDE.md (written on first
       use) telling it how to look up this server's own schedules/chats/
       prompts. A person's actual project directories are never touched. */
   contextDir: string;
+  /** Telegram user ids allowed to drive the agent. Empty: anyone in the
+      configured chat, which in a group is every member. */
+  allowedUsers?: string[];
   fetch?: typeof fetch;
   log?: (l: string) => void;
   warn?: (l: string) => void;
@@ -57,6 +62,7 @@ type TgMessage = {
   date: number;
   text?: string;
   chat: { id: number | string };
+  from?: { id: number | string };
   reply_to_message?: { message_id: number };
 };
 type TgUpdate = { update_id: number; message?: TgMessage };
@@ -72,6 +78,8 @@ const TELEGRAM_CHAT_TITLE = "Telegram";
 /** Mirrors schedule.ts's own default (600_000 = 10 minutes) — this chat is
     unattended the same way a scheduled run is, so it gets the same wait. */
 const TELEGRAM_WAIT_MS = 600_000;
+/** The words resolveOldestPending (session.ts) takes as an answer to a card. */
+const ANSWER_WORD = /^(y|yes|allow|ok|okay|approve|a|always|n|no|deny|refuse|stop)$/i;
 
 /** Claude Code reads CLAUDE.md from a chat's cwd on every turn, unprompted —
     this is the whole mechanism, no custom tool needed. Loopback needs no
@@ -82,7 +90,7 @@ const CONTEXT_MD = (apiBase: string) => `# The standing Telegram chat
 
 This is the chat a phone text lands in when nothing more specific was meant
 — an ordinary conversation, with one thing worth knowing: this server's own
-state is one curl away, on loopback, no auth needed.
+state is one curl away on this server's own address, no auth needed from this machine.
 
 - \`curl -s ${apiBase}/schedules\` — scheduled prompts (title, when, project,
   last run), plus the saved prompts and projects they can use
@@ -112,6 +120,8 @@ export class TelegramListener {
       ids: the pool evicts and re-admits a chat as a fresh object, and the
       fresh one needs rewiring — an id-keyed set would wrongly skip it. */
   #wired = new WeakSet<LiveChat>();
+  #warnedStranger = false;
+  #toldBacklog = false;
 
   constructor(d: TelegramListenerDeps) {
     this.#d = d;
@@ -177,8 +187,18 @@ export class TelegramListener {
       for (const u of updates) {
         this.#offset = u.update_id + 1;
         const m = u.message;
-        if (!m?.text || String(m.chat.id) !== String(this.#d.chatId)) continue;
-        if (m.date < this.#startedAt) continue;   // draining a pre-restart backlog, not acting on it
+        if (!m?.text) continue;
+        const allowed = this.#d.allowedUsers?.length ? this.#d.allowedUsers.includes(String(m.from?.id)) : true;
+        if (String(m.chat.id) !== String(this.#d.chatId) || !allowed) {
+          if (!this.#warnedStranger) { this.#warnedStranger = true; this.#warn(`[telegram] ignoring a message from chat ${m.chat.id}, user ${m.from?.id ?? "?"} (not the configured chat or user); further ones are dropped silently`); }
+          continue;
+        }
+        if (m.date < this.#startedAt) {
+          // Draining a pre-restart backlog, not acting on it — but say so once,
+          // or a message sent during a restart just vanishes.
+          if (!this.#toldBacklog) { this.#toldBacklog = true; await this.#reply("The server restarted; anything sent while it was down was not acted on. Send it again if it still matters."); }
+          continue;
+        }
         await this.#handle(m).catch((e) => this.#warn(`[telegram] ${e instanceof Error ? e.message : String(e)}`));
       }
       // getUpdates normally only returns once its own 50s block finds
@@ -195,11 +215,29 @@ export class TelegramListener {
     const targeted = targetId ? this.#d.convo.get(targetId) : null;
     const chat = targeted ?? await this.#standingChat();
 
+    // A phone has no Stop button: /stop interrupts whatever that chat is doing.
+    if (/^\/stop(@\w+)?$/i.test(text.trim())) {
+      if (!chat.busy) { await this.#reply("Nothing is running there."); return; }
+      await chat.session.interrupt().catch(() => {});
+      await this.#reply("⏹ stopped.");
+      return;
+    }
     const resolved = chat.session.resolveOldestPending(text);
     if (resolved === "answered") { this.#log(`[telegram] resolved a pending card in ${chat.id}`); await this.#reply("✓ done."); return; }
     if (resolved === "unclear") { await this.#reply("Reply yes, always, or no to answer that one."); return; }
+    // A bare "yes" with no card open is an answer that came too late — the
+    // card was refused when its wait ran out. Sent on as a prompt, the agent
+    // read it as permission for the very thing that had just been denied.
+    if (ANSWER_WORD.test(text.trim())) {
+      await this.#reply("Nothing in that chat is waiting for an answer any more — that card already closed. Send a full message if you meant to ask it something.");
+      return;
+    }
     try {
       await chat.prompt(text, async () => undefined);
+      // A chat reached by reply or fallback is usually one nobody is watching
+      // (a finished scheduled run). Left attended, a card it raised had no
+      // notification and no timeout, so it waited forever and kept the chat busy.
+      if (chat === targeted && !this.#wired.has(chat) && !chat.unattended) this.#watchOneTurn(chat);
       this.#log(`[telegram] new prompt in ${chat.id}`);
       // No ack here on purpose: the standing chat's own wiring pushes the
       // real reply back when the turn ends, which is the confirmation. A
@@ -268,6 +306,32 @@ export class TelegramListener {
           .then((r) => this.noteSent(r.telegramMessageId, chat.id));
       }
     }, false);
+  }
+
+  /** Wire a chat for the one turn Telegram started: its cards are announced
+      and time out as the standing chat's do, its reply comes back here, and
+      then it is put back as it was. */
+  #watchOneTurn(chat: LiveChat): void {
+    const url = `${this.#d.publicBase}/?chat=${encodeURIComponent(chat.id)}`;
+    chat.setUnattended({
+      waitMs: TELEGRAM_WAIT_MS,
+      onEvent: (kind, detail) => {
+        if (kind !== "asked") return;
+        void this.#d.notifier.send({ title: "Waiting for you", message: `${detail}\n\nReply here to answer.`, url })
+          .then((r) => this.noteSent(r.telegramMessageId, chat.id));
+      },
+    });
+    let lastText = "";
+    const watch = (e: ClientEvent) => {
+      if (e.kind === "text") lastText = e.text;
+      else if (e.kind === "turn_end") {
+        chat.detach(watch);
+        chat.setUnattended(null);
+        void this.#d.notifier.send({ title: chat.record.title, message: lastText || "(no reply)", url })
+          .then((r) => this.noteSent(r.telegramMessageId, chat.id));
+      }
+    };
+    chat.attach(watch, false);
   }
 
   async #reply(text: string): Promise<void> {

@@ -15,7 +15,7 @@ import type { Manager, LiveChat } from "../src/conversation.js";
  * which chat a reply lands in, and what it does there.
  */
 type Resolved = "answered" | "unclear" | "none";
-type Row = { title: string; resolve?: Resolved; promptErr?: string; prompts: string[]; attachCalls: number; asked?: (kind: string, detail: string) => void; emit?: (e: { kind: string; text?: string }) => void; cwd?: string; mode?: string };
+type Row = { title: string; resolve?: Resolved; promptErr?: string; prompts: string[]; attachCalls: number; asked?: (kind: string, detail: string) => void; emit?: (e: { kind: string; text?: string }) => void; cwd?: string; mode?: string; busy?: boolean; interrupted?: number };
 
 function fakeConvo(seed: Record<string, { resolve?: Resolved; promptErr?: string }> = {}) {
   const rows = new Map<string, Row>();
@@ -29,11 +29,15 @@ function fakeConvo(seed: Record<string, { resolve?: Resolved; promptErr?: string
     const obj = {
       get id() { return id; },
       get title() { return rows.get(id)!.title; },
+      get record() { return { title: rows.get(id)!.title }; },
+      get unattended() { return rows.get(id)!.asked !== undefined; },
       get mode() { return rows.get(id)!.mode ?? "default"; },
       rename(t: string) { rows.get(id)!.title = t; return true; },
       async setCwd(abs: string) { rows.get(id)!.cwd = abs; },
       async setMode(m: string) { rows.get(id)!.mode = m; },
+      get busy() { return rows.get(id)!.busy ?? false; },
       session: {
+        interrupt: async () => { rows.get(id)!.interrupted = (rows.get(id)!.interrupted ?? 0) + 1; },
         resolveOldestPending: (text: string) => {
           const row = rows.get(id)!;
           const r: Resolved = row.resolve ?? "none";
@@ -48,6 +52,7 @@ function fakeConvo(seed: Record<string, { resolve?: Resolved; promptErr?: string
       },
       setUnattended(cfg: { onEvent: (kind: string, detail: string) => void } | null) { rows.get(id)!.asked = cfg?.onEvent; },
       attach(fn: (e: { kind: string; text?: string }) => void) { rows.get(id)!.attachCalls++; rows.get(id)!.emit = fn; },
+      detach(fn: (e: { kind: string; text?: string }) => void) { if (rows.get(id)!.emit === fn) rows.get(id)!.emit = undefined; },
     } as unknown as LiveChat;
     objs.set(id, obj);
     return obj;
@@ -217,7 +222,8 @@ describe("TelegramListener", () => {
     l.start(); await settle(); await l.stop();
     assert.deepEqual(resolvedLog, [], "an hour-old update from before this process started is never acted on");
     assert.equal(rows.size, 1, "chat-a only — the standing chat was never created either");
-    assert.deepEqual(sent, []);
+    assert.equal(sent.length, 1, "one notice that the backlog was dropped, not one per message");
+    assert.match(sent[0].text, /restarted/);
   });
 
   test("a busy targeted chat's prompt error comes back as a reply instead of being swallowed", async () => {
@@ -226,6 +232,57 @@ describe("TelegramListener", () => {
     l.start(); await settle(); await l.stop();
     assert.deepEqual(prompts("chat-a"), []);
     assert.equal(sent[0].text, "Still working — press Stop first.");
+  });
+
+  test("a late 'yes' to a card that already closed is not sent on as a prompt", async () => {
+    // The card was auto-denied when its wait ran out; forwarded, "yes" read as
+    // permission for the action that had just been refused.
+    const { l, prompts, sent } = build([{ ...msg("yes", { reply_to_message: { message_id: 555 } }) }], { "chat-a": { resolve: "none" } });
+    l.noteSent(555, "chat-a");
+    l.start(); await settle(); await l.stop();
+    assert.deepEqual(prompts("chat-a"), []);
+    assert.match(sent[0].text, /already closed/);
+  });
+
+  test("a prompt into an unwatched chat is watched for that one turn: cards notify, the reply comes back, then it is let go", async () => {
+    const { l, rows, prompts, sent } = build([{ ...msg("check again", { reply_to_message: { message_id: 555 } }) }], { "chat-a": { resolve: "none" } });
+    l.noteSent(555, "chat-a");
+    l.start(); await settle();
+    assert.deepEqual(prompts("chat-a"), ["check again"]);
+    assert.ok(rows.get("chat-a")!.asked, "unattended for the turn: a card would notify and time out");
+    rows.get("chat-a")!.asked!("asked", "Bash: ls");
+    rows.get("chat-a")!.emit!({ kind: "text", text: "all good" });
+    rows.get("chat-a")!.emit!({ kind: "turn_end" });
+    await settle(); await l.stop();
+    assert.ok(sent.some((m) => m.text.includes("Bash: ls")), JSON.stringify(sent));
+    assert.ok(sent.some((m) => m.text.includes("all good")), JSON.stringify(sent));
+    assert.equal(rows.get("chat-a")!.asked, undefined, "attended again after the turn");
+    assert.equal(rows.get("chat-a")!.emit, undefined, "watcher detached");
+  });
+
+  test("with CODETERM_TELEGRAM_USERS set, only those senders drive it — in a group, not every member", async () => {
+    const { fetchFn, sent } = fakeTelegramFetch([
+      { update_id: 1, message: { message_id: 1, date: NOW_S + 5, text: "rm it all", chat: { id: "9" }, from: { id: 666 } } },
+      { update_id: 2, message: { message_id: 2, date: NOW_S + 5, text: "hello", chat: { id: "9" }, from: { id: 42 } } },
+    ]);
+    const { convo, rows } = fakeConvo();
+    const warns: string[] = [];
+    const l = new TelegramListener({ convo, notifier: new Notifier({ telegram: { token: "T", chatId: "9" }, fetch: fetchFn }), token: "T", chatId: "9", publicBase: "http://x", apiBase: "http://a", contextDir: mkdtempSync(join(tmpdir(), "ct-tg-")), allowedUsers: ["42"], fetch: fetchFn, warn: (w) => warns.push(w) });
+    l.start(); await settle(); await l.stop();
+    const standing = [...rows.values()].find((r) => r.title === "Telegram");
+    assert.deepEqual(standing?.prompts, ["hello"]);
+    assert.equal(warns.filter((w) => w.includes("ignoring")).length, 1);
+    assert.deepEqual(sent, []);
+  });
+
+  test("/stop interrupts the chat it is aimed at; nothing to stop says so", async () => {
+    const { l, rows, sent } = build([{ ...msg("/stop", { reply_to_message: { message_id: 555 } }) }], { "chat-a": {} });
+    rows.get("chat-a")!.busy = true;
+    l.noteSent(555, "chat-a");
+    l.start(); await settle(); await l.stop();
+    assert.equal(rows.get("chat-a")!.interrupted, 1);
+    assert.match(sent[0].text, /stopped/);
+    assert.deepEqual(rows.get("chat-a")!.prompts, [], "not sent on as a prompt");
   });
 
   test("noteSent caps how many sent-message ids it tracks, never throws", () => {

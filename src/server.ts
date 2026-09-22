@@ -724,7 +724,8 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
      get to drive the agent. */
   const telegramListener = cfg.notify?.telegram && cfg.telegramControl
     ? new TelegramListener({ convo, notifier, token: cfg.notify.telegram.token, chatId: cfg.notify.telegram.chatId, publicBase,
-                             contextDir: cfg.telegramContextDir ?? join(WORKSPACE, ".telegram-context"), apiBase: `http://127.0.0.1:${PORT}`, log, warn })
+                             contextDir: cfg.telegramContextDir ?? join(WORKSPACE, ".telegram-context"), apiBase: `http://${HOST.includes(":") ? `[${HOST}]` : HOST}:${PORT}`,
+                             allowedUsers: (process.env.CODETERM_TELEGRAM_USERS ?? "").split(",").map((u) => u.trim()).filter(Boolean), log, warn })
     : null;
   telegramListener?.start();
   /* A card in a run nobody is watching. The notification is the only thing
