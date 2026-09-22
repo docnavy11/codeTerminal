@@ -380,6 +380,10 @@
 
       term = new Terminal({
         cursorBlink: true, scrollback: 5000, fontFamily: cssVar("--mono"),
+        /* On a Mac xterm forces a selection past a mouse-reporting app (tmux
+           with mouse on) only with Option held, and only with this set; Shift,
+           which works elsewhere, does nothing there. */
+        macOptionClickForcesSelection: true,
         fontSize: Math.max(8, Math.round(parseFloat(getComputedStyle(html).fontSize) - 1)),
       });
       fit = new FitAddon.FitAddon();
@@ -398,8 +402,8 @@
          Ctrl+C has nothing to copy even when there is a highlight.
          So the selection is put on the clipboard the moment the drag ends,
          and Ctrl+Shift+C / Cmd+C / Ctrl+Insert copy it again on demand. */
-      const copySelection = async () => {
-        const text = term.getSelection();
+      const copySelection = () => writeClipboard(term.getSelection());
+      const writeClipboard = async (text) => {
         if (!text) return;
         try { await navigator.clipboard.writeText(text); return; }
         catch { /* no clipboard API: not a secure context, or permission denied */ }
@@ -418,6 +422,22 @@
          drag, which would be a clipboard write per mousemove. The timeout lets
          xterm finish the selection it is still computing for this same event. */
       termEl.addEventListener("mouseup", () => setTimeout(copySelection, 0));
+      /* A plain drag in tmux (mouse on) is tmux's own selection, and tmux hands
+         it to the outer terminal as OSC 52 (set-clipboard external) — the same
+         for copy mode, which reaches text long scrolled away. Honoured only
+         just after a click or key in this pane: any program can print OSC 52,
+         and a file you cat must not be able to fill your clipboard on its own.
+         A read request ("?") is never answered. */
+      let lastGesture = 0;
+      for (const ev of ["mousedown", "mouseup", "keydown"]) termEl.addEventListener(ev, () => { lastGesture = Date.now(); }, true);
+      term.parser.registerOscHandler(52, (data) => {
+        const payload = data.slice(data.indexOf(";") + 1);
+        if (!payload || payload === "?" || Date.now() - lastGesture > 2000) return true;
+        let text;
+        try { text = new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))); } catch { return true; }
+        writeClipboard(text);
+        return true;
+      });
       term.attachCustomKeyEventHandler((e) => {
         if (e.type !== "keydown" || !term.hasSelection()) return true;
         const copyKey = (e.code === "KeyC" && ((e.ctrlKey && e.shiftKey) || (e.metaKey && !e.ctrlKey)))
