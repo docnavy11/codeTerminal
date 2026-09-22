@@ -14,3 +14,6 @@ __pycache__/
 server-browser/
 schedules.json
 browser-allow.json
+
+# Written by the server on every start, with this machine's bind address in it.
+telegram-context/
