@@ -730,6 +730,28 @@ def test_browser_picker_auto_unpins_and_a_missing_pin_is_shown(page, server):
     assert page.eval_on_selector("#browser", "s => [...s.options].map(o => o.value)") == ["", "bbbbbb-browser"]
 
 
+def test_thinking_after_a_chat_switch_shows_in_the_log(page, server):
+    """A switch or reconnect empties the log; a thinking block that was
+    streaming must be forgotten with it, or the next one streams into a
+    detached element and is never seen."""
+    open_ui(page, server)
+    page.evaluate("() => handle({ kind: 'thinking_delta', text: 'first' })")
+    page.evaluate("() => handle({ kind: 'cleared' })")
+    page.evaluate("() => handle({ kind: 'thinking_delta', text: 'second thought' })")
+    wait(page, "() => [...document.querySelectorAll('#log .think .tt')].some(t => t.textContent === 'second thought')", what="the thinking block in the log")
+
+
+def test_model_picker_labels_an_unlisted_model_and_drops_it_on_switch(page, server):
+    open_ui(page, server)
+    listed = "[{ value: 'default', label: 'Default (Opus)' }, { value: 'sonnet', label: 'Sonnet' }]"
+    page.evaluate(f"() => {{ handle({{ kind: 'models', models: {listed} }}); handle({{ kind: 'model', model: 'claude-retired-1' }}); }}")
+    assert page.eval_on_selector("#model", "s => s.selectedOptions[0].textContent") == "claude-retired-1 (not listed)"
+    # another chat: the server sends cleared, the list, then that chat's model
+    page.evaluate(f"() => {{ handle({{ kind: 'cleared' }}); handle({{ kind: 'models', models: {listed} }}); handle({{ kind: 'model', model: 'sonnet' }}); }}")
+    assert page.eval_on_selector("#model", "s => [...s.options].map(o => o.value)") == ["", "sonnet"]
+    assert page.eval_on_selector("#model", "s => s.value") == "sonnet"
+
+
 def test_a_large_pasted_png_is_encoded_not_emptied(page, server):
     """A PNG too big to keep as PNG is re-encoded as JPEG. That used to read
     the bitmap's size after closing it (0×0) and send "data:,", which the

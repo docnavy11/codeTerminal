@@ -118,6 +118,21 @@ function scheduleStreamRender() {
   });
 }
 
+/** An option for a model id the CLI's list does not have. */
+function unlistedModel(id) {
+  const o = new Option(`${id} (not listed)`, id);
+  o.dataset.unlisted = "1";
+  return o;
+}
+
+/* The log was just emptied (a reconnect's replay, a chat switch): forget the
+   blocks that were streaming into it. Only the reply was forgotten before, so
+   the next thinking block streamed into a detached element and never showed. */
+function resetStreams() {
+  streaming = null; streamRaw = "";
+  thinking = null; thinkRaw = "";
+}
+
 /* Everything platform-specific lives behind PLATFORM, defined by whichever
    host page loaded this file: the extension panel (chrome.* APIs) or the
    mobile page (plain URLs, since it is served by the server itself). The logic
@@ -171,7 +186,7 @@ async function connect() {
     // The server replays the whole transcript on every attach. Without this
     // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
     // was already on screen — measured: the transcript doubled each time.
-    log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = ""; lastContext = null; paintContext();
+    log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; resetStreams(); lastContext = null; paintContext();
     startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0;
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
@@ -240,15 +255,19 @@ function handle(m) {
       const def = (m.models ?? []).find((mo) => mo.value === "default");
       modelSel.replaceChildren(new Option(def?.label ?? "default", ""));
       for (const mo of m.models ?? []) if (mo.value !== "default") modelSel.append(new Option(mo.label, mo.value));
-      if (cur && !modelSel.querySelector(`option[value="${CSS.escape(cur)}"]`)) modelSel.append(new Option(cur, cur));
+      if (cur && !modelSel.querySelector(`option[value="${CSS.escape(cur)}"]`)) modelSel.append(unlistedModel(cur));
       modelSel.value = cur;
       break;
     }
     case "model":
-      if (m.model && !modelSel.querySelector(`option[value="${CSS.escape(m.model)}"]`)) modelSel.append(new Option(m.model, m.model));
+      // A model the CLI does not list (set earlier, or since retired) gets an
+      // option of its own, labelled so, for this chat only: the next chat's
+      // "model" drops it rather than leaving it in the list for every chat.
+      for (const o of [...modelSel.options]) if (o.dataset.unlisted && o.value !== m.model) o.remove();
+      if (m.model && !modelSel.querySelector(`option[value="${CSS.escape(m.model)}"]`)) modelSel.append(unlistedModel(m.model));
       modelSel.value = m.model ?? "";
       break;
-    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0; break;
+    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; resetStreams(); lastContext = null; paintContext(); startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0; break;
     case "replayed":
       lastText = null;
       if (!log.querySelector(".msg")) welcome();
@@ -1030,6 +1049,11 @@ async function encodeImage(file) {
   const full = draw(bmp, Math.round(bmp.width * scale), Math.round(bmp.height * scale), keepPng ? "image/png" : "image/jpeg", 0.85);
   const ts = Math.min(1, THUMB / Math.max(bmp.width, bmp.height));
   const thumb = draw(bmp, Math.max(1, Math.round(bmp.width * ts)), Math.max(1, Math.round(bmp.height * ts)), "image/jpeg", 0.7);
+  // A PNG that came out huge is better as JPEG (a photo pasted as PNG). Drawn
+  // from the same bitmap before it is closed: a closed bitmap reads as 0×0,
+  // which made this a 0×0 canvas whose data URL is "data:," — an empty image
+  // the server refused, taking the whole message with it.
+  const final = full.data.length > 2_500_000 && keepPng ? draw(bmp, full.w, full.h, "image/jpeg", 0.85) : full;
   bmp.close?.();
   if (!final.data || !/^image\/(png|jpeg)$/.test(final.type)) throw new Error("could not encode it");
   return { media_type: final.type, data: final.data, thumb: thumb.data };
@@ -1048,11 +1072,6 @@ box.addEventListener("paste", (e) => {
 });
 for (const target of [box, log]) {
   target.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.types ?? [])].includes("Files")) { e.preventDefault(); target.classList.add("drop"); } });
-  // A PNG that came out huge is better as JPEG (a photo pasted as PNG). Drawn
-  // from the same bitmap before it is closed: a closed bitmap reads as 0×0,
-  // which made this a 0×0 canvas whose data URL is "data:," — an empty image
-  // the server refused, taking the whole message with it.
-  const final = full.data.length > 2_500_000 && keepPng ? draw(bmp, full.w, full.h, "image/jpeg", 0.85) : full;
   target.addEventListener("dragleave", () => target.classList.remove("drop"));
   target.addEventListener("drop", (e) => {
     target.classList.remove("drop");
