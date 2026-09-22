@@ -255,6 +255,14 @@ chats here:
 | `stop_chat` | interrupt the turn a chat is running |
 | `list_schedules` | the scheduled prompts |
 | `list_terminals`, `read_terminal` | the tmux sessions and their recent output (only with the shell on) |
+| `search_chats` | full-text search across every conversation |
+| `export_chat` | a whole conversation as Markdown, as the app exports it |
+| `list_projects`, `list_prompts`, `list_watches` | the projects, the saved prompts, the page watches |
+| `spend` | cost per chat and in total — per chat only: turns carry no timestamps |
+| `list_files`, `read_file` | the file browser's root, with its denylist (keys, credentials, `.env`) |
+| `health` | version, auth mode, browsers connected, whether a session has come up |
+
+Everything below `stop_chat` in that list only reads.
 
 It sits behind the same check as every other route — the tailnet owner,
 loopback, or a trusted CIDR; never a page on another origin — so an MCP
