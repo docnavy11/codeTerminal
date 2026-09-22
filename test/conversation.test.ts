@@ -453,3 +453,25 @@ describe("Manager: the pool", () => {
     assert.deepEqual(p1.map((p) => p.id), p2.map((p) => p.id));
   });
 });
+
+describe("regressions", () => {
+  const ID = "cccccccc-0000-0000-0000-000000000001";
+  const blank = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, title: "New chat", createdAt: 1, updatedAt: 1, sdkSessionId: null, cwd: null,
+    events: [] as ClientEvent[], granted: [], mode: "default" as const, ...extra,
+  });
+
+  test("a deleted chat stays deleted: cards closed by the delete and a late titler do not write it back", async () => {
+    let releaseTitle!: (t: string | null) => void;
+    const { sdk, mgr, dir } = fresh({ titler: () => new Promise((r) => { releaseTitle = r; }) });
+    const c = mgr.create();
+    c.recordUser("hello");                         // the titler is now in flight
+    sdk.last.ask("Bash", { command: "ls" });       // a card is open
+    await settle();
+    mgr.remove(c.id);
+    releaseTitle("Late title");
+    await new Promise((r) => setTimeout(r, 600));  // past the 400 ms save debounce
+    assert.ok(!(await readdir(dir)).includes(`${c.id}.json`), "not written back into chats/");
+    assert.ok(!mgr.list().some((x) => x.id === c.id), "not listed");
+  });
+});

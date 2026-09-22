@@ -33,6 +33,13 @@ export class LiveChat {
   #titling = false;
   /** Set only when the user actually sends /clear. */
   #clearRequested = false;
+  /**
+   * Set by close(). A closed chat never writes its record again: closing the
+   * session emits approval_closed for open cards (and a busy turn's result can
+   * land later still), and each used to schedule a save — reproduced: a deleted
+   * chat was written back into chats/ 400 ms after Store.remove archived it.
+   */
+  #closed = false;
   #onChange: () => void;
 
   #onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void;
@@ -104,6 +111,7 @@ export class LiveChat {
   /* ---------------- events ---------------- */
 
   #record = (e: ClientEvent): void => {
+    if (this.#closed) { this.#emitAll(e); return; }
     // Live-only: status and deltas are the same words the completed events
     // carry, so persisting them would duplicate every reply.
     if (e.kind === "rewind") this.#lastRewind = { uuid: e.uuid, ok: e.canRewind, files: e.files.length };
@@ -295,6 +303,9 @@ export class LiveChat {
   close(): void {
     if (this.#saveTimer) { clearTimeout(this.#saveTimer); this.#saveTimer = null; }
     this.#save();
+    // Closed before the session is: its close emits into #record, and nothing
+    // it says from here on may reach the disk (see #closed).
+    this.#closed = true;
     this.#session.close();
   }
 
@@ -333,12 +344,15 @@ export class LiveChat {
   }
 
   #scheduleSave(): void {
-    if (this.#saveTimer) return;
+    if (this.#saveTimer || this.#closed) return;
     this.#saveTimer = setTimeout(() => { this.#saveTimer = null; this.#save(); }, 400);
   }
 
   #saveFailed = false;
   #save(): void {
+    // Also reached from async paths (the titler, a rename) that can finish
+    // after the chat was deleted; one write then would resurrect the file.
+    if (this.#closed) return;
     this.#rec.sdkSessionId = this.#session?.sdkSessionId ?? this.#rec.sdkSessionId;
     this.#rec.granted = this.#session?.granted ?? this.#rec.granted;
     this.#rec.mode = this.#session?.mode ?? this.#rec.mode;
