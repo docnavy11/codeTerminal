@@ -16,18 +16,26 @@ const stop = $("stop"), modeSel = $("mode"), modelSel = $("model"), browserSel =
    newest person's browser, never the server browser unless it is alone);
    the extension names its own; the server browser is the headless one on
    the machine. Hidden until there is a choice to make. */
-let myBrowser = null, chosenBrowser = "";
-function paintBrowsers(list) {
+/* chosenBrowser: null until this panel has said anything; "" is auto, which
+   the server takes as "unpin". */
+let myBrowser = null, chosenBrowser = null, browserList = [];
+function paintBrowsers(list = browserList) {
+  browserList = list;
   if (!browserSel) return;
   const cur = chosenBrowser;
   browserSel.replaceChildren(new Option("auto", ""));
   for (const b of list) browserSel.append(new Option(b.server ? "server browser" : b.id === myBrowser ? "this browser" : `browser ${b.id.slice(0, 6)}`, b.id));
-  if (cur && !list.some((b) => b.id === cur)) { chosenBrowser = ""; }
-  browserSel.value = chosenBrowser;
-  const show = list.length > 1 || (list.length === 1 && list[0].id !== myBrowser);
+  // The pinned browser went away. This used to flip the picker to auto
+  // without telling the server, which kept the chat pinned to the missing
+  // browser: the panel said auto, the tools said "not connected". Show the
+  // pin as it is instead; the person can pick auto (or it comes back).
+  const gone = cur && !list.some((b) => b.id === cur);
+  if (gone) browserSel.append(new Option(`browser ${cur.slice(0, 6)} (not connected)`, cur));
+  browserSel.value = chosenBrowser ?? "";
+  const show = gone || list.length > 1 || (list.length === 1 && list[0].id !== myBrowser);
   browserSel.hidden = !show; const l = $("browserlbl"); if (l) l.hidden = !show;
 }
-if (browserSel) browserSel.onchange = () => { chosenBrowser = browserSel.value; ws?.send(JSON.stringify({ type: "browser", instance: chosenBrowser })); };
+if (browserSel) browserSel.onchange = () => { chosenBrowser = browserSel.value; ws?.send(JSON.stringify({ type: "browser", instance: chosenBrowser })); paintBrowsers(); };
 const statusEl = $("status"), statusText = $("statustext"), statusTime = $("statustime");
 
 let cwdShown = "";
@@ -170,8 +178,12 @@ async function connect() {
     try {
       const instanceId = await PLATFORM.instanceId();
       myBrowser = instanceId || null;
-      if (chosenBrowser) ws.send(JSON.stringify({ type: "browser", instance: chosenBrowser }));
-      else if (instanceId) { chosenBrowser = instanceId; ws.send(JSON.stringify({ type: "browser", instance: instanceId })); }
+      // A choice already made — auto included — is repeated as it is; only a
+      // panel that never chose defaults to its own browser. Auto used to be
+      // replaced by "this browser" on every reconnect.
+      if (chosenBrowser === null && instanceId) chosenBrowser = instanceId;
+      if (chosenBrowser !== null) ws.send(JSON.stringify({ type: "browser", instance: chosenBrowser }));
+      paintBrowsers();
     } catch { /* no instance: the server falls back to the newest browser */ }
     flushQueued();
   };

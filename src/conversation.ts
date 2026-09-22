@@ -143,8 +143,12 @@ export class LiveChat {
    */
   #extInstance: string | undefined;
   get extInstance(): string | undefined { return this.#extInstance; }
+  /** undefined: the caller has no say (keep the pin); "": auto, unpin; else pin that browser. */
   useBrowser(instance: string | undefined): void {
-    if (instance) this.#extInstance = instance;
+    // "" used to be ignored like undefined, so picking "auto" in the panel
+    // never unpinned the chat: the panel said auto while the tools kept
+    // acting in (or refusing for want of) the browser pinned before.
+    if (instance !== undefined) this.#extInstance = instance || undefined;
   }
 
   /** A scheduled run: nobody answers cards. Survives the session rebuilds a project/mode change causes. */

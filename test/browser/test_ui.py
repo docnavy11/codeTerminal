@@ -713,6 +713,23 @@ def test_model_markdown_cannot_style_or_fake_a_card(page, server):
     assert page.is_visible("#log"), "the reply could not hide the log"
 
 
+def test_browser_picker_auto_unpins_and_a_missing_pin_is_shown(page, server):
+    """Picking auto sends "" (the server unpins); a pinned browser that
+    disconnects stays selected, marked, instead of the picker silently
+    showing auto while the chat is still pinned to it."""
+    open_ui(page, server)
+    page.evaluate("() => { window.__sent = []; const s = ws.send.bind(ws); ws.send = (d) => { __sent.push(JSON.parse(d)); s(d); }; }")
+    page.evaluate("() => paintBrowsers([{ id: 'aaaaaa-browser' }, { id: 'bbbbbb-browser' }])")
+    page.select_option("#browser", "aaaaaa-browser")
+    page.evaluate("() => paintBrowsers([{ id: 'bbbbbb-browser' }])")
+    assert page.eval_on_selector("#browser", "s => s.value") == "aaaaaa-browser"
+    assert "not connected" in page.eval_on_selector("#browser", "s => s.selectedOptions[0].textContent")
+    assert page.is_visible("#browser")
+    page.select_option("#browser", "")
+    assert page.evaluate("() => __sent.filter(m => m.type === 'browser').map(m => m.instance)") == ["aaaaaa-browser", ""]
+    assert page.eval_on_selector("#browser", "s => [...s.options].map(o => o.value)") == ["", "bbbbbb-browser"]
+
+
 def test_reply_tables_have_lines(page, server):
     open_ui(page, server)
     page.evaluate("() => handle({ kind: 'text', text: '| txn | € |\\n|---|---|\\n| T1052 | 171,24 |\\n| T1095 | 53,84 |' })")

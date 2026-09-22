@@ -192,6 +192,25 @@ describe("attachAgent: prompts", () => {
     assert.equal(chat.extInstance, "browser-A");
   });
 
+  test("choosing auto (\"\") unpins the chat's browser, and it stays unpinned across a prompt and a chat switch", async () => {
+    const w = world();
+    const ws = w.agent();
+    const chat = w.ctx.state.lastChat!;
+    ws.frame({ type: "browser", instance: "browser-A" });
+    assert.equal(chat.extInstance, "browser-A");
+    ws.frame({ type: "browser", instance: "" });
+    assert.equal(chat.extInstance, undefined, "auto: the server picks, not the browser pinned before");
+    ws.frame({ type: "prompt", text: "x", withTab: false });
+    await settle(4);
+    assert.equal(chat.extInstance, undefined);
+    // a client that never names a browser (the desktop page) leaves a pin alone
+    ws.frame({ type: "browser", instance: "browser-A" });
+    const other = w.agent();
+    other.frame({ type: "prompt", text: "y", withTab: false });
+    await settle(4);
+    assert.equal(chat.extInstance, "browser-A");
+  });
+
   test("decision and answer are routed to the session", async () => {
     const w = world();
     const ws = w.agent();

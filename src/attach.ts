@@ -46,6 +46,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
   // the most recent one; the client can switch immediately either way.
   const startId = (wantId && convo.get(wantId) ? wantId : null) ?? convo.newestId();
   let chat: LiveChat = (startId && convo.get(startId)) || convo.create();
+  /** undefined until this client names a browser; "" once it picks auto. */
   let clientBrowser: string | undefined;
   state.lastChat = chat;
 
@@ -109,7 +110,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
       }
       // Which browser this client is in; follows the person across chats.
       case "browser":
-        clientBrowser = msg.instance || undefined; chat.useBrowser(clientBrowser); return;
+        clientBrowser = msg.instance; chat.useBrowser(clientBrowser); return;
       case "answer":
         chat.session.answer(msg.id, msg.answers); return;
       case "decision":
