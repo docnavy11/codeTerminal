@@ -162,7 +162,9 @@ Measured in real Chromium (`test_extension_uploads_files`).
 "screenshot"}]` — up to 20 of `list_tabs`, `read_page`, `snapshot`, `find`,
 `scroll`, `wait_for`, `screenshot`. One site check at read level, one
 approval, one round trip, one row (`4 steps · 1 failed · find → scroll✗ →
-read_page → screenshot`). Steps run in order; a failure is recorded and the
+read_page → screenshot`). Every step runs on the batch's tab — the one the
+site check looked at — and a `tabId` inside a step's args is overridden, so
+one approval never reaches a second tab. Steps run in order; a failure is recorded and the
 rest still run (`stopOnError` to stop). Screenshots come back as images
 after the text, numbered in step order, and count against the per-turn
 screenshot budget like single shots. Nothing that acts on the page can be
@@ -228,10 +230,14 @@ with your profile's cookies, land in the chat's working directory under
 choice, basename'd, never overwriting (`0039-2.pdf`), 0600, 20 MB cap. The
 agent then reads the file like any other, which for a PDF means the
 rendered pages, not just the text layer. It goes through the site card
-like any read.
+like any read — and, because the fetch follows redirects with your cookies,
+a download that ends on another host goes through the card for *that* host
+before anything is written (the PDF fallback of `read_page` likewise); a
+redirect within the same host needs no second card.
 
 **Gated per site, at two levels.** The first time a chat *reads* a site
-(`read_page`, `snapshot`, `screenshot`, `download`) a card asks *Let Claude
+(`read_page`, `snapshot`, `find`, `screenshot`, `download`, `browser_batch`,
+a page watch, …) a card asks *Let Claude
 read bank.example?*; the first time it *acts* there (`click`, `fill`,
 `press`, `navigate`, `eval`) a second card asks *Let Claude act on
 bank.example?* — "let it read my bank" is not "let it click Transfer". Each
@@ -245,7 +251,11 @@ that chat's live session. `list_tabs` shows a not-yet-allowed tab as its
 host only, no title or URL. **`eval` asks every call** even on an allowed
 site — arbitrary JavaScript in a logged-in tab deserves a look at the code
 — with "Allow on this site (this chat)" to stop asking for that host until
-the chat ends. Once allowed, the tools do not stop again, and each call is
+the chat ends. A call without a `tabId` is checked against the active tab
+and then runs on that same tab by id, so switching tabs while a card is up
+does not move the approved action to another site. When the tab cannot be
+looked up at all (closed, or the extension errored) the refusal says so,
+rather than calling it a restricted page. Once allowed, the tools do not stop again, and each call is
 still written to the transcript — with where it landed: every browser tool
 row ends in `@ host · page title` (the tab's URL is looked up before each
 call anyway; `navigate` shows its destination), so a transcript can be
@@ -262,7 +272,8 @@ extension's toggle is the off switch.
 **Blast radius.** The manifest still requests `<all_urls>` — that is the
 *capability*; the site gate above is the *policy*. A prompt-injected page
 can steer the agent toward your other tabs, but reading or acting on a site
-this chat has not been allowed on produces a card in front of you, not an
+this chat has not been allowed on — directly, through a batch step, a page
+watch, or a redirect behind a download — produces a card in front of you, not an
 action; `list_tabs` does not even reveal those tabs' titles. What remains:
 a site you have allowed is open to the agent for the rest of that chat.
 
