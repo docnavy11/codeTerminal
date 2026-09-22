@@ -358,6 +358,11 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     try { fetched = await bridge.send("fetch_bytes", { tabId: a.tabId }, prefer()) as typeof fetched; }
     catch (e) { if (page) return page; throw pageErr ?? e; }
     if (!fetched || typeof fetched.data !== "string") { if (page) return page; throw pageErr ?? new Error("the page could not be read"); }
+    // The fetch follows redirects with the profile's cookies, and the gate
+    // only saw the tab's own host. Content from anywhere else goes through
+    // the gate for that host before any of it is returned.
+    try { await ensureRedirect(url, fetched.url, "read_page"); }
+    catch (e) { if (page) return page; throw e; }
     const bytes = Buffer.from(fetched.data, "base64");
     if (!/pdf/i.test(fetched.contentType ?? "") && !looksLikePdf(bytes)) { if (page) return page; throw pageErr ?? new Error("the page could not be read"); }
     const pdf = await extractPdfText(bytes, { maxChars: a.maxChars ?? 20_000 });
@@ -384,6 +389,16 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
   const ensure = (at: Pick<Where, "host" | "problem">, action: string, detail?: string): Promise<void> => ensureAllowed(policy, at, action, detail);
+  /**
+   * fetch_bytes follows redirects with the user's cookies; the gate checked
+   * where it started. When it ended on another host, that host is gated too,
+   * after the fetch but before anything it returned is used.
+   */
+  const ensureRedirect = async (started: string, ended: string | undefined, action: string): Promise<void> => {
+    const host = hostOfUrl(ended || started);
+    if (host === hostOfUrl(started)) return;
+    await ensure({ host }, action, `redirected from ${started} to ${ended}`);
+  };
   const gated = <A extends { tabId?: number }>(action: string, run: (a: A) => Promise<unknown>) =>
     async (a: A) => {
       const at = await whereFor(a.tabId);
@@ -615,6 +630,8 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           const at: Where = a.url ? { host: hostOfUrl(a.url) } : await whereFor(a.tabId);
           await ensure(at, "download", a.url ?? at.url);
           const f = await bridge.send("fetch_bytes", a.url ? { url: a.url } : pinned({ tabId: a.tabId }, at), prefer()) as { url: string; contentType: string; disposition?: string; bytes: number; data: string };
+          // Same for a download: the start was checked, the redirect was not.
+          await ensureRedirect(a.url ?? at.url ?? "", f.url, "download");
           const bytes = Buffer.from(f.data, "base64");
           const name = downloadName(a.name, f.url, f.disposition, f.contentType);
           const dir = join(getCwd(), "downloads");

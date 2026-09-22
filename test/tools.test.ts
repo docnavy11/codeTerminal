@@ -561,6 +561,38 @@ describe("browser tools", () => {
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
 
+  test("download and the PDF fallback: a redirect to another host is gated there before anything is kept or returned", async () => {
+    const { mkdtemp, readdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const cwd = await mkdtemp(join(tmpdir(), "ct-dl-"));
+    const pdf = makePdf([["Statement: balance 12 345,67"]]);
+    const asks: { host: string; action: string; detail?: string }[] = []; let answer: "allow" | "deny" = "deny";
+    const policy = { allowed: (h: string) => h === "files.example", evalAllowed: () => false,
+      ask: async (host: string, action: string, detail?: string) => { asks.push({ host, action, detail }); return answer; } };
+    // files.example/share/* answers 302 to the bank; /same/* redirects within files.example
+    const landed = (u: string) => u.includes("/share/") ? "https://bank.example/statement.pdf" : u.replace("/same/", "/final/");
+    const { bridge } = bridged({
+      tab_url: (p) => ({ tabId: p.tabId, url: p.tabId === 5 ? "https://files.example/share/s.pdf" : "https://files.example/same/s.pdf" }),
+      fetch_bytes: (p) => ({ tabId: p.tabId, url: landed(String(p.url ?? (p.tabId === 5 ? "https://files.example/share/s.pdf" : "https://files.example/same/s.pdf"))), contentType: "application/pdf", bytes: pdf.length, data: pdf.toString("base64") }),
+    });
+    const srv = browserTools(bridge, () => undefined, undefined, policy, () => cwd);
+    try {
+      await assert.rejects(call(srv, "download", { url: "https://files.example/share/x.pdf" }), /bank\.example: the user did not allow it/);
+      await assert.rejects(call(srv, "download", { tabId: 5 }), /bank\.example: the user did not allow it/);
+      await assert.rejects(readdir(join(cwd, "downloads")).then((f) => { if (f.length) throw new Error("kept"); throw new Error("empty"); }), /empty|ENOENT/, "nothing was written");
+      await assert.rejects(call(srv, "read_page", { tabId: 5 }), /bank\.example: the user did not allow it/);
+      assert.deepEqual(asks.map((a) => `${a.action}@${a.host}`), ["download@bank.example", "download@bank.example", "read_page@bank.example"]);
+      assert.match(asks[0].detail!, /redirected from https:\/\/files\.example\/share\/x\.pdf to https:\/\/bank\.example\/statement\.pdf/);
+      // a same-host redirect is the site already allowed: no card
+      const ok = JSON.parse(await call(srv, "download", { tabId: 6 })) as { url: string };
+      assert.equal(ok.url, "https://files.example/final/s.pdf");
+      assert.match(await call(srv, "read_page", { tabId: 6 }), /balance 12 345,67/);
+      assert.equal(asks.length, 3);
+      answer = "allow";
+      assert.match(await call(srv, "read_page", { tabId: 5 }), /balance/, "allowed at the destination, it reads");
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
   test("downloadName", () => {
     assert.equal(downloadName(undefined, "https://x/a/b/report.PDF", "", "application/pdf"), "report.PDF");
     assert.equal(downloadName(undefined, "https://x/dl?id=1", "", "application/pdf"), "dl.pdf");
