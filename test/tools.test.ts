@@ -91,6 +91,29 @@ describe("watch tools", () => {
     assert.match(await call(srv, "list"), /the build/);
   });
 
+  test("page: gated like read_page on the site it watches, and pinned to the tab the gate saw", async () => {
+    const asks: { host: string; action: string; level: string }[] = []; let answer: "allow" | "deny" = "deny";
+    const policy = { allowed: (h: string) => h === "ok.example", evalAllowed: () => false,
+      ask: async (host: string, action: string, _d: string | undefined, level: "read" | "act") => { asks.push({ host, action, level }); return answer; } };
+    const { bridge, ext } = bridged({
+      tab_url: (p) => p.tabId === 4 ? { tabId: 4, url: "https://ok.example/ci" } : { tabId: 2, url: "https://bank.example/acct" },
+      watch_start: (p) => ({ url: "u", tabId: p.tabId, watchId: p.watchId }),
+    });
+    const reg = new WatchRegistry();
+    const srv = watchTools(bridge, reg, () => "chat-1", () => undefined, policy);
+    await assert.rejects(call(srv, "page", { description: "balance", until: "changes" }), /bank\.example: the user did not allow it/);
+    assert.deepEqual(asks, [{ host: "bank.example", action: "watch", level: "read" }]);
+    assert.equal(reg.all().length, 0, "refused before anything was registered");
+    assert.ok(!ext.sent.some((m) => (m as { action?: string }).action === "watch_start"), "and before the browser was told");
+    answer = "allow";
+    await call(srv, "page", { description: "balance", until: "changes" });
+    const started = ext.sent.find((m) => (m as { action?: string }).action === "watch_start") as { params: Record<string, unknown> };
+    assert.equal(started.params.tabId, 2, "the active tab the card named, not whatever is active later");
+    assert.equal(reg.all()[0].tabId, 2);
+    await call(srv, "page", { description: "build", until: "contains", value: "passed", tabId: 4 });
+    assert.equal(asks.length, 2, "an allowed site does not ask");
+  });
+
   test("page: when the browser refuses, the watch is not left registered", async () => {
     const { bridge } = bridged({ watch_start: () => { throw new Error("no active tab"); } });
     const reg = new WatchRegistry();

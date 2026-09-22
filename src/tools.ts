@@ -137,7 +137,7 @@ export function terminalTools(getShell: () => Shell | null, tmux?: { list: () =>
  * Watches on a browser page. These return immediately: a watch is registered
  * and reports later, rather than blocking the turn for however long it takes.
  */
-export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, currentChat: () => string, prefer: () => string | undefined) {
+export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, currentChat: () => string, prefer: () => string | undefined, policy?: BrowserPolicy) {
   return createSdkMcpServer({
     name: "watch",
     version: "1.0.0",
@@ -162,14 +162,20 @@ export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, curren
           if (a.until !== "changes" && !a.value) {
             return text(`"${a.until}" needs a value.`);
           }
+          // A watch reads the page every few seconds for as long as it runs,
+          // so it is a read like read_page: the same site gate, and pinned to
+          // the tab the gate looked at rather than whatever is active later.
+          const at = await tabWhere(bridge, a.tabId, prefer());
+          await ensureAllowed(policy, at, "watch", a.description);
+          const tabId = a.tabId ?? at.tabId;
           const condition = { kind: a.until, value: a.value } as WatchCondition;
           const w = watches.add({
-            chatId: currentChat(), description: a.description, url: "", tabId: a.tabId ?? null,
+            chatId: currentChat(), description: a.description, url: "", tabId: tabId ?? null,
             condition, minutes: a.minutes,
           });
           try {
             const started = (await bridge.send("watch_start", {
-              watchId: w.id, tabId: a.tabId, condition,
+              watchId: w.id, tabId, condition,
             }, prefer())) as { url?: string; title?: string };
             w.url = started.url ?? "";
             return text(
