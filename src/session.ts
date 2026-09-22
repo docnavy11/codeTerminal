@@ -143,6 +143,18 @@ type Pending = {
  * finished tool call's input, capped so one long command does not swallow
  * the rest of the message.
  */
+/** The addRules / addDirectories a chat has granted, in the shape query() takes at start. */
+export function replayGrants(granted: PermissionUpdate[]): { rules: { allow: string[]; deny: string[]; ask: string[] } | null; directories: string[] } {
+  const rules = { allow: [] as string[], deny: [] as string[], ask: [] as string[] };
+  const directories: string[] = [];
+  for (const u of granted) {
+    if (u.type === "addRules") for (const r of u.rules) rules[u.behavior].push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
+    else if (u.type === "addDirectories") directories.push(...u.directories);
+  }
+  const any = rules.allow.length + rules.deny.length + rules.ask.length > 0;
+  return { rules: any ? rules : null, directories };
+}
+
 function describeCard(tool: string, input: unknown): string {
   const i = input as Record<string, unknown> | null | undefined;
   const detail = i && typeof i.command === "string" ? i.command
@@ -194,6 +206,7 @@ export class Session {
     this.#model = model ?? null;
     const d = this.#deps;
     this.#granted = granted;
+    const replay = replayGrants(granted);
     // The mode has to be in place BEFORE query() reads it below. The old path
     // spawned the session, then fire-and-forget called setMode() — but the
     // query did not exist yet, so setPermissionMode() was a no-op and the SDK
@@ -205,7 +218,12 @@ export class Session {
       prompt: this.#input,
       options: {
         cwd: this.#workspace,
-        additionalDirectories: [],
+        additionalDirectories: replay.directories,
+        // "Always" answers scoped to the session died with it: a restart, a cwd
+        // or project change, or eviction asked again. Replayed as flag settings,
+        // the one place query() takes permission rules at start (measured,
+        // CLI 2.1.280: an allow rule there ran its command with no card).
+        ...(replay.rules ? { settings: { permissions: replay.rules } } : {}),
         // Loads your ~/.claude and project config: custom slash commands,
         // skills, CLAUDE.md. Measured: this is the difference between 52 and
         // 82 available commands. It does NOT weaken canUseTool — the explicit
@@ -408,13 +426,20 @@ export class Session {
       // allow: this chat. always: this site from now on (eval: this host, this chat — never standing).
       const { host, action, level } = p.browser;
       if (decision !== "deny") {
-        // eval's per-call card on an already act-allowed site grants only eval; otherwise the level
-        if (action === "eval" && this.#browserPolicy.allowed(host, "act")) { if (decision === "always") this.#evalGrants.add(host); }
-        else {
+        // An eval card never writes the standing list, whatever the site's state:
+        // "Allow once" is this call, "Allow on this site (this chat)" is this host
+        // for this chat. It used to fall through to the site grant below, so
+        // "once" granted act for the whole chat and "this chat" was permanent.
+        if (action === "eval") {
+          if (decision === "always") {
+            this.#evalGrants.add(host);
+            const cur = this.#hostGrants.get(host);
+            if (!cur || !levelCovers(cur, "act")) this.#hostGrants.set(host, "act");
+          }
+        } else {
           const cur = this.#hostGrants.get(host);
           if (!cur || !levelCovers(cur, level)) this.#hostGrants.set(host, level);
           if (decision === "always") this.#deps.browserAllow?.add(host, level);
-          if (action === "eval" && decision === "always") this.#evalGrants.add(host);
         }
         p.resolve({ behavior: "allow" });
       } else p.resolve({ behavior: "deny", message: "declined" });

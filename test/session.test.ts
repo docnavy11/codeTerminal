@@ -642,14 +642,38 @@ describe("browser site gate through the session", () => {
     p = callTool(tools2, "read_page", { tabId: 1 }); await settle(6);
     card = events.filter((e) => e.kind === "approval").at(-1) as typeof card; s2.decide(card.id, "always");
     await p; assert.deepEqual(allow.all(), [{ host: "bank.example", level: "read" }], "always on a read asks lands as read");
-    // 4. eval needs act: the site is only read-allowed, so the card asks for act; "always" grants act on the list and eval for this chat
+    // 4. eval needs act: the site is only read-allowed, so the card asks for act. Its "always" button reads
+    //    "Allow on this site (this chat)": act and eval for this chat, and the standing list untouched.
     p = callTool(tools2, "eval", { tabId: 1, code: "document.title" }); await settle(6);
     card = events.filter((e) => e.kind === "approval").at(-1) as typeof card;
     assert.deepEqual(card.input, { host: "bank.example", action: "eval", level: "act", detail: "document.title" });
     s2.decide(card.id, "always"); await p;
     await callTool(tools2, "eval", { tabId: 1, code: "1+1" }); assert.equal(events.filter((e) => e.kind === "approval").length, 4, "no further eval card this chat");
-    assert.deepEqual(allow.all(), [{ host: "bank.example", level: "act" }], "raised to act on the standing list");
+    assert.deepEqual(allow.all(), [{ host: "bank.example", level: "read" }], "an eval card never writes the standing list");
     s.close(); s2.close(); await done; await done2;
+  });
+});
+
+describe("granted rules are replayed at start", () => {
+  test("a resumed session gets the chat's Always-allow rules and directories as flag settings", async () => {
+    const sdk = fakeSdk();
+    const s = new Session("/w", () => {}, { chatId: "c", bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start("sess-1", [
+      { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "npm test" }, { toolName: "WebFetch" }], behavior: "allow", destination: "session" },
+      { type: "addDirectories", directories: ["/srv/data"], destination: "session" },
+      { type: "setMode", mode: "acceptEdits", destination: "session" },
+    ]);
+    await settle();
+    assert.deepEqual((sdk.last.options.settings as { permissions: unknown }).permissions, { allow: ["Bash(npm test)", "WebFetch"], deny: [], ask: [] });
+    assert.deepEqual(sdk.last.options.additionalDirectories, ["/srv/data"]);
+    s.close(); await done;
+  });
+  test("nothing granted: no settings option at all", async () => {
+    const sdk = fakeSdk();
+    const s = new Session("/w", () => {}, { chatId: "c", bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start(); await settle();
+    assert.equal(sdk.last.options.settings, undefined);
+    s.close(); await done;
   });
 });
 
