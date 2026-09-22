@@ -20,6 +20,9 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import type { Manager, LiveChat } from "./conversation.js";
 import type { ClientEvent } from "./protocol.js";
+import type { WatchRegistry } from "./watches.js";
+import { toMarkdown } from "./export.js";
+import * as files from "./files.js";
 
 export type McpDeps = {
   convo: Manager;
@@ -30,7 +33,17 @@ export type McpDeps = {
   /** Named terminal sessions, when the machine has tmux and the shell is on. */
   tmux?: { list: () => Promise<{ name: string; path: string; windows: number }[]>; capture: (name: string, lines: number) => Promise<string> };
   version?: string;
+  /** Saved prompts (read-only here). */
+  prompts?: () => { id: string; title: string; text: string; domains?: string[] }[];
+  watches?: WatchRegistry;
+  /** The file browser's root; the same denylist (keys, credentials, .env) applies. */
+  filesRoot?: string;
+  /** Health: version, browsers, auth mode and the like — what /setup would say. */
+  health?: () => Record<string, unknown>;
 };
+
+/** read_file returns at most this much text; the rest is reported, not sent. */
+export const READ_FILE_MAX = 256 * 1024;
 
 /** A turn waited on longer than this comes back as "still running", not as an error. */
 export const MAX_WAIT_S = 600;
@@ -116,6 +129,98 @@ export function buildMcpServer(d: McpDeps): McpServer {
     return text({ chatId, status: "stopped" });
   });
 
+  server.registerTool("search_chats", {
+    description: "Full-text search across every conversation: user messages, replies and notes. Returns matching chats with snippets.",
+    inputSchema: { query: z.string().min(2).max(200) },
+    annotations: { readOnlyHint: true },
+  }, async ({ query }) => text(d.convo.search(query).map((h) => ({
+    id: h.id, title: h.title, updatedAt: new Date(h.updatedAt).toISOString(), titleMatch: h.titleMatch,
+    matches: h.matches.map((m) => m.snippet),
+  }))));
+
+  server.registerTool("export_chat", {
+    description: "A whole conversation as Markdown: messages, replies, tool calls and results — the same as the app's export.",
+    inputSchema: { chatId: z.string() },
+    annotations: { readOnlyHint: true },
+  }, async ({ chatId }) => {
+    const rec = d.convo.read(chatId);
+    if (!rec) return fail(`No chat ${chatId}.`);
+    const project = d.convo.projects().find((p) => p.id === rec.project)?.name;
+    return text(toMarkdown(rec, project));
+  });
+
+  server.registerTool("list_projects", {
+    description: "The projects a chat can work in: id, name and path.",
+    annotations: { readOnlyHint: true },
+  }, async () => text(d.convo.projects().map((p) => ({ id: p.id, name: p.name, path: p.path }))));
+
+  server.registerTool("spend", {
+    description:
+      "What the conversations have cost: per chat, the sum of each turn's reported cost, and the total. " +
+      "Per chat only — turns carry no timestamps, so there is no per-day figure; deleted chats, and turns trimmed from very long chats, are not counted.",
+    inputSchema: { limit: z.number().int().min(1).max(500).optional().describe("How many chats, most expensive first (default 20)") },
+    annotations: { readOnlyHint: true },
+  }, async ({ limit }) => {
+    const rows: { id: string; title: string; turns: number; costUsd: number; lastActive: string }[] = [];
+    for (const c of d.convo.list()) {
+      const rec = d.convo.read(c.id);
+      if (!rec) continue;
+      let cost = 0, turns = 0;
+      for (const e of rec.events) if (e.kind === "turn_end") { turns++; cost += e.costUsd ?? 0; }
+      if (turns) rows.push({ id: c.id, title: c.title, turns, costUsd: round(cost), lastActive: new Date(c.updatedAt).toISOString() });
+    }
+    rows.sort((a, b) => b.costUsd - a.costUsd);
+    return text({ totalUsd: round(rows.reduce((t, r) => t + r.costUsd, 0)), chats: rows.length, top: rows.slice(0, limit ?? 20) });
+  });
+
+  if (d.prompts) {
+    const prompts = d.prompts;
+    server.registerTool("list_prompts", {
+      description: "The saved prompts library: id, title, text, and the sites a prompt is meant for.",
+      annotations: { readOnlyHint: true },
+    }, async () => text(prompts()));
+  }
+
+  if (d.watches) {
+    const watches = d.watches;
+    server.registerTool("list_watches", {
+      description: "The page watches set by chats: what each waits for, on which page, and whether it has fired or expired.",
+      annotations: { readOnlyHint: true },
+    }, async () => text(watches.all().map((w) => ({ id: w.id, chatId: w.chatId, description: watches.describe(w), url: w.url,
+      expiresAt: new Date(w.expiresAt).toISOString(), ...(w.firedAt ? { firedAt: new Date(w.firedAt).toISOString(), detail: w.detail } : {}) }))));
+  }
+
+  if (d.filesRoot) {
+    const root = d.filesRoot;
+    server.registerTool("list_files", {
+      description: "List a directory under the file browser's root (\"\" is the root). Keys, credentials and .env files are hidden from reading.",
+      inputSchema: { path: z.string().max(4096).optional() },
+      annotations: { readOnlyHint: true },
+    }, async ({ path }) => {
+      try { return text(await files.list(root, path ?? "")); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
+    });
+    server.registerTool("read_file", {
+      description: `Read a text file under the file browser's root (up to ${READ_FILE_MAX / 1024} KB; the rest is reported, not sent). Binary files are described, not returned. Keys, credentials and .env files are refused.`,
+      inputSchema: { path: z.string().min(1).max(4096) },
+      annotations: { readOnlyHint: true },
+    }, async ({ path }) => {
+      try {
+        const f = await files.statFile(root, path);
+        const t = await files.readTextPreview(f.abs, READ_FILE_MAX);
+        if (!t) return text({ path, kind: "binary", bytes: f.size });
+        return text(t.truncated ? `${t.text}\n\n[truncated: ${t.bytes} bytes in all, first ${READ_FILE_MAX} shown]` : t.text);
+      } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
+    });
+  }
+
+  if (d.health) {
+    const health = d.health;
+    server.registerTool("health", {
+      description: "Is this server working: version, auth mode, connected browsers, whether a session has come up, tool servers, notification targets.",
+      annotations: { readOnlyHint: true },
+    }, async () => text(health()));
+  }
+
   if (d.schedules) {
     const schedules = d.schedules;
     server.registerTool("list_schedules", {
@@ -140,6 +245,8 @@ export function buildMcpServer(d: McpDeps): McpServer {
   }
   return server;
 }
+
+function round(n: number): number { return Math.round(n * 10_000) / 10_000; }
 
 /** Busy / waiting for a person / idle — only for a chat already in memory; a cold one is idle. */
 function liveStatus(convo: Manager, id: string): string | null {
