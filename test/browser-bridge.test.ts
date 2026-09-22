@@ -40,6 +40,24 @@ describe("BrowserBridge: connections", () => {
     assert.deepEqual(new Set(b.instances), new Set(["browser-A", "browser-B"]));
   });
 
+  test("a replaced connection's commands in flight fail at once, not after the timeout", async () => {
+    // A real socket's close event arrives later, after the new connection is
+    // registered; the fake's is synchronous, so defer it the same way.
+    class SlowClose extends FakeWs {
+      override close(code = 1000, reason = ""): void { this.closeCode = code; setImmediate(() => super.close(code, reason)); }
+    }
+    const b = new BrowserBridge(() => {}, 5000);
+    const a1 = new SlowClose(); b.attach(a1 as unknown as WebSocket); a1.frame({ type: "hello", instance: "browser-A" });
+    const pending = b.send("read_page", {}, "browser-A");
+    const t0 = Date.now();
+    const a2 = new FakeWs(); b.attach(a2 as unknown as WebSocket); a2.frame({ type: "hello", instance: "browser-A" });
+    await assert.rejects(pending, /reconnected while this command was running/);
+    assert.ok(Date.now() - t0 < 1000, "rejected on the reconnect, not by the 5 s timeout");
+    assert.equal(a1.closeCode, 4001);
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(b.instances, ["browser-A"], "the old socket's late close leaves the new one registered");
+  });
+
   test("the replaced socket's close does not unregister the newer one", () => {
     const { b, connect } = bridge();
     connect("browser-A"); connect("browser-A");

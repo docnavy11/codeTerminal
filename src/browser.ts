@@ -12,6 +12,14 @@ type Conn = {
   connectedAt: number;
 };
 
+function failPending(conn: Conn, why: string): void {
+  for (const [, p] of conn.pending) {
+    clearTimeout(p.timer);
+    p.reject(new Error(why));
+  }
+  conn.pending.clear();
+}
+
 /**
  * Connections to browser extensions, one per browser profile.
  *
@@ -80,8 +88,15 @@ export class BrowserBridge {
       if (msg.type === "hello" && typeof msg.instance === "string") {
         this.#conns.delete(instance);
         // A reload of the same browser replaces its own connection, but never
-        // another browser's.
-        this.#conns.get(msg.instance)?.ws.close(4001, "replaced by a newer connection from the same browser");
+        // another browser's. Its commands in flight are failed now: a real
+        // socket's close event lands after the new connection is registered,
+        // when drop() sees it as already replaced and leaves them to time
+        // out, so every tool waiting on the old socket hung for 30 s.
+        const old = this.#conns.get(msg.instance);
+        if (old && old !== conn) {
+          failPending(old, "the browser's extension reconnected while this command was running (a reload or a restart); it may or may not have happened, so check before retrying");
+          old.ws.close(4001, "replaced by a newer connection from the same browser");
+        }
         instance = msg.instance;
         conn.instance = instance;
         conn.connectedAt = Date.now();
@@ -107,11 +122,7 @@ export class BrowserBridge {
       this.#conns.delete(conn.instance);
       this.#onLog(`extension disconnected (${conn.instance.slice(0, 8)}) — ${this.#conns.size} left`);
       this.onChange();
-      for (const [, p] of conn.pending) {
-        clearTimeout(p.timer);
-        p.reject(new Error("the extension disconnected mid-command"));
-      }
-      conn.pending.clear();
+      failPending(conn, "the extension disconnected mid-command");
     };
     ws.on("close", drop);
     ws.on("error", drop);
