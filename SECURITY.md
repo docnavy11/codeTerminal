@@ -48,6 +48,8 @@ They constrain *Claude*, not an intruder:
 - Browser sites are allowed per host at two levels (read, act); `eval` asks on
   every call; a form submit with filled fields shows what it would send.
 - Per-turn caps on tool calls, screenshots and cost.
+- `/mcp` lets another agent prompt and read chats, but never answer their
+  cards: what a prompt from there leads to stops for you like any other.
 
 See [Running it for real → Authentication](docs/running.md#authentication) and
 [The browser](docs/browser-tools.md) for the full model, and

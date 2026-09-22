@@ -11,6 +11,7 @@ Part of [code terminal](../README.md).
 - [Managing the service](#managing-the-service)
 - [Authentication](#authentication)
 - [Config, state, and moving an installation](#config-state-and-moving-an-installation)
+- [Using it from other agents (MCP)](#using-it-from-other-agents-mcp)
 - [Limits](#limits)
 - [Billing](#billing)
 - [settingSources](#settingsources)
@@ -237,6 +238,38 @@ Not in the backup, by design: `node_modules` (`npm install`), the source
 the machine, not to this app, so a new machine needs `claude` run once and
 logged in. After restoring, check `CODETERM_HOST` in `.env`: it names the old
 machine's address.
+
+## Using it from other agents (MCP)
+
+The server is also an MCP server, at `/mcp` (Streamable HTTP), so Claude Code
+on a laptop, Claude Desktop or any MCP client on the tailnet can work with the
+chats here:
+
+    claude mcp add --transport http codeterminal http://<host>:8123/mcp
+
+| Tool | What it does |
+|---|---|
+| `list_chats` | the conversations, newest first |
+| `read_chat` | a chat's recent history, and whether it is busy or waiting for you |
+| `send_prompt` | prompt a chat (or a new one) and, by default, wait for the reply |
+| `stop_chat` | interrupt the turn a chat is running |
+| `list_schedules` | the scheduled prompts |
+| `list_terminals`, `read_terminal` | the tmux sessions and their recent output (only with the shell on) |
+
+It sits behind the same check as every other route — the tailnet owner,
+loopback, or a trusted CIDR; never a page on another origin — so an MCP
+client needs no token, and nobody else gets in.
+
+What it cannot do, on purpose: answer an approval card. The caller is itself
+an agent; if it could approve the Bash its own prompt led to, the gate would
+be a formality. A turn that stops on a card comes back as `waiting`, with the
+chat's link, and the card waits for you in the browser. The browser tools are
+not offered either — their site gate asks in a chat, and there is none on the
+caller's side to ask in.
+
+The gate is the chat's own, so its mode decides: a chat set to *Never ask*
+has no cards, and a prompt sent to it runs whatever it leads to. Chats
+`send_prompt` creates start in the default, *Ask before changes*.
 
 ## Limits
 
