@@ -1031,15 +1031,14 @@ async function encodeImage(file) {
   const ts = Math.min(1, THUMB / Math.max(bmp.width, bmp.height));
   const thumb = draw(bmp, Math.max(1, Math.round(bmp.width * ts)), Math.max(1, Math.round(bmp.height * ts)), "image/jpeg", 0.7);
   bmp.close?.();
-  // a PNG that came out huge is better as JPEG (a photo pasted as PNG)
-  const final = full.data.length > 2_500_000 && keepPng ? draw(await createImageBitmap(file), Math.round(bmp.width * scale), Math.round(bmp.height * scale), "image/jpeg", 0.85) : full;
+  if (!final.data || !/^image\/(png|jpeg)$/.test(final.type)) throw new Error("could not encode it");
   return { media_type: final.type, data: final.data, thumb: thumb.data };
 }
 function draw(bmp, w, h, type, q) {
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   c.getContext("2d").drawImage(bmp, 0, 0, w, h);
   const url = c.toDataURL(type, q);
-  return { type: url.slice(5, url.indexOf(";")), data: url.slice(url.indexOf(",") + 1) };
+  return { type: url.slice(5, url.indexOf(";")), data: url.slice(url.indexOf(",") + 1), w, h };
 }
 
 box.addEventListener("paste", (e) => {
@@ -1049,6 +1048,11 @@ box.addEventListener("paste", (e) => {
 });
 for (const target of [box, log]) {
   target.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.types ?? [])].includes("Files")) { e.preventDefault(); target.classList.add("drop"); } });
+  // A PNG that came out huge is better as JPEG (a photo pasted as PNG). Drawn
+  // from the same bitmap before it is closed: a closed bitmap reads as 0×0,
+  // which made this a 0×0 canvas whose data URL is "data:," — an empty image
+  // the server refused, taking the whole message with it.
+  const final = full.data.length > 2_500_000 && keepPng ? draw(bmp, full.w, full.h, "image/jpeg", 0.85) : full;
   target.addEventListener("dragleave", () => target.classList.remove("drop"));
   target.addEventListener("drop", (e) => {
     target.classList.remove("drop");

@@ -192,6 +192,17 @@ describe("attachAgent: prompts", () => {
     assert.equal(chat.extInstance, "browser-A");
   });
 
+  test("a prompt refused for a bad image says so instead of vanishing", async () => {
+    const w = world();
+    const ws = w.agent();
+    ws.clear();
+    // what the panel sent for a big pasted PNG: "data:," split into type "" and no data
+    ws.frame({ type: "prompt", text: "look at this", images: [{ media_type: "", data: "", thumb: "" }] });
+    await settle(4);
+    assert.equal(w.sdk.last.received.length, 0, "still not sent to the model");
+    assert.match(String(ws.last("error")?.message), /not sent: an attached image was empty/);
+  });
+
   test("choosing auto (\"\") unpins the chat's browser, and it stays unpinned across a prompt and a chat switch", async () => {
     const w = world();
     const ws = w.agent();

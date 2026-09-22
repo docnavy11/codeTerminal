@@ -81,7 +81,17 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
     let parsed: unknown;
     try { parsed = JSON.parse(raw.toString()); } catch { return; }
     const msg = parseAgentMessage(parsed);
-    if (!msg) return;
+    if (!msg) {
+      // A prompt refused for its images is a message the person typed and
+      // the client has already cleared from the box. Dropping it silently
+      // looked like a send that did nothing; say why instead. Other
+      // malformed frames stay silent — they are not anyone's words.
+      const p = parsed as { type?: unknown; images?: unknown } | null;
+      if (p && typeof p === "object" && p.type === "prompt" && p.images !== undefined) {
+        send({ kind: "error", message: "Your message was not sent: an attached image was empty, too large or not a png/jpeg/gif/webp. Remove it and send again." });
+      }
+      return;
+    }
 
     // A throw here would be an uncaught exception — one bad message from an
     // authorised client took the whole server down. Report it to that client.

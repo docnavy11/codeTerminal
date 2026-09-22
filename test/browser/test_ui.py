@@ -730,6 +730,24 @@ def test_browser_picker_auto_unpins_and_a_missing_pin_is_shown(page, server):
     assert page.eval_on_selector("#browser", "s => [...s.options].map(o => o.value)") == ["", "bbbbbb-browser"]
 
 
+def test_a_large_pasted_png_is_encoded_not_emptied(page, server):
+    """A PNG too big to keep as PNG is re-encoded as JPEG. That used to read
+    the bitmap's size after closing it (0×0) and send "data:,", which the
+    server refused along with the whole message."""
+    open_ui(page, server)
+    r = page.evaluate("""async () => {
+      const c = document.createElement('canvas'); c.width = 1400; c.height = 1400;
+      const g = c.getContext('2d'); const d = g.createImageData(1400, 1400);
+      for (let i = 0; i < d.data.length; i++) d.data[i] = (i % 4 === 3) ? 255 : (Math.random() * 256) | 0;
+      g.putImageData(d, 0, 0);
+      const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+      const e = await encodeImage(new File([blob], 'shot.png', { type: 'image/png' }));
+      const img = new Image(); img.src = 'data:' + e.media_type + ';base64,' + e.data; await img.decode();
+      return { type: e.media_type, len: e.data.length, w: img.naturalWidth, h: img.naturalHeight };
+    }""")
+    assert r["type"] == "image/jpeg" and r["len"] > 10000 and (r["w"], r["h"]) == (1400, 1400), r
+
+
 def test_reply_tables_have_lines(page, server):
     open_ui(page, server)
     page.evaluate("() => handle({ kind: 'text', text: '| txn | € |\\n|---|---|\\n| T1052 | 171,24 |\\n| T1095 | 53,84 |' })")
