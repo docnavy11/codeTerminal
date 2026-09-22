@@ -674,6 +674,25 @@ def test_wait_probe_reports_each_condition(page, server):
     assert isinstance(page.evaluate("() => ctWaitProbe({}).resources"), int)
 
 
+def test_find_refs_stay_unique_across_injections(page, server):
+    """page-read.js is injected again for every call; its ref counter used to
+    restart at 0 while the old refs stayed on the page, so the second find
+    handed out the first one's ref (reproduced: Delete f1, Cancel f1)."""
+    script = os.path.join(os.path.dirname(__file__), "..", "..", "extension", "page-read.js")
+    page.set_content("<button>Delete</button><button>Cancel</button><button>Save</button>")
+    page.add_script_tag(path=script)
+    d = page.evaluate("() => ctFind({ role: 'button', name: 'delete' }).matches[0].ref")
+    page.add_script_tag(path=script)
+    c = page.evaluate("() => ctFind({ role: 'button', name: 'cancel' }).matches[0].ref")
+    assert d != c, (d, c)
+    page.add_script_tag(path=script)
+    s = page.evaluate("() => ctReadPage('forms')") and page.evaluate("() => ctFind({ role: 'button', name: 'save' }).matches[0].ref")
+    assert len({d, c, s}) == 3, (d, c, s)
+    for ref, name in ((d, "Delete"), (c, "Cancel"), (s, "Save")):
+        assert page.evaluate("(r) => [...document.querySelectorAll('[data-ct-ref=\"' + r + '\"]')].map(e => e.textContent)", ref) == [name]
+    assert page.evaluate("() => ctFind({ role: 'button', name: 'delete' }).matches[0].ref") == d, "an element keeps its ref"
+
+
 def test_reply_tables_have_lines(page, server):
     open_ui(page, server)
     page.evaluate("() => handle({ kind: 'text', text: '| txn | € |\\n|---|---|\\n| T1052 | 171,24 |\\n| T1095 | 53,84 |' })")
@@ -855,6 +874,31 @@ def test_extension_eval_awaits_promises(ext_pages):
         r = call(sw, "throw new SyntaxError('mine')"); assert r["ok"] is False and "mine" in r["e"], r
         r = call(sw, "new Promise(() => {})", 2000); assert r == {"timeout": True}, "a never-settling promise is capped at 30 s, beyond this test's patience — it must at least not break the worker"
         assert call(sw, "2 * 21") == {"ok": True, "r": 42}, "the worker still answers after a pending eval"
+    finally:
+        srv.shutdown()
+
+
+@pytest.mark.xdist_group("chromium")
+def test_extension_snapshot_refs_never_point_at_two_elements(ext_pages):
+    """snapshot numbers refs by position. An element the next snapshot skips
+    (hidden) kept its old ref while another element was given the same one,
+    and a click on it went to the hidden element that came first."""
+    html = b"""<button id=a>A</button><button id=b onclick="window.hit='B'">B</button><button id=c onclick="window.hit='C'">C</button>"""
+    srv = serve_html(html); port = srv.port
+    ctx = ext_pages
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
+    try:
+        sw = ctx.sw
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        first = {e["text"]: e["ref"] for e in call(sw, "snapshot", {"tabId": tab})["elements"]}
+        assert first == {"A": "e1", "B": "e2", "C": "e3"}, first
+        page.evaluate("() => { document.getElementById('a').remove(); document.getElementById('b').style.display = 'none'; }")
+        second = {e["text"]: e["ref"] for e in call(sw, "snapshot", {"tabId": tab})["elements"]}
+        assert second == {"C": "e2"}, second
+        assert page.evaluate("() => [...document.querySelectorAll('[data-ct-ref=e2]')].map(e => e.id)") == ["c"], "the hidden B no longer carries e2"
+        call(sw, "click", {"tabId": tab, "ref": "e2"})
+        assert page.evaluate("() => window.hit") == "C"
     finally:
         srv.shutdown()
 
