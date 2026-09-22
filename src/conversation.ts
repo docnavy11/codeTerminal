@@ -11,6 +11,13 @@ import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project 
 const MAX_EVENTS = 3000;
 
 /**
+ * Events that describe the session process rather than the conversation: the
+ * record keeps only the latest of each, a /clear keeps them, and a chat holding
+ * nothing else has never been used.
+ */
+const SESSION_KINDS = new Set<ClientEvent["kind"]>(["ready", "commands", "models"]);
+
+/**
  * How many conversations may hold a live `claude` process at once. Each is a
  * real subprocess, so this is a memory and CPU ceiling, not a stylistic one.
  */
@@ -127,23 +134,35 @@ export class LiveChat {
         return;
       }
       this.#clearRequested = false;
-      this.#snapshot("before-clear");
-      this.#rec.events = [];
+      const snap = this.#snapshot("before-clear");
+      // The session's ready/commands/models describe the process, not the
+      // conversation, and do not arrive again after a clear: dropping them
+      // left a reloaded chat with no slash-command menu. The note is saved,
+      // not only shown, so a reloaded chat still says where its past went.
+      const note: ClientEvent = { kind: "local", text: snap
+        ? `Context cleared — the earlier conversation is saved in ${snap}`
+        : "Context cleared — the earlier conversation could not be snapshotted." };
+      this.#rec.events = [...this.#rec.events.filter((x) => SESSION_KINDS.has(x.kind)), note];
       this.#rec.title = "New chat";
       this.#rec.titleProvisional = false;
       this.#rec.sdkSessionId = e.newId;
       this.#save();
       this.#emitAll({ kind: "cleared" });
-      this.#emitAll({ kind: "local", text: "Context cleared." });
+      this.#emitAll(note);
       this.#onChange();
       return;
     }
 
     if (e.kind === "ready") this.#onReady(e);
     if (e.kind === "models") this.#onModels(e);
-    if (e.kind === "ready" || e.kind === "commands" || e.kind === "models") {
+    if (SESSION_KINDS.has(e.kind)) {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
+    // A /clear turn that ends without a reset must not leave the flag armed:
+    // the next unrequested reset — a fresh-session flow — would then wipe the
+    // chat. Measured once on CLI 2.1.280: a real /clear emits its reset
+    // before the turn's result, so this does not cancel a /clear that worked.
+    if (e.kind === "turn_end") this.#clearRequested = false;
     this.#rec.events.push(e);
     if (this.#rec.events.length > MAX_EVENTS) {
       this.#rec.events.splice(0, this.#rec.events.length - MAX_EVENTS);
@@ -190,7 +209,8 @@ export class LiveChat {
   }
 
   recordUser(text: string, context?: string, images?: { media_type: string; thumb: string }[], uuid?: string): void {
-    if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
+    // Exactly /clear: \b also matched /clear-cache and any command named like it.
+    if (/^\s*\/clear\s*$/.test(text)) this.#clearRequested = true;
     this.#record({ kind: "user", text, context, ...(images?.length ? { images } : {}), ...(uuid ? { uuid } : {}) });
     if (this.#rec.title === "New chat") {
       this.#rec.title = titleFrom(this.#rec.events);
@@ -335,12 +355,15 @@ export class LiveChat {
 
   /* ---------------- persistence ---------------- */
 
-  #snapshot(why: string): void {
+  /** The snapshot's path, or null when it could not be written. */
+  #snapshot(why: string): string | null {
     try {
       const dir = join(dirname(this.#store.dir), "chats-snapshots");
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, `${this.#rec.id}-${why}-${Date.now()}.json`), JSON.stringify(this.#rec));
-    } catch { /* a missing snapshot must not block the operation */ }
+      const path = join(dir, `${this.#rec.id}-${why}-${Date.now()}.json`);
+      writeFileSync(path, JSON.stringify(this.#rec));
+      return path;
+    } catch { return null; /* a missing snapshot must not block the operation */ }
   }
 
   #scheduleSave(): void {

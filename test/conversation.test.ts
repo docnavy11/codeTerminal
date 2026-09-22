@@ -215,7 +215,7 @@ describe("LiveChat: the record", () => {
     c.recordUser("/clear");
     sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-new" });
     await settle();
-    assert.equal(c.record.events.length, 0);
+    assert.equal(c.record.events.filter((e) => e.kind === "user").length, 0);
     assert.equal(c.record.title, "New chat");
     assert.equal(c.record.sdkSessionId, "sid-new");
     assert.ok(a.kinds().includes("cleared"));
@@ -473,5 +473,44 @@ describe("regressions", () => {
     await new Promise((r) => setTimeout(r, 600));  // past the 400 ms save debounce
     assert.ok(!(await readdir(dir)).includes(`${c.id}.json`), "not written back into chats/");
     assert.ok(!mgr.list().some((x) => x.id === c.id), "not listed");
+  });
+
+  test("/clear-cache is not /clear, and a /clear with no reset does not arm a later one", async () => {
+    const { sdk, mgr } = fresh();
+    const c = mgr.create();
+    c.recordUser("keep me");
+    c.recordUser("/clear-cache");
+    sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-a" });
+    await settle();
+    assert.ok(c.record.events.some((e) => e.kind === "user" && e.text === "keep me"), "not a /clear");
+    c.recordUser("/clear");
+    sdk.last.result();                              // the turn ends without a reset
+    await settle();
+    sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-b" });
+    await settle();
+    assert.ok(c.record.events.some((e) => e.kind === "user" && e.text === "keep me"), "a later unrequested reset keeps the chat");
+    assert.equal(c.record.sdkSessionId, "sid-b");
+  });
+
+  test("after /clear the record keeps ready/commands/models and a saved note naming the snapshot", async () => {
+    const { sdk, mgr, dir } = fresh();
+    const c = mgr.create();
+    sdk.last.init("sid-1");
+    sdk.last.emit({ type: "system", subtype: "commands_changed", commands: [{ name: "review", description: "", argumentHint: "" }] });
+    await settle();
+    c.recordUser("keep me");
+    c.recordUser("/clear");
+    sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-new" });
+    await settle();
+    mgr.shutdown();
+    const rec = JSON.parse(await readFile(join(dir, `${c.id}.json`), "utf8")) as { events: ClientEvent[] };
+    const kinds = rec.events.map((e) => e.kind);
+    for (const k of ["ready", "commands", "models"]) assert.equal(kinds.filter((x) => x === k).length, 1, `${k} kept once`);
+    assert.ok(!kinds.includes("user"));
+    const note = rec.events.find((e) => e.kind === "local") as { text: string } | undefined;
+    assert.ok(note, "the clear is recorded");
+    const snaps = await readdir(join(root, "chats-snapshots"));
+    const snap = snaps.find((f) => f.startsWith(c.id) && f.includes("before-clear"))!;
+    assert.ok(note.text.includes(snap), `note names ${snap}: ${note.text}`);
   });
 });
