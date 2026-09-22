@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { Session, MAX_TOOL_CALLS, stoppedReason, contextOf, type ClientEvent, type SessionDeps } from "../src/session.js";
+import { Session, MAX_TOOL_CALLS, stoppedReason, contextOf, modelLabel, type ClientEvent, type SessionDeps } from "../src/session.js";
 import { fakeSdk, settle, type FakeQuery } from "./fakes/sdk.js";
 
 /**
@@ -624,6 +624,12 @@ describe("browser site gate through the session", () => {
 });
 
 describe("Session.setModel", () => {
+  test("a model's label carries its version from the description; the CLI's default names what it runs", () => {
+    assert.equal(modelLabel({ value: "opus[1m]", displayName: "Opus (1M context)", description: "Opus 5.5 with 1M context · Best for everyday, complex tasks" }), "Opus 5.5 with 1M context");
+    assert.equal(modelLabel({ value: "default", displayName: "Default (recommended)", description: "Opus 5.5 with 1M context · Best for everyday" }), "default (Opus 5.5 with 1M context)");
+    assert.equal(modelLabel({ value: "sonnet", displayName: "Sonnet" }), "Sonnet");
+    assert.equal(modelLabel({ value: "x", displayName: "", description: "" }), "x");
+  });
   test("the CLI's models are published at start; a switch is applied, announced and remembered; failure keeps the old one", async () => {
     const sdk = fakeSdk({ setup: (q) => { q.models = [{ value: "claude-opus-5", displayName: "Opus 5" }]; } });
     const events: ClientEvent[] = [];

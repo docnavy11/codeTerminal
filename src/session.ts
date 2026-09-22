@@ -135,6 +135,13 @@ type Pending = {
   question?: { input: Record<string, unknown>; questions: AskQuestion[] };
 };
 
+/** "Opus 5.5 with 1M context · Best for…" → "Opus 5.5 with 1M context"; the CLI's own default says so. */
+export function modelLabel(m: { value: string; displayName?: string; description?: string }): string {
+  const lead = m.description?.split(" · ")[0]?.trim();
+  if (m.value === "default") return lead ? `default (${lead})` : "default";
+  return lead || m.displayName || m.value;
+}
+
 export class Session {
   #input = new Pushable<SDKUserMessage>();
   #query: Query | null = null;
@@ -562,11 +569,16 @@ export class Session {
     this.#emit(s);
   }
 
-  /** The models the CLI offers, for the picker; an older CLI simply has none. */
+  /**
+   * The models the CLI offers, for the picker; an older CLI simply has none.
+   * displayName carries no version ("Opus"), and what an alias resolves to
+   * changes with the bundled CLI, so the label is the description's lead
+   * ("Opus 5.5 with 1M context") when there is one.
+   */
   async #publishModels(): Promise<void> {
     try {
       const all = await this.#query?.supportedModels();
-      if (all) this.#emit({ kind: "models", models: all.map((m) => ({ value: m.value, label: m.displayName || m.value })) });
+      if (all) this.#emit({ kind: "models", models: all.map((m) => ({ value: m.value, label: modelLabel(m) })) });
     } catch { /* no picker, no harm */ }
   }
 

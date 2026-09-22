@@ -214,8 +214,10 @@ function handle(m) {
     case "models": {
       // the CLI's list; keep "default" first and whatever is selected selected
       const cur = modelSel.value;
-      modelSel.replaceChildren(new Option("default", ""));
-      for (const mo of m.models ?? []) modelSel.append(new Option(mo.label, mo.value));
+      // The CLI's own "default" entry is the same choice as ours; it only lends its label.
+      const def = (m.models ?? []).find((mo) => mo.value === "default");
+      modelSel.replaceChildren(new Option(def?.label ?? "default", ""));
+      for (const mo of m.models ?? []) if (mo.value !== "default") modelSel.append(new Option(mo.label, mo.value));
       if (cur && !modelSel.querySelector(`option[value="${CSS.escape(cur)}"]`)) modelSel.append(new Option(cur, cur));
       modelSel.value = cur;
       break;
