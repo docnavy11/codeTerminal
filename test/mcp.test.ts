@@ -124,9 +124,65 @@ describe("/mcp", () => {
     assert.deepEqual((await call("read_file", { path: "bin.dat" })).body, { path: "bin.dat", kind: "binary", bytes: 6 });
   });
 
+  test("send_prompt: a new chat in a project, with a saved prompt; the refusals", async () => {
+    const prompts = (await call("list_prompts")).body as { id: string; title: string; text: string }[];
+    assert.ok(prompts.length > 0, "the seeded prompts");
+    const saved = prompts[0];
+    const before = s.sdk.queries.length;
+    const r = (await call("send_prompt", { project: "p1", promptId: saved.title, text: "and keep it short", wait: false })).body as { chatId: string; status: string };
+    assert.equal(r.status, "sent");
+    await waitFor(() => s.sdk.queries.length > before && s.sdk.last.received.length > 0);
+    const rec = s.running.convo.read(r.chatId)!;
+    assert.equal(rec.project, "p1"); assert.match(rec.cwd ?? "", /projects\/p1$/);
+    const sent = JSON.stringify(s.sdk.last.received[0].message.content);
+    assert.ok(sent.includes("and keep it short"), sent.slice(0, 200));
+    assert.ok(sent.includes(saved.text.replace(/\{(url|title|host|selection)\}/g, "").slice(0, 20).replace(/\n/g, "\\n")), "the saved prompt's text went first");
+    s.sdk.last.result();
+    for (const [args, re] of [
+      [{ project: "p1", chatId: r.chatId, text: "x" }, /new chat/],
+      [{ project: "nope", text: "x" }, /No project/],
+      [{ promptId: "nope" }, /No saved prompt/],
+      [{}, /text, promptId/],
+    ] as [Record<string, unknown>, RegExp][]) {
+      const e = await call("send_prompt", args);
+      assert.equal(e.isError, true, JSON.stringify(args)); assert.match(e.raw, re);
+    }
+  });
+
+  test("notify is not offered when the server has no notification target", async () => {
+    assert.ok(!(await client.listTools()).tools.some((t) => t.name === "notify"));
+  });
+
   test("behind the same guard as every route: a cross-site page cannot reach it", async () => {
     const r = await s.req("/mcp", { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example", "sec-fetch-site": "cross-site" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
     assert.equal(r.status, 403);
+  });
+});
+
+describe("/mcp notify", () => {
+  let n: TestServer; let nc: Client;
+  const hooks: { title: string; message: string; url: string | null }[] = [];
+  before(async () => {
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).startsWith("https://hook.example/")) { hooks.push(JSON.parse(String(init!.body))); return new Response("ok", { status: 200 }); }
+      return fetch(url, init);
+    }) as typeof fetch;
+    n = await startTestServer({ cfg: { notify: { webhook: { url: "https://hook.example/x", format: "json" }, fetch: fetchFn } } });
+    nc = new Client({ name: "test", version: "1" });
+    await nc.connect(new StreamableHTTPClientTransport(new URL(`${n.base}/mcp`)));
+  });
+  after(async () => { await nc.close(); await n.stop(); });
+
+  test("sends through the configured target, marked as coming from MCP, and is rate-limited", async () => {
+    const send = async (i: number) => nc.callTool({ name: "notify", arguments: { title: `Build ${i}`, message: "done", url: "https://ci.example/1" } }) as Promise<ToolText>;
+    const first = await send(0);
+    assert.equal(first.isError, undefined);
+    assert.deepEqual(JSON.parse(first.content[0].text), { sent: ["webhook"] });
+    assert.equal(hooks[0].title, "via MCP · Build 0"); assert.equal(hooks[0].url, "https://ci.example/1");
+    for (let i = 1; i < 10; i++) assert.notEqual((await send(i)).isError, true, `message ${i}`);
+    const over = await send(10);
+    assert.equal(over.isError, true); assert.match(over.content[0].text, /Rate limit/);
+    assert.equal(hooks.length, 10, "the eleventh never left");
   });
 });

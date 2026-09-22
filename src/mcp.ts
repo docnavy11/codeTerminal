@@ -23,6 +23,8 @@ import type { ClientEvent } from "./protocol.js";
 import type { WatchRegistry } from "./watches.js";
 import { toMarkdown } from "./export.js";
 import * as files from "./files.js";
+import { fill } from "./prompts.js";
+import type { Project } from "./projects.js";
 
 export type McpDeps = {
   convo: Manager;
@@ -40,7 +42,14 @@ export type McpDeps = {
   filesRoot?: string;
   /** Health: version, browsers, auth mode and the like — what /setup would say. */
   health?: () => Record<string, unknown>;
+  /** The server's notifier (Telegram / webhook), when any target is configured. */
+  notify?: (n: { title: string; message: string; url?: string }) => Promise<{ sent: string[]; failed: { target: string; error: string }[] }>;
 };
+
+/** notify: at most this many messages in NOTIFY_WINDOW_MS, from every caller together. */
+export const NOTIFY_MAX = 10;
+export const NOTIFY_WINDOW_MS = 10 * 60_000;
+const notifySent: number[] = [];
 
 /** read_file returns at most this much text; the rest is reported, not sent. */
 export const READ_FILE_MAX = 256 * 1024;
@@ -95,17 +104,37 @@ export function buildMcpServer(d: McpDeps): McpServer {
   server.registerTool("send_prompt", {
     description:
       "Send a prompt to a conversation on this server — an existing one by id, or a new one if chatId is omitted — and optionally wait for the reply. " +
+      "A new chat can be started in a project (list_projects), and a saved prompt (list_prompts) can be sent by id or title instead of, or before, text. " +
       "The chat's own approval gate still applies: if the turn stops for a person to approve something, this returns status 'waiting' with a link for them; it cannot approve anything itself.",
     inputSchema: {
-      text: z.string().min(1).max(100_000),
+      text: z.string().min(1).max(100_000).optional().describe("The prompt; with promptId, added after the saved prompt"),
       chatId: z.string().optional().describe("Omit to start a new chat"),
+      project: z.string().max(200).optional().describe("New chats only: project id or name to work in (list_projects)"),
+      promptId: z.string().max(200).optional().describe("A saved prompt's id or title to send (list_prompts)"),
       wait: z.boolean().optional().describe("Wait for the turn to end and return the reply (default true)"),
       timeoutSec: z.number().int().min(1).max(MAX_WAIT_S).optional().describe(`How long to wait (default 120, max ${MAX_WAIT_S})`),
     },
-  }, async ({ text: prompt, chatId, wait, timeoutSec }) => {
+  }, async ({ text: typed, chatId, project, promptId, wait, timeoutSec }) => {
+    if (!typed && !promptId) return fail("Give text, promptId, or both.");
+    if (chatId && project) return fail("project applies to a new chat; omit chatId, or move the chat to a project in the app.");
+    let prompt = typed ?? "";
+    if (promptId) {
+      const all = d.prompts?.() ?? [];
+      const saved = all.find((p) => p.id === promptId) ?? all.find((p) => p.title.toLowerCase() === promptId.toLowerCase());
+      if (!saved) return fail(`No saved prompt ${promptId}. list_prompts shows what there is.`);
+      // A saved prompt may use {url}/{title}/{selection}; there is no tab on this side, so they come out empty.
+      prompt = [fill(saved.text, {}), typed].filter(Boolean).join("\n\n");
+    }
+    let target: Project | undefined;
+    if (project) {
+      const all = d.convo.projects();
+      target = all.find((p) => p.id === project) ?? all.find((p) => p.name.toLowerCase() === project.toLowerCase());
+      if (!target) return fail(`No project ${project}. list_projects shows what there is.`);
+    }
     const chat = chatId ? chatOrNull(chatId) : d.convo.create();
     if (!chat) return fail(`No chat ${chatId}.`);
     if (chat.busy) return fail(`Chat ${chat.id} is busy with another turn; try again when it is done, or stop it first.`);
+    if (target && !target.general) await chat.setProject(target);
     const waiter = wait === false ? null : waitForTurn(chat, (timeoutSec ?? 120) * 1000);
     try {
       await chat.prompt(prompt, async () => undefined);
@@ -219,6 +248,32 @@ export function buildMcpServer(d: McpDeps): McpServer {
       description: "Is this server working: version, auth mode, connected browsers, whether a session has come up, tool servers, notification targets.",
       annotations: { readOnlyHint: true },
     }, async () => text(health()));
+  }
+
+  if (d.notify) {
+    const notify = d.notify;
+    server.registerTool("notify", {
+      description:
+        `Send the user a notification through this server's configured targets (Telegram and/or a webhook) — e.g. "the build on the laptop finished". ` +
+        `At most ${NOTIFY_MAX} per ${NOTIFY_WINDOW_MS / 60_000} minutes across all callers. The title is marked as coming from MCP.`,
+      inputSchema: {
+        title: z.string().min(1).max(200),
+        message: z.string().min(1).max(4000),
+        url: z.string().url().max(2000).optional().describe("A link to open, if there is one"),
+      },
+    }, async ({ title, message, url }) => {
+      const now = Date.now();
+      while (notifySent.length && now - notifySent[0] > NOTIFY_WINDOW_MS) notifySent.shift();
+      if (notifySent.length >= NOTIFY_MAX) {
+        const wait = Math.ceil((NOTIFY_WINDOW_MS - (now - notifySent[0])) / 60_000);
+        return fail(`Rate limit: ${NOTIFY_MAX} notifications per ${NOTIFY_WINDOW_MS / 60_000} minutes already sent; try again in about ${wait} min.`);
+      }
+      notifySent.push(now);
+      // Marked, so a message from another agent is never mistaken for one this server wrote.
+      const r = await notify({ title: `via MCP · ${title}`, message, ...(url ? { url } : {}) });
+      if (!r.sent.length) return fail(`Not delivered: ${r.failed.map((f) => `${f.target}: ${f.error}`).join("; ") || "no targets"}`);
+      return text({ sent: r.sent, ...(r.failed.length ? { failed: r.failed } : {}) });
+    });
   }
 
   if (d.schedules) {
