@@ -300,6 +300,47 @@
     catch (e) { $("slist").replaceChildren(); sfail(e.message); }
   }
 
+
+  /* ---------------- pasted images ----------------
+     The CLI on the other end of the pty reads files, not clipboards. So an
+     image pasted into the pane is spooled to a file on the server and its
+     path is typed into the terminal, where the CLI picks it up like any
+     other path you typed. Text paste is untouched — xterm still handles it. */
+  const PASTE_TYPES = /^image\/(png|jpe?g|gif|webp)$/;
+
+  /* Local echo only: the pty never sent these, so a redraw wipes them. That is
+     the right lifetime for "uploading…" and for an error about a paste. */
+  const termNote = (msg) => term.write(`\r\n\x1b[90m[${msg}]\x1b[0m\r\n`);
+
+  /* `files` is the normal shape; `items` is the fallback, because a picture
+     copied out of a web page can arrive as an item with no entry in `files`. */
+  function imagesIn(dt) {
+    if (!dt) return [];
+    const out = [...(dt.files ?? [])].filter((f) => PASTE_TYPES.test(f.type));
+    if (out.length) return out;
+    for (const it of dt.items ?? []) {
+      if (it.kind !== "file" || !PASTE_TYPES.test(it.type)) continue;
+      const f = it.getAsFile();
+      if (f) out.push(f);
+    }
+    return out;
+  }
+
+  async function pasteImages(files) {
+    for (const f of files) {
+      if (!PASTE_TYPES.test(f.type)) continue;
+      try {
+        const { path } = await api("/paste/image", { method: "POST", headers: { "Content-Type": f.type }, body: f });
+        // A space after it, not Enter: the path joins whatever you were typing,
+        // and you say when the prompt goes.
+        if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "input", data: path + " " }));
+        else termNote(`image saved to ${path} — terminal is not connected`);
+      } catch (e) {
+        termNote(`image paste failed: ${e.message}`);
+      }
+    }
+  }
+
   /* ---------------- the host's handle ---------------- */
   const TERMPANE = {
     /** Which session the pane is on, or null for a throwaway shell. */
@@ -347,6 +388,59 @@
       term.open(termEl);
       applyTermTheme();
       term.onData((d) => { if (ptyWs?.readyState === WebSocket.OPEN) ptyWs.send(JSON.stringify({ type: "input", data: d })); });
+
+      /* ---------------- copying out of the pane ----------------
+         Two things sit between a selection and the clipboard. A tmux running
+         with `mouse on` swallows the drag: the selection it draws is tmux's
+         own, server-side, and the browser never sees it — holding Shift is
+         what makes xterm keep the drag for itself (xterm's shouldForceSelection).
+         And an xterm selection is painted, not DOM text, so the page's own
+         Ctrl+C has nothing to copy even when there is a highlight.
+         So the selection is put on the clipboard the moment the drag ends,
+         and Ctrl+Shift+C / Cmd+C / Ctrl+Insert copy it again on demand. */
+      const copySelection = async () => {
+        const text = term.getSelection();
+        if (!text) return;
+        try { await navigator.clipboard.writeText(text); return; }
+        catch { /* no clipboard API: not a secure context, or permission denied */ }
+        /* The old way still works over plain http on the tailnet, where
+           navigator.clipboard is undefined. */
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+        document.body.append(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch { termNote("could not reach the clipboard"); }
+        ta.remove();
+        term.focus();
+      };
+      /* mouseup, not onSelectionChange: the latter fires on every pixel of a
+         drag, which would be a clipboard write per mousemove. The timeout lets
+         xterm finish the selection it is still computing for this same event. */
+      termEl.addEventListener("mouseup", () => setTimeout(copySelection, 0));
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type !== "keydown" || !term.hasSelection()) return true;
+        const copyKey = (e.code === "KeyC" && ((e.ctrlKey && e.shiftKey) || (e.metaKey && !e.ctrlKey)))
+          || (e.code === "Insert" && e.ctrlKey);
+        if (!copyKey) return true;
+        copySelection();
+        return false;
+      });
+      /* xterm listens for paste on its own hidden textarea and only looks at
+         the text flavour; an image comes through with no text at all, so the
+         paste would do nothing. Catching it has to happen in the *capture*
+         phase: xterm's handler calls stopPropagation(), so a listener waiting
+         for the event to bubble up to this element is never called at all —
+         which is how the first version of this silently did nothing. */
+      termEl.addEventListener("paste", (e) => {
+        const files = imagesIn(e.clipboardData);
+        if (!files.length) return;
+        /* stopPropagation as well as preventDefault: xterm's own handler runs
+           after this one and would send an empty bracketed paste (ESC[200~
+           ESC[201~) for the image it found no text in. */
+        e.preventDefault(); e.stopPropagation();
+        pasteImages(files);
+      }, true);
 
       new ResizeObserver(sendResize).observe(termEl);
       addEventListener("resize", sendResize);

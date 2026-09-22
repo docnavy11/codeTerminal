@@ -135,6 +135,44 @@ type Pending = {
   question?: { input: Record<string, unknown>; questions: AskQuestion[] };
 };
 
+/**
+ * What to call a pending card in a notification or status line. The tool
+ * name alone ("Bash") told a scheduled run's Telegram or webhook target
+ * nothing to decide on; this adds the one field a person would actually
+ * look for, the same fields manage.js's own summarise() reads off a
+ * finished tool call's input, capped so one long command does not swallow
+ * the rest of the message.
+ */
+/** The addRules / addDirectories a chat has granted, in the shape query() takes at start. */
+export function replayGrants(granted: PermissionUpdate[]): { rules: { allow: string[]; deny: string[]; ask: string[] } | null; directories: string[] } {
+  const rules = { allow: [] as string[], deny: [] as string[], ask: [] as string[] };
+  const directories: string[] = [];
+  for (const u of granted) {
+    // Read back from a saved chat record: skip anything malformed rather than
+    // refuse to start the session over it.
+    if (u?.type === "addRules" && Array.isArray(u.rules) && u.behavior in rules) {
+      for (const r of u.rules) if (typeof r?.toolName === "string") rules[u.behavior].push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
+    } else if (u?.type === "addDirectories" && Array.isArray(u.directories)) directories.push(...u.directories.filter((d) => typeof d === "string"));
+  }
+  const any = rules.allow.length + rules.deny.length + rules.ask.length > 0;
+  return { rules: any ? rules : null, directories };
+}
+
+function describeCard(tool: string, input: unknown): string {
+  const i = input as Record<string, unknown> | null | undefined;
+  const detail = i && typeof i.command === "string" ? i.command
+    : i && typeof i.file_path === "string" ? i.file_path : "";
+  if (!detail) return tool;
+  return `${tool}: ${detail.length > 120 ? `${detail.slice(0, 119)}…` : detail}`;
+}
+
+/** "Opus 5.5 with 1M context · Best for…" → "Opus 5.5 with 1M context"; the CLI's own default says so. */
+export function modelLabel(m: { value: string; displayName?: string; description?: string }): string {
+  const lead = m.description?.split(" · ")[0]?.trim();
+  if (m.value === "default") return lead ? `default (${lead})` : "default";
+  return lead || m.displayName || m.value;
+}
+
 export class Session {
   #input = new Pushable<SDKUserMessage>();
   #query: Query | null = null;
@@ -171,6 +209,7 @@ export class Session {
     this.#model = model ?? null;
     const d = this.#deps;
     this.#granted = granted;
+    const replay = replayGrants(granted);
     // The mode has to be in place BEFORE query() reads it below. The old path
     // spawned the session, then fire-and-forget called setMode() — but the
     // query did not exist yet, so setPermissionMode() was a no-op and the SDK
@@ -182,7 +221,12 @@ export class Session {
       prompt: this.#input,
       options: {
         cwd: this.#workspace,
-        additionalDirectories: [],
+        additionalDirectories: replay.directories,
+        // "Always" answers scoped to the session died with it: a restart, a cwd
+        // or project change, or eviction asked again. Replayed as flag settings,
+        // the one place query() takes permission rules at start (measured,
+        // CLI 2.1.280: an allow rule there ran its command with no card).
+        ...(replay.rules ? { settings: { permissions: replay.rules } } : {}),
         // Loads your ~/.claude and project config: custom slash commands,
         // skills, CLAUDE.md. Measured: this is the difference between 52 and
         // 82 available commands. It does NOT weaken canUseTool — the explicit
@@ -198,7 +242,7 @@ export class Session {
             d.confirmSubmit === false ? undefined : (detail) => this.#askSubmit(detail)) } : {}),
           // The chat id is this session's own, so a watch is always attributed
           // to the conversation that set it.
-          ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
+          ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer, d.browserAllow === undefined ? undefined : this.#browserPolicy) } : {}),
           ...(d.prompts ? { prompts: promptTools(d.prompts) } : {}),
           ...(d.filesRoot ? { files: fileTools(d.filesRoot, this.#workspace, (e) => this.#emit(e)) } : {}),
         },
@@ -352,7 +396,7 @@ export class Session {
     const emitCard = (diff: Awaited<ReturnType<typeof previewDiff>>) => {
       if (!this.#pending.has(id)) return;
       this.#emit({ kind: "approval", id, tool, input, canAlways: sugg.length > 0, ...(diff ? { diff } : {}) });
-    this.#autoDeny(id, tool);
+      this.#autoDeny(id, describeCard(tool, input));
       this.#pushStatus();
     };
     if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
@@ -385,13 +429,20 @@ export class Session {
       // allow: this chat. always: this site from now on (eval: this host, this chat — never standing).
       const { host, action, level } = p.browser;
       if (decision !== "deny") {
-        // eval's per-call card on an already act-allowed site grants only eval; otherwise the level
-        if (action === "eval" && this.#browserPolicy.allowed(host, "act")) { if (decision === "always") this.#evalGrants.add(host); }
-        else {
+        // An eval card never writes the standing list, whatever the site's state:
+        // "Allow once" is this call, "Allow on this site (this chat)" is this host
+        // for this chat. It used to fall through to the site grant below, so
+        // "once" granted act for the whole chat and "this chat" was permanent.
+        if (action === "eval") {
+          if (decision === "always") {
+            this.#evalGrants.add(host);
+            const cur = this.#hostGrants.get(host);
+            if (!cur || !levelCovers(cur, "act")) this.#hostGrants.set(host, "act");
+          }
+        } else {
           const cur = this.#hostGrants.get(host);
           if (!cur || !levelCovers(cur, level)) this.#hostGrants.set(host, level);
           if (decision === "always") this.#deps.browserAllow?.add(host, level);
-          if (action === "eval" && decision === "always") this.#evalGrants.add(host);
         }
         p.resolve({ behavior: "allow" });
       } else p.resolve({ behavior: "deny", message: "declined" });
@@ -426,6 +477,30 @@ export class Session {
     this.#emit({ kind: "approval_closed", id, decision: "allow" });
     this.#pushStatus();
     return true;
+  }
+
+  /**
+   * Resolve the oldest pending card with plain text — for a channel that
+   * only ever carries free text and no specific card id (a Telegram reply).
+   * The same "first" `status()`'s own detail line already picks when there
+   * is more than one. An AskUserQuestion accepts any text as its answer (its
+   * first question only — this is one reply, not a form); an ordinary
+   * permission card only understands yes/always/no and leaves anything else
+   * open rather than guess on it.
+   */
+  resolveOldestPending(text: string): "answered" | "unclear" | "none" {
+    const first = [...this.#pending][0];
+    if (!first) return "none";
+    const [id, p] = first;
+    if (p.question) {
+      this.answer(id, { [p.question.questions[0]?.question ?? ""]: text });
+      return "answered";
+    }
+    const t = text.trim().toLowerCase();
+    if (/^(y|yes|allow|ok|okay|approve)$/.test(t)) { this.decide(id, "allow"); return "answered"; }
+    if (/^(a|always)$/.test(t)) { this.decide(id, "always"); return "answered"; }
+    if (/^(n|no|deny|refuse|stop)$/.test(t)) { this.decide(id, "deny"); return "answered"; }
+    return "unclear";
   }
 
   async setMode(mode: PermissionMode): Promise<void> {
@@ -538,11 +613,16 @@ export class Session {
     this.#emit(s);
   }
 
-  /** The models the CLI offers, for the picker; an older CLI simply has none. */
+  /**
+   * The models the CLI offers, for the picker; an older CLI simply has none.
+   * displayName carries no version ("Opus"), and what an alias resolves to
+   * changes with the bundled CLI, so the label is the description's lead
+   * ("Opus 5.5 with 1M context") when there is one.
+   */
   async #publishModels(): Promise<void> {
     try {
       const all = await this.#query?.supportedModels();
-      if (all) this.#emit({ kind: "models", models: all.map((m) => ({ value: m.value, label: m.displayName || m.value })) });
+      if (all) this.#emit({ kind: "models", models: all.map((m) => ({ value: m.value, label: modelLabel(m) })) });
     } catch { /* no picker, no harm */ }
   }
 

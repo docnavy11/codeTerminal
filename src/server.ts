@@ -2,14 +2,16 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { mkdirSync } from "node:fs";
-import { pipeline } from "node:stream";
+import { pipeline, type Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { lookup } from "node:dns/promises";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
 import { pruneScreenshots } from "./screenshots.js";
+import { MAX_PASTE_BYTES, PASTE_TYPES, savePastedImage } from "./pasted.js";
 import { UsageLog } from "./usage.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
@@ -19,10 +21,12 @@ import type { ClientEvent } from "./protocol.js";
 import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe as describeCron, type Schedule } from "./schedule.js";
 import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
+import { TelegramListener } from "./telegram-listener.js";
 import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture } from "./tmux.js";
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
+import { isUnspecified } from "./cidr.js";
 import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
 import { buildSetup } from "./setup.js";
@@ -54,6 +58,14 @@ export type ServerConfig = {
   scheduleTickMs?: number;
   /** Phone notifications (Telegram, webhook/ntfy); from the environment by default. */
   notify?: Pick<NotifyConfig, "telegram" | "webhook" | "fetch">;
+  /** Replies control the chat a notification was about — answer a pending card,
+      or send a new prompt — instead of only reading. Off by default: this widens
+      "who can be answered by" to "whoever texts your configured Telegram chat",
+      which the plain notify targets above do not. */
+  telegramControl?: boolean;
+  /** cwd for the standing "Telegram" chat — a CLAUDE.md telling it how to
+      query this server's own schedules/chats/prompts over loopback lives here. */
+  telegramContextDir?: string;
   /** Standing list of sites the browser tools may use without asking; null disables the gate. */
   browserAllowPath: string | null;
   browserAllowSeed: string[];
@@ -107,6 +119,8 @@ export function envConfig(): ServerConfig {
     promptsPath: state.prompts,
     schedulesPath: state.schedules,
     notify: notifyConfigFromEnv(),
+    telegramControl: process.env.CODETERM_TELEGRAM_CONTROL === "1",
+    telegramContextDir: state.telegramContext,
     usagePath: state.usage,
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : state.browserAllow,
     serverBrowser: { profileDir: state.serverBrowserProfile,
@@ -207,7 +221,10 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
      no pane in the UI. Everything else works unchanged. */
   const SHELL = cfg.shell !== false;
 
-  if (HOST === "0.0.0.0" || HOST === "::") {
+  // Not just the two usual spellings: "::0", "0" and "0x0" bind every
+  // interface too, and the resolver is what turns "0" into 0.0.0.0.
+  const bindAddrs = [HOST, ...await lookup(HOST, { all: true }).then((r) => r.map((a) => a.address), () => [])];
+  if (bindAddrs.some(isUnspecified)) {
     throw new AuthRefused("Refusing to bind all interfaces. /pty is an ungated shell; keep it on the tailnet.");
   }
   mkdirSync(WORKSPACE, { recursive: true });
@@ -217,6 +234,9 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     ...cfg.denyExtra,
     // The server's own secrets, wherever the project sits.
     join(ROOT, ".env"),
+    // The server browser's profile: its cookies and saved logins are the
+    // sessions it was signed into, one download away otherwise.
+    cfg.serverBrowser?.profileDir ?? join(ROOT, "server-browser", "profile"),
   ]);
 
   // The Chrome extension dials in here; browser tools speak through it.
@@ -232,7 +252,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const lastChatCwd = () => state.lastChat?.cwd ?? WORKSPACE;
 
   const watches = new WatchRegistry();
-  const prompts = new PromptStore(cfg.promptsPath);
+  const prompts = new PromptStore(cfg.promptsPath, { warn });
   const browserAllow = cfg.browserAllowPath ? new BrowserAllowlist(cfg.browserAllowPath, cfg.browserAllowSeed) : null;
 
   const convo = new Manager(
@@ -465,6 +485,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       browserSites: browserAllow ? browserAllow.all().length : null,
       mcpServers: convo.mcpServers,
       notifyTargets: notifier.targets,
+      telegramControl: telegramListener !== null,
       statePaths: statePaths(ROOT), envPath: join(ROOT, ".env"), shell: SHELL,
       schedules: (() => { const all = schedules.list().filter((s) => !s.paused); const next = all.map((s) => s.nextAt).filter((n): n is number => n !== null).sort((a, b) => a - b)[0]; return { count: schedules.list().length, next: next ?? null }; })(),
     }));
@@ -607,6 +628,11 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       log(`[zip] ${entries.length} file(s), ${(bytes / 1024).toFixed(0)}KB`);
 
       const zip = new ZipFile();
+      // yazl reports a file it cannot read (unreadable, or grown since it was
+      // stat'ed — a log being written) on the ZipFile, not on outputStream.
+      // Unheard, that 'error' ended the process. The zip is already streaming,
+      // so all that is left is to cut the response short.
+      zip.on("error", (e: Error) => { log(`[zip] aborted: ${e.message}`); res.destroy(); });
       for (const e of entries) zip.addFile(e.abs, e.name);
       pipeline(zip.outputStream, res, () => {});
       zip.end();
@@ -626,6 +652,23 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       const dir = typeof req.query.path === "string" ? req.query.path : undefined;
       if (!name) throw new Error("missing ?name=");
       res.json(await files.saveUploadStream(FILES_ROOT, dir, name, req, MAX_UPLOAD));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  /**
+   * An image pasted into the terminal pane. The CLI in there takes file paths,
+   * not clipboards, so the bytes are spooled to a private file and the path
+   * goes back; the pane then types it into the pty.
+   */
+  app.post("/paste/image", guard, express.raw({ type: PASTE_TYPES, limit: MAX_PASTE_BYTES }), async (req, res) => {
+    try {
+      const body = req.body as Buffer | undefined;
+      if (!Buffer.isBuffer(body)) throw new Error("expected image bytes");
+      const saved = await savePastedImage(body, String(req.headers["content-type"] ?? ""));
+      log(`[paste] ${saved.path} (${(saved.bytes / 1024).toFixed(0)}KB)`);
+      res.json(saved);
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -668,13 +711,23 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state, browserWatchers, broadcast };
 
   /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
-  const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"));
+  const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"), { warn });
   const notifier = new Notifier({ ...(cfg.notify ?? {}), log, warn });
   /* Where a notification tells you to go. The bind address is right for a
      laptop on the same tailnet, but it is an IP: it reads badly on a phone
      and it breaks the day the machine gets a new one. CODETERM_PUBLIC_URL
      names the address you would actually type. */
   const publicBase = (cfg.publicUrl ?? `http://${HOST}:${port}`).replace(/\/+$/, "");
+  /* Two-way: a reply answers the pending card, or prompts, whichever chat the
+     notification named. Requires both a configured Telegram target and the
+     separate opt-in — sending notifications does not by itself mean replies
+     get to drive the agent. */
+  const telegramListener = cfg.notify?.telegram && cfg.telegramControl
+    ? new TelegramListener({ convo, notifier, token: cfg.notify.telegram.token, chatId: cfg.notify.telegram.chatId, publicBase,
+                             contextDir: cfg.telegramContextDir ?? join(WORKSPACE, ".telegram-context"), apiBase: `http://${HOST.includes(":") ? `[${HOST}]` : HOST}:${PORT}`,
+                             allowedUsers: (process.env.CODETERM_TELEGRAM_USERS ?? "").split(",").map((u) => u.trim()).filter(Boolean), log, warn })
+    : null;
+  telegramListener?.start();
   /* A card in a run nobody is watching. The notification is the only thing
      that can reach you, and a link into that chat is the whole answer: a
      client attaching while a card is open is sent it (measured), so opening
@@ -684,9 +737,9 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     const mins = Math.max(1, Math.round(s.waitMs / 60_000));
     void notifier.send({
       title: `${s.title} — waiting for you`,
-      message: `${what}\n\nOpen the chat to answer. If nobody does within ${mins} min it is refused and the run carries on without it.`,
+      message: `${what}${telegramListener ? "\n\nReply here, or open the chat." : "\n\nOpen the chat to answer."} If nobody does within ${mins} min it is refused and the run carries on without it.`,
       url: `${publicBase}/?chat=${encodeURIComponent(chatId)}`, tags: ["question"],
-    });
+    }).then((r) => telegramListener?.noteSent(r.telegramMessageId, chatId));
   };
   const scheduler = new Scheduler({
     store: schedules, log, warn,
@@ -700,7 +753,8 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     for (const send of broadcast) send(e);
     const extra = [...(run.needed.length ? [`needed: ${run.needed.join(", ")}`] : []), ...(run.cards.length ? [`answered no: ${run.cards.join(", ")}`] : []), ...(run.files.length ? [`files: ${run.files.map((f) => f.split("/").pop()).join(", ")}`] : [])];
     void notifier.send({ title: `${s.title} — ${run.outcome.replace("-", " ")}${run.costUsd != null ? ` · $${run.costUsd.toFixed(2)}` : ""}`, message: [run.summary, ...extra].filter(Boolean).join("\n"),
-      ...(run.chatId ? { url: `${publicBase}/?chat=${encodeURIComponent(run.chatId)}` } : {}), tags: [run.outcome === "done" ? "white_check_mark" : run.outcome === "failed" ? "x" : "warning"] });
+      ...(run.chatId ? { url: `${publicBase}/?chat=${encodeURIComponent(run.chatId)}` } : {}), tags: [run.outcome === "done" ? "white_check_mark" : run.outcome === "failed" ? "x" : "warning"] })
+      .then((r) => { if (run.chatId) telegramListener?.noteSent(r.telegramMessageId, run.chatId); });
   };
   /** Which notification targets are set, and a test message so you know they work before 08:00. */
   app.get("/notify", guard, (_req, res) => { res.json({ targets: notifier.targets }); });
@@ -747,8 +801,19 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
   });
 
-  server.on("upgrade", async (req: IncomingMessage, socket, head) => {
-    const route = new URL(req.url ?? "/", `http://${req.headers.host}`).pathname;
+  server.on("upgrade", (req: IncomingMessage, socket, head) => {
+    // A throw in here is an unhandled rejection, and that ends the process. It
+    // ran before the auth check: one request with `Host: [` from any tailnet
+    // peer took every chat and shell down. Refuse the request instead.
+    upgrade(req, socket, head).catch((e: unknown) => {
+      logDeny("upgrade", `bad request: ${e instanceof Error ? e.message : String(e)}`);
+      if (!socket.destroyed) { socket.write("HTTP/1.1 400 Bad Request\r\n\r\n"); socket.destroy(); }
+    });
+  });
+
+  const upgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
+    // A constant base: the Host header is the client's to spoil.
+    const route = new URL(req.url ?? "/", "http://x").pathname;
     if (route === "/pty" && !SHELL) {
       logDeny(route, "the shell pane is off (CODETERM_SHELL=0)");
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
@@ -780,7 +845,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       else if (route === "/browser/live") serverBrowser.attachViewer(ws);
       else attachShell(ws, ctx);
     });
-  });
+  };
 
   /**
    * At boot this can start before tailscaled has assigned the address, and
@@ -816,6 +881,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   log(`browser        /ext — extension bridge, tools ungated`);
   log(`files          ${FILES_ROOT} (browse, upload, download)`);
   log(`projects       ${cfg.projectsRoot}`);
+  if (telegramListener) log(`telegram       two-way — a reply answers a card or prompts the chat it named`);
 
   // A restart is a good moment to drop what the previous run left behind.
   void pruneScreenshots().then((n) => { if (n) log(`[shots] pruned ${n} old screenshots`); }).catch(() => {});
@@ -831,6 +897,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
       log(`[${signal}] shutting down`);
       clearInterval(sweeper);
       scheduler.stop();
+      void telegramListener?.stop().catch((e) => warn(`shutdown: telegram listener ${String(e)}`));
       try { convo.shutdown(); } catch (e) { warn(`shutdown: chats ${String(e)}`); }
       void serverBrowser.stop().catch((e) => warn(`shutdown: server browser ${String(e)}`));
       try { usage.save(); } catch (e) { warn(`shutdown: usage ${String(e)}`); }
@@ -865,4 +932,9 @@ if (isMain) {
   };
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGINT", () => stop("SIGINT"));
+  // One stray rejection used to end the process, and with it every chat, run
+  // and shell. Log it loudly and keep serving; the code that threw is the bug.
+  process.on("unhandledRejection", (reason) => {
+    console.error("[unhandled rejection]", reason instanceof Error ? reason.stack ?? reason.message : reason);
+  });
 }

@@ -91,6 +91,29 @@ describe("watch tools", () => {
     assert.match(await call(srv, "list"), /the build/);
   });
 
+  test("page: gated like read_page on the site it watches, and pinned to the tab the gate saw", async () => {
+    const asks: { host: string; action: string; level: string }[] = []; let answer: "allow" | "deny" = "deny";
+    const policy = { allowed: (h: string) => h === "ok.example", evalAllowed: () => false,
+      ask: async (host: string, action: string, _d: string | undefined, level: "read" | "act") => { asks.push({ host, action, level }); return answer; } };
+    const { bridge, ext } = bridged({
+      tab_url: (p) => p.tabId === 4 ? { tabId: 4, url: "https://ok.example/ci" } : { tabId: 2, url: "https://bank.example/acct" },
+      watch_start: (p) => ({ url: "u", tabId: p.tabId, watchId: p.watchId }),
+    });
+    const reg = new WatchRegistry();
+    const srv = watchTools(bridge, reg, () => "chat-1", () => undefined, policy);
+    await assert.rejects(call(srv, "page", { description: "balance", until: "changes" }), /bank\.example: the user did not allow it/);
+    assert.deepEqual(asks, [{ host: "bank.example", action: "watch", level: "read" }]);
+    assert.equal(reg.all().length, 0, "refused before anything was registered");
+    assert.ok(!ext.sent.some((m) => (m as { action?: string }).action === "watch_start"), "and before the browser was told");
+    answer = "allow";
+    await call(srv, "page", { description: "balance", until: "changes" });
+    const started = ext.sent.find((m) => (m as { action?: string }).action === "watch_start") as { params: Record<string, unknown> };
+    assert.equal(started.params.tabId, 2, "the active tab the card named, not whatever is active later");
+    assert.equal(reg.all()[0].tabId, 2);
+    await call(srv, "page", { description: "build", until: "contains", value: "passed", tabId: 4 });
+    assert.equal(asks.length, 2, "an allowed site does not ask");
+  });
+
   test("page: when the browser refuses, the watch is not left registered", async () => {
     const { bridge } = bridged({ watch_start: () => { throw new Error("no active tab"); } });
     const reg = new WatchRegistry();
@@ -223,6 +246,38 @@ describe("browser tools", () => {
     async function bridged_click(s: typeof srv) { try { await call(s, "click", { tabId: 2, selector: "a" }); } catch { /* the fake ext has no click handler; the ask is what matters */ } }
   });
 
+  test("the tab the card was about is the tab that is acted on, even if the user switches tabs while it is up", async () => {
+    // The fake extension resolves "no tabId" to whichever tab is active now,
+    // as background.js does; the user switches to their bank mid-card.
+    let active = 1;
+    const url = (id: number) => id === 1 ? "https://shop.example/cart" : "https://bank.example/transfer";
+    const ran: { action: string; tab: number }[] = [];
+    const policy = { allowed: () => false, evalAllowed: () => true,
+      ask: async () => { active = 2; return "allow" as const; } };
+    const act = (action: string) => (p: Record<string, unknown>) => { ran.push({ action, tab: (p.tabId as number | undefined) ?? active }); return { ok: true }; };
+    const { bridge } = bridged({
+      tab_url: (p) => { const id = (p.tabId as number | undefined) ?? active; return { tabId: id, url: url(id) }; },
+      click: act("click"), read_page: (p) => { ran.push({ action: "read_page", tab: (p.tabId as number | undefined) ?? active }); return { text: "a page with enough text to count" }; },
+      eval: act("eval"), wait_for: act("wait_for"),
+    });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    for (const [tool, args] of [["click", { selector: "#buy" }], ["read_page", {}], ["eval", { code: "1" }], ["wait_for", { text: "x" }]] as const) {
+      active = 1; ran.length = 0;
+      await call(srv, tool, args);
+      assert.deepEqual(ran.map((r) => r.tab), [1], `${tool}: approved on shop.example, so it runs there and not on the bank tab now in front`);
+    }
+  });
+
+  test("a failed tab lookup says what failed, not that the page is restricted", async () => {
+    const policy = { allowed: () => true, evalAllowed: () => true, ask: async () => "allow" as const };
+    const { bridge } = bridged({ tab_url: (p) => { if (p.tabId === 9) throw new Error("No tab with id: 9."); return { tabId: 3, url: "chrome://settings" }; } });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    await assert.rejects(call(srv, "read_page", { tabId: 9 }), (e: Error) => /No tab with id: 9/.test(e.message) && !/chrome:\/\//.test(e.message));
+    await assert.rejects(call(srv, "click", { tabId: 3, selector: "a" }), /no readable URL \(a chrome:\/\/ or restricted page\)/);
+    const { bridge: gone } = bridged({ tab_url: () => { throw new Error("the extension disconnected mid-command"); } });
+    await assert.rejects(call(browserTools(gone, () => undefined, undefined, policy), "screenshot", {}), /could not tell which site the tab is on \(the extension disconnected mid-command\)/);
+  });
+
   test("a blocked tab fails every call at once with the dialog's message; handle_dialog goes through, is act-level, and forwards accept/text", async () => {
     const asks: string[] = []; const seen: Record<string, unknown>[] = [];
     let dialog: { type: string; message: string } | undefined = { type: "confirm", message: "Delete everything?" };
@@ -242,7 +297,7 @@ describe("browser tools", () => {
     assert.deepEqual(r.at, { host: "shop.example", title: "Cart" }, "stamped like any other call, without the dialog");
     assert.match(await call(srv, "read_page", { tabId: 1 }), /page/, "unblocked");
     await call(srv, "handle_dialog", { accept: true, text: "Alex" });
-    assert.deepEqual(seen[1], { accept: true, text: "Alex" });
+    assert.deepEqual(seen[1], { accept: true, text: "Alex", tabId: 1 });
   });
 
   test("results are stamped with where they happened; navigate with its destination; no tab_url is not an error", async () => {
@@ -264,7 +319,7 @@ describe("browser tools", () => {
     assert.match(await call(srv, "find", { text: "hit", limit: 3 }), /"ref": "f1"/);
     assert.match(await call(srv, "scroll", { ref: "f1" }), /"percent": 50/);
     assert.deepEqual(asks, [], "read-allowed: neither asks");
-    assert.deepEqual(seen[0], { text: "hit", limit: 3 }); assert.deepEqual(seen[1], { ref: "f1" });
+    assert.deepEqual(seen[0], { text: "hit", limit: 3, tabId: 1 }); assert.deepEqual(seen[1], { ref: "f1", tabId: 1 }, "the tab the gate resolved is the one the call runs on");
   });
 
   test("type is act-level and forwards text and target; press forwards modifier specs", async () => {
@@ -413,7 +468,7 @@ describe("browser tools", () => {
     const srv = browserTools(bridge, () => undefined, undefined, policy);
     await assert.rejects(call(srv, "wait_for", { tabId: 1 }), /at least one condition/);
     assert.match(await call(srv, "wait_for", { text: ["ready", "done"], timeoutMs: 5000 }), /"ok": true/);
-    assert.deepEqual(seen[0], { text: ["ready", "done"], timeoutMs: 5000 });
+    assert.deepEqual(seen[0], { text: ["ready", "done"], timeoutMs: 5000, tabId: 1 });
     assert.match(await call(srv, "wait_for", { url: "**/dash*" }), /"ok": true/);
   });
 
@@ -429,6 +484,24 @@ describe("browser tools", () => {
     await call(srv, "eval", { code: "3" }); assert.equal(asks.length, 2, "granted for this host");
     const { bridge: b2 } = bridged({ eval: (p) => ({ value: p.code }) });
     assert.match(await call(browserTools(b2, () => undefined), "eval", { code: "x" }), /x/, "no policy: no tab_url call, no ask");
+  });
+
+  test("browser_batch: a step's own tabId cannot take the batch to a tab the gate never saw", async () => {
+    const asks: string[] = []; const read: unknown[] = [];
+    const policy = { allowed: (h: string) => h === "allowed.example", evalAllowed: () => false, ask: async (h: string) => { asks.push(h); return "deny" as const; } };
+    const { bridge } = bridged({
+      tab_url: (p) => p.tabId === 2 ? { tabId: 2, url: "https://bank.example/acct" } : { tabId: 1, url: "https://allowed.example/" },
+      find: (p) => { read.push(p.tabId); return { count: 0, matches: [] }; },
+      read_page: (p) => { read.push(p.tabId); return { text: p.tabId === 2 ? "balance 12 345,67 on the bank page" : "an allowed page, long enough" }; },
+    });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    const out = await call(srv, "browser_batch", { tabId: 1, steps: [{ tool: "read_page", args: { tabId: 2 } }, { tool: "find", args: { tabId: 2, text: "x" } }] });
+    assert.doesNotMatch(out, /balance/, "the bank tab's text never comes back");
+    assert.deepEqual(read, [1, 1], "every step ran on the gated tab");
+    assert.deepEqual(asks, []);
+    read.length = 0;
+    await call(srv, "browser_batch", { steps: [{ tool: "read_page", args: { tabId: 2 } }] });
+    assert.deepEqual(read, [1], "no tabId on the batch: the active tab the gate resolved, not the step's");
   });
 
   test("read_page on a PDF tab: the viewer refuses, the bytes are fetched, the text comes back", async () => {
@@ -485,6 +558,38 @@ describe("browser tools", () => {
       assert.equal(d.name, "evil.pdf", "basename'd");
       assert.deepEqual((await readdir(join(cwd, "downloads"))).sort(), ["0039-2.pdf", "0039.pdf", "evil.pdf", "export.csv"]);
       await assert.rejects(call(browserTools(bridge, () => undefined), "download", { tabId: 5 }), /not available/);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
+  test("download and the PDF fallback: a redirect to another host is gated there before anything is kept or returned", async () => {
+    const { mkdtemp, readdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const cwd = await mkdtemp(join(tmpdir(), "ct-dl-"));
+    const pdf = makePdf([["Statement: balance 12 345,67"]]);
+    const asks: { host: string; action: string; detail?: string }[] = []; let answer: "allow" | "deny" = "deny";
+    const policy = { allowed: (h: string) => h === "files.example", evalAllowed: () => false,
+      ask: async (host: string, action: string, detail?: string) => { asks.push({ host, action, detail }); return answer; } };
+    // files.example/share/* answers 302 to the bank; /same/* redirects within files.example
+    const landed = (u: string) => u.includes("/share/") ? "https://bank.example/statement.pdf" : u.replace("/same/", "/final/");
+    const { bridge } = bridged({
+      tab_url: (p) => ({ tabId: p.tabId, url: p.tabId === 5 ? "https://files.example/share/s.pdf" : "https://files.example/same/s.pdf" }),
+      fetch_bytes: (p) => ({ tabId: p.tabId, url: landed(String(p.url ?? (p.tabId === 5 ? "https://files.example/share/s.pdf" : "https://files.example/same/s.pdf"))), contentType: "application/pdf", bytes: pdf.length, data: pdf.toString("base64") }),
+    });
+    const srv = browserTools(bridge, () => undefined, undefined, policy, () => cwd);
+    try {
+      await assert.rejects(call(srv, "download", { url: "https://files.example/share/x.pdf" }), /bank\.example: the user did not allow it/);
+      await assert.rejects(call(srv, "download", { tabId: 5 }), /bank\.example: the user did not allow it/);
+      await assert.rejects(readdir(join(cwd, "downloads")).then((f) => { if (f.length) throw new Error("kept"); throw new Error("empty"); }), /empty|ENOENT/, "nothing was written");
+      await assert.rejects(call(srv, "read_page", { tabId: 5 }), /bank\.example: the user did not allow it/);
+      assert.deepEqual(asks.map((a) => `${a.action}@${a.host}`), ["download@bank.example", "download@bank.example", "read_page@bank.example"]);
+      assert.match(asks[0].detail!, /redirected from https:\/\/files\.example\/share\/x\.pdf to https:\/\/bank\.example\/statement\.pdf/);
+      // a same-host redirect is the site already allowed: no card
+      const ok = JSON.parse(await call(srv, "download", { tabId: 6 })) as { url: string };
+      assert.equal(ok.url, "https://files.example/final/s.pdf");
+      assert.match(await call(srv, "read_page", { tabId: 6 }), /balance 12 345,67/);
+      assert.equal(asks.length, 3);
+      answer = "allow";
+      assert.match(await call(srv, "read_page", { tabId: 5 }), /balance/, "allowed at the destination, it reads");
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
 

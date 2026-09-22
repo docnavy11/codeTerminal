@@ -27,6 +27,16 @@ describe("buildSetup", () => {
     assert.deepEqual(s.urls.extension, ["ws://127.0.0.1:8123/ext"]);
   });
 
+  test("notifications: warns with none set, names targets when set, and says when replies drive the agent", () => {
+    const none = buildSetup(input());
+    assert.equal(none.checks.notifications.level, "warn");
+    const plain = buildSetup(input({ notifyTargets: ["telegram"] }));
+    assert.equal(plain.checks.notifications.level, "ok");
+    assert.equal(plain.checks.notifications.text, "Phone notifications: telegram");
+    const twoWay = buildSetup(input({ notifyTargets: ["telegram"], telegramControl: true }));
+    assert.match(twoWay.checks.notifications.text, /Telegram replies can answer cards and prompt chats/);
+  });
+
   test("the shell check names the one route with no approval gate, and says when it is off", () => {
     const on = buildSetup(input());
     assert.equal(on.checks.shell.level, "warn"); assert.match(on.checks.shell.text, /real shell as this user/);

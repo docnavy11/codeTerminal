@@ -80,11 +80,17 @@ export async function createAuth(cfg: AuthConfig): Promise<Auth> {
   // Origins a browser may legitimately be on. WebSockets have no same-origin
   // policy of their own, so without this any site you visit could open /pty.
   // localhost/127.0.0.1 are always present, which is what covers localhost mode.
-  const allowedOrigins = new Set(
-    [cfg.host, self?.dnsName, self?.dnsName?.split(".")[0], "localhost", "127.0.0.1", ...cfg.extraOrigins]
-      .filter((h): h is string => Boolean(h))
+  const allowedOrigins = new Set([
+    ...[cfg.host, self?.dnsName, self?.dnsName?.split(".")[0], "localhost", "127.0.0.1", ...cfg.extraOrigins]
+      .filter((h): h is string => typeof h === "string" && h !== "" && !h.includes("://"))
       .flatMap((h) => [`http://${h}:${cfg.port}`, `https://${h}:${cfg.port}`]),
-  );
+    // Names you added yourself may sit behind a reverse proxy on 443/80, where
+    // the browser's Origin carries no port at all; or be given as a full origin.
+    ...cfg.extraOrigins.flatMap((h) => {
+      if (h.includes("://")) { try { return [new URL(h).origin]; } catch { return []; } }
+      return [`https://${h}`, `http://${h}`];
+    }),
+  ]);
 
   const first = (v: string | string[] | undefined) => Array.isArray(v) ? v[0] : v;
 

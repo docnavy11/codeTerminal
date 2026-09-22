@@ -51,7 +51,17 @@ describe("pruneScreenshots", () => {
     assert.deepEqual(await names(), ["a.png", "b.png"]);
   });
 
-  test("leaves non-png files alone", async () => {
+  test("sweeps the jpeg screenshots too, by default", async () => {
+    // Screenshots are written as tab-<id>-<ms>.jpg now; a png-only default
+    // left every one of them behind.
+    await shot("tab-1-1.jpg", 8 * HOUR);
+    await shot("old.jpeg", 8 * HOUR);
+    await shot("tab-1-2.jpg", 1 * HOUR);
+    assert.equal(await pruneScreenshots(dir), 2);
+    assert.deepEqual(await names(), ["tab-1-2.jpg"]);
+  });
+
+  test("leaves non-image files alone", async () => {
     await shot("old.png", 8 * HOUR);
     const other = join(dir, "notes.txt");
     await writeFile(other, "keep me");

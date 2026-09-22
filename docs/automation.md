@@ -70,6 +70,52 @@ skipped, never blocks a run. Measured with a fake HTTP layer in
 failures reported, not thrown); not measured against the real services —
 "send test" is the measurement.
 
+**Two-way Telegram.** With `CODETERM_TELEGRAM_CONTROL=1` set alongside the
+Telegram pair above, a reply is read back, not just sent to. Reply to a
+"waiting for you" notification with yes / always / no to answer that card
+(any text answers an `AskUserQuestion`), or reply to a "done" notification
+with anything else to send it as a fresh prompt in that same chat. A message
+that does not reply to anything falls back to whichever chat was last
+mentioned, and — with nothing to fall back to either, which is the ordinary
+case: the first message, or one that has drifted past the last thing
+mentioned — lands in one standing chat named **Telegram**, created the
+first time it is needed and reused after. That chat is a real conversation:
+it runs permanently unattended (a card it raises is announced and
+answerable exactly like a scheduled run's), and its own replies are pushed
+back to Telegram when each turn ends, so it is a phone-only chat with the
+agent, not a one-shot command line. Its cwd is a small dedicated directory
+holding only a `CLAUDE.md` — read automatically on every turn — that tells
+it how to look up this server's own state over loopback: `GET /schedules`
+(scheduled prompts, saved prompts, projects), `/chats`, `/prompts`,
+`/projects`, and that `POST /schedules/<id>/run` runs one now, through the
+ordinary approval gate. Ask it "what's scheduled?" and it can actually
+answer, without you needing to open the app. It also shows up in the manage
+page's chat list like any other, in case you want to read it or reply from
+there
+instead.
+
+Long-polling (`getUpdates`), never a webhook — Telegram's servers reaching
+in would be the one inbound exposure everything else here is built to
+avoid — and only messages from `CODETERM_TELEGRAM_CHAT` are ever read.
+
+Off by default, on top of the notify pair, because it is a bigger step than
+being told about a run: anyone who can message that chat can now drive the
+agent, with whatever mode and shell access that chat's session already has
+— and the standing chat runs in **Auto**, the same default schedule.ts
+itself uses for a new schedule, not "Ask before changes": with nobody
+watching a browser tab to click Allow on, Ask turns every ordinary command
+into a card (measured — a job-search schedule's own diagnosis over Telegram
+stalled on repeated plain "Bash" approvals before this). Auto still raises
+a card, announced and answerable the same way, for anything the CLI's own
+judgement is not sure about. A pending card it cannot parse (a permission
+gate, unclear text) is left open rather than guessed on. A prompt sent to some *other* chat by falling back to what was last
+mentioned has no completion notification of its own — only a scheduled
+run's own end, or the standing chat's own wiring, does that — so check the
+app for that one's reply. See `src/telegram-listener.ts` for what a restart
+does with Telegram's own backlog (drained, never acted on) and for how the
+standing chat is found (by title, so deleting it just makes a new one next
+message).
+
 **It deliberately does not** run two copies at once (the second is recorded
 as skipped), catch up on times missed while the server was down (recorded
 as missed — "Run now" is there for that), retry, or chain schedules. Run

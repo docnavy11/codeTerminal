@@ -32,6 +32,8 @@ export type SetupInput = {
   schedules?: { count: number; next: number | null };
   /** Phone notification targets configured (telegram, webhook, ntfy). */
   notifyTargets?: string[];
+  /** Two-way Telegram (CODETERM_TELEGRAM_CONTROL=1): a reply can answer a card or prompt a chat. */
+  telegramControl?: boolean;
   /** Where the config and the state are kept, for the setup page's Paths list. */
   statePaths?: Record<string, string>;
   /** The .env this install reads (it may not exist). */
@@ -94,7 +96,7 @@ export function buildSetup(i: SetupInput) {
       ? { ok: true, level: "ok", text: "No scheduled prompts", hint: "The manage page's Schedules tab runs a prepared prompt by itself at set times, in the server browser." }
       : { ok: true, level: "ok", text: `${i.schedules.count} scheduled prompt${i.schedules.count === 1 ? "" : "s"}${i.schedules.next ? ` — next at ${new Date(i.schedules.next).toISOString().slice(0, 16).replace("T", " ")} UTC` : " — all paused"}` },
     notifications: i.notifyTargets?.length
-      ? { ok: true, level: "ok", text: `Phone notifications: ${i.notifyTargets.join(", ")}`, hint: "The Schedules tab has a “send test” button." }
+      ? { ok: true, level: "ok", text: `Phone notifications: ${i.notifyTargets.join(", ")}${i.telegramControl ? " — Telegram replies can answer cards and prompt chats" : ""}`, hint: "The Schedules tab has a “send test” button." }
       : { ok: true, level: "warn", text: "No phone notifications configured", hint: "Scheduled runs then report only in the browser: the extension's notification, a strip in open chats, the Schedules tab. For a phone, set CODETERM_TELEGRAM_TOKEN + CODETERM_TELEGRAM_CHAT, or CODETERM_NOTIFY_WEBHOOK (ntfy or a Home Assistant webhook), in .env and restart." },
     shell: i.shell === false
       ? { ok: true, level: "ok", text: "Shell pane off — no /pty route, and the agent has no terminal tool",

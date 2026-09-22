@@ -1,6 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, stat, readdir } from "node:fs/promises";
+import { readFile, stat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { connect } from "node:net";
 import { startTestServer, freePort, type TestServer } from "./fakes/server.js";
@@ -50,6 +50,18 @@ describe("headers and static", () => {
     assert.equal((await s.req("/chats", { headers: { origin: s.origin } })).status, 200);
     assert.equal((await s.req("/chats")).status, 200, "loopback with no Origin (curl) is fine in localhost mode");
   });
+  test("a malformed upgrade is refused, not fatal: bad path, bad Host", async () => {
+    // Both threw inside the async upgrade handler, before the auth check, and
+    // the unhandled rejection ended the process for every chat and shell.
+    assert.match(await upgradeTo(s.port, "//[", []), /^HTTP\/1\.1 400/);
+    const raw = await new Promise<string>((res) => {
+      const c = connect(s.port, "127.0.0.1", () => c.write("GET /ws HTTP/1.1\r\nHost: [\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"));
+      let out = ""; c.on("data", (d) => { out += d.toString(); c.destroy(); }); c.on("close", () => res(out)); c.on("error", () => res(out));
+    });
+    assert.match(raw, /^HTTP\/1\.1 (400|403)/, raw);
+    assert.equal((await s.req("/chats")).status, 200, "still serving");
+  });
+
   test("refusals are logged at most DENY_LOG_BURST times a minute", async () => {
     const before = s.warns.filter((w) => w.startsWith("[deny]")).length;
     for (let i = 0; i < DENY_LOG_BURST + 15; i++) await s.req("/chats", { headers: { "sec-fetch-site": "cross-site" } });
@@ -233,6 +245,19 @@ describe("/files", () => {
     assert.match((await s.req("/files/read?path=hello.txt")).headers.get("content-disposition") ?? "", /^attachment/, "without inline: a download, as before");
   });
 
+  test("zip: a file that cannot be read cuts the download short instead of ending the process", async () => {
+    const { writeFile, mkdir, chmod } = await import("node:fs/promises");
+    await mkdir(join(s.root, "files", "locked"), { recursive: true });
+    await writeFile(join(s.root, "files", "locked", "ok.txt"), "ok");
+    await writeFile(join(s.root, "files", "locked", "no.txt"), "no");
+    await chmod(join(s.root, "files", "locked", "no.txt"), 0o000);
+    try {
+      const z = await s.req("/files/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: "", names: ["locked"] }) });
+      await z.arrayBuffer().catch(() => {});   // the stream is cut; that is the point
+      assert.equal((await s.req("/chats")).status, 200, "still serving");
+    } finally { await chmod(join(s.root, "files", "locked", "no.txt"), 0o600); }
+  });
+
   test("zip: json and urlencoded, single name, and the refusals", async () => {
     const z = await s.req("/files/zip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: "", names: ["hello.txt", "sub"] }) });
     assert.equal(z.status, 200); assert.equal(z.headers.get("content-type"), "application/zip");
@@ -285,6 +310,29 @@ describe("/files", () => {
     const left = await readdir(join(s.root, "files"));
     assert.ok(!left.some((f) => f.startsWith("over.bin")), `no partial file: ${left}`);
     assert.equal((await s.req("/files/upload?path=secret&name=x", { method: "POST", body: "x" })).status, 400, "denied subtree");
+  });
+});
+
+describe("/paste/image", () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const written: string[] = [];
+  after(async () => { for (const p of written) await rm(p, { force: true }); });
+
+  test("spools the bytes and hands back a path the CLI can read", async () => {
+    const r = await s.req("/paste/image", { method: "POST", headers: { Origin: s.origin, "Content-Type": "image/png" }, body: png });
+    assert.equal(r.status, 200);
+    const body = (await r.json()) as { path: string; bytes: number };
+    written.push(body.path);
+    assert.equal(body.bytes, png.length);
+    assert.ok(body.path.endsWith(".png"), body.path);
+    assert.deepEqual(await readFile(body.path), png);
+  });
+
+  test("refuses what is not an image, and stays behind the guard", async () => {
+    const bad = await s.req("/paste/image", { method: "POST", headers: { Origin: s.origin, "Content-Type": "application/pdf" }, body: png });
+    assert.equal(bad.status, 400);
+    const cross = await s.req("/paste/image", { method: "POST", headers: { origin: "https://evil.example", "Content-Type": "image/png" }, body: png });
+    assert.equal(cross.status, 403);
   });
 });
 

@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { Session, MAX_TOOL_CALLS, stoppedReason, contextOf, type ClientEvent, type SessionDeps } from "../src/session.js";
+import { Session, MAX_TOOL_CALLS, stoppedReason, contextOf, modelLabel, type ClientEvent, type SessionDeps } from "../src/session.js";
 import { fakeSdk, settle, type FakeQuery } from "./fakes/sdk.js";
 
 /**
@@ -274,6 +274,36 @@ describe("the approval gate", () => {
     assert.equal(m.statuses().at(-1), "idle");
   });
 
+  test("a card's notification/status detail names the actual command or file, not just the tool", async () => {
+    const seen: string[] = [];
+    m.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m.q.ask("Bash", { command: "curl -s http://127.0.0.1:8123/schedules" });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0], "asked:Bash: curl -s http://127.0.0.1:8123/schedules");
+
+    seen.length = 0;
+    const m2 = make();
+    m2.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m2.q.ask("Edit", { file_path: "/tmp/notes.txt", old_string: "a", new_string: "b" });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0], "asked:Edit: /tmp/notes.txt");
+
+    seen.length = 0;
+    const m3 = make();
+    m3.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m3.q.ask("WebFetch", { url: "https://x.example" });   // neither field present: falls back to the bare tool name
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0], "asked:WebFetch");
+
+    seen.length = 0;
+    const m4 = make();
+    m4.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m4.q.ask("Bash", { command: "x".repeat(200) });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0].length, "asked:Bash: ".length + 120, "one long command does not swallow the rest of the message");
+    assert.match(seen[0], /…$/);
+  });
+
   test("always: the suggestions are granted and remembered for resume", async () => {
     const sugg = [{ type: "addRules", rules: [{ toolName: "Bash" }] }] as never[];
     const { promise } = m.q.ask("Bash", {}, sugg);
@@ -337,6 +367,30 @@ describe("the approval gate", () => {
     const r = await promise as { behavior: string; updatedInput: { answers: unknown; questions: unknown } };
     assert.equal(r.behavior, "allow"); assert.deepEqual(r.updatedInput.answers, { "Which?": "A" }); assert.deepEqual(r.updatedInput.questions, questions);
     assert.equal(m.last("approval_closed")!.decision, "allow");
+  });
+
+  test("resolveOldestPending: yes/always/no on a card, any text on a question, unclear text left open, none when nothing pending", async () => {
+    assert.equal(m.s.resolveOldestPending("yes"), "none");
+    const { promise } = m.q.ask("Bash");
+    assert.equal(m.s.resolveOldestPending("later"), "unclear", "a plain permission card only understands yes/always/no");
+    assert.equal(m.s.resolveOldestPending(" Yes "), "answered");
+    assert.deepEqual(await promise, { behavior: "allow" });
+
+    const q2 = m.q.ask("Bash");
+    assert.equal(m.s.resolveOldestPending("always"), "answered");
+    const r2 = await q2.promise as { updatedPermissions?: unknown };
+    assert.ok(r2.updatedPermissions, "always still grants, same as decide(id,\"always\")");
+
+    const q3 = m.q.ask("Bash");
+    assert.equal(m.s.resolveOldestPending("No"), "answered");
+    const r3 = await q3.promise as { behavior: string };
+    assert.equal(r3.behavior, "deny");
+
+    const questions = [{ question: "Which city?", header: "City", multiSelect: false, options: [{ label: "Ghent", description: "" }] }];
+    const q4 = m.q.ask("AskUserQuestion", { questions });
+    assert.equal(m.s.resolveOldestPending("Ghent, please"), "answered", "any free text answers a question");
+    const r4 = await q4.promise as { updatedInput: { answers: unknown } };
+    assert.deepEqual(r4.updatedInput.answers, { "Which city?": "Ghent, please" });
   });
 
   test("an Edit approval carries the diff; a withdrawn request never shows a card", async () => {
@@ -549,6 +603,44 @@ describe("browser release at turn end", () => {
 });
 
 describe("browser site gate through the session", () => {
+  test("eval on a site not allowed to act: one card; 'Allow once' is that call only; a watch is gated too", async () => {
+    const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+    const { BrowserAllowlist } = await import("../src/browser-allow.js");
+    const { BrowserBridge } = await import("../src/browser.js");
+    const { WatchRegistry } = await import("../src/watches.js");
+    const { FakeWs } = await import("./fakes/ws.js");
+    const allow = new BrowserAllowlist(join(await mkdtemp(join(tmpdir(), "ct-gate-")), "allow.json"));
+    const bridge = new BrowserBridge(() => {}, 500);
+    const ext = new FakeWs();
+    const origSend = ext.send.bind(ext);
+    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result: msg.action === "tab_url" ? { tabId: 1, url: "https://bank.example/acct" } : msg.action === "eval" ? { value: 2 } : { ok: true, title: "t", url: "https://bank.example/acct", found: false } })); };
+    bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
+    const sdk = fakeSdk(); const events: ClientEvent[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: new WatchRegistry(), prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, browserAllow: allow });
+    const done = s.start();
+    type Reg = Record<string, { callback?: Function; handler?: Function }>;
+    const callTool = (reg: Reg, name: string, args: Record<string, unknown>) => (reg[name].callback ?? reg[name].handler)!(args, {}) as Promise<{ content: { text: string }[] }>;
+    const servers = sdk.last.options.mcpServers as Record<string, { instance: { _registeredTools: Reg } }>;
+    const tools = servers.browser.instance._registeredTools;
+    const cards = () => events.filter((e) => e.kind === "approval") as Extract<ClientEvent, { kind: "approval" }>[];
+    let p = callTool(tools, "eval", { tabId: 1, code: "1+1" }); await settle(6);
+    assert.equal(cards().length, 1); assert.equal((cards()[0].input as { action: string }).action, "eval");
+    s.decide(cards()[0].id, "allow"); await p;
+    assert.equal(cards().length, 1, "one card, not a site card and then an eval card");
+    assert.deepEqual(allow.all(), [], "nothing on the standing list");
+    p = callTool(tools, "click", { tabId: 1, ref: "f1" }); await settle(6);
+    assert.equal(cards().length, 2, "'once' did not grant act for the chat: the click asks");
+    s.decide(cards()[1].id, "deny"); await p.catch(() => {});
+    p = callTool(tools, "eval", { tabId: 1, code: "2+2" }); await settle(6);
+    assert.equal(cards().length, 3, "and the next eval asks again");
+    s.decide(cards()[2].id, "deny"); await p.catch(() => {});
+    const w = callTool(servers.watch.instance._registeredTools, "page", { tabId: 1, description: "d", until: "changes", minutes: 5 }); await settle(6);
+    assert.equal(cards().length, 4, "a watch on a site not allowed to read asks");
+    assert.equal((cards()[3].input as { level: string }).level, "read", "at read level, like read_page");
+    s.decide(cards()[3].id, "deny"); await w.catch(() => {});
+    s.close(); await done;
+  });
+
   test("a new site puts a card in front of the user; allow is this chat, always is the standing list; deny fails the tool", async () => {
     const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
     const { BrowserAllowlist } = await import("../src/browser-allow.js");
@@ -588,18 +680,48 @@ describe("browser site gate through the session", () => {
     p = callTool(tools2, "read_page", { tabId: 1 }); await settle(6);
     card = events.filter((e) => e.kind === "approval").at(-1) as typeof card; s2.decide(card.id, "always");
     await p; assert.deepEqual(allow.all(), [{ host: "bank.example", level: "read" }], "always on a read asks lands as read");
-    // 4. eval needs act: the site is only read-allowed, so the card asks for act; "always" grants act on the list and eval for this chat
+    // 4. eval needs act: the site is only read-allowed, so the card asks for act. Its "always" button reads
+    //    "Allow on this site (this chat)": act and eval for this chat, and the standing list untouched.
     p = callTool(tools2, "eval", { tabId: 1, code: "document.title" }); await settle(6);
     card = events.filter((e) => e.kind === "approval").at(-1) as typeof card;
     assert.deepEqual(card.input, { host: "bank.example", action: "eval", level: "act", detail: "document.title" });
     s2.decide(card.id, "always"); await p;
     await callTool(tools2, "eval", { tabId: 1, code: "1+1" }); assert.equal(events.filter((e) => e.kind === "approval").length, 4, "no further eval card this chat");
-    assert.deepEqual(allow.all(), [{ host: "bank.example", level: "act" }], "raised to act on the standing list");
+    assert.deepEqual(allow.all(), [{ host: "bank.example", level: "read" }], "an eval card never writes the standing list");
     s.close(); s2.close(); await done; await done2;
   });
 });
 
+describe("granted rules are replayed at start", () => {
+  test("a resumed session gets the chat's Always-allow rules and directories as flag settings", async () => {
+    const sdk = fakeSdk();
+    const s = new Session("/w", () => {}, { chatId: "c", bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start("sess-1", [
+      { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "npm test" }, { toolName: "WebFetch" }], behavior: "allow", destination: "session" },
+      { type: "addDirectories", directories: ["/srv/data"], destination: "session" },
+      { type: "setMode", mode: "acceptEdits", destination: "session" },
+    ]);
+    await settle();
+    assert.deepEqual((sdk.last.options.settings as { permissions: unknown }).permissions, { allow: ["Bash(npm test)", "WebFetch"], deny: [], ask: [] });
+    assert.deepEqual(sdk.last.options.additionalDirectories, ["/srv/data"]);
+    s.close(); await done;
+  });
+  test("nothing usable granted (none, or a malformed saved entry): no settings option, and the session still starts", async () => {
+    const sdk = fakeSdk();
+    const s = new Session("/w", () => {}, { chatId: "c", bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery });
+    const done = s.start(undefined, [{ type: "addRules" } as never, { type: "addDirectories" } as never]); await settle();
+    assert.equal(sdk.last.options.settings, undefined);
+    s.close(); await done;
+  });
+});
+
 describe("Session.setModel", () => {
+  test("a model's label carries its version from the description; the CLI's default names what it runs", () => {
+    assert.equal(modelLabel({ value: "opus[1m]", displayName: "Opus (1M context)", description: "Opus 5.5 with 1M context · Best for everyday, complex tasks" }), "Opus 5.5 with 1M context");
+    assert.equal(modelLabel({ value: "default", displayName: "Default (recommended)", description: "Opus 5.5 with 1M context · Best for everyday" }), "default (Opus 5.5 with 1M context)");
+    assert.equal(modelLabel({ value: "sonnet", displayName: "Sonnet" }), "Sonnet");
+    assert.equal(modelLabel({ value: "x", displayName: "", description: "" }), "x");
+  });
   test("the CLI's models are published at start; a switch is applied, announced and remembered; failure keeps the old one", async () => {
     const sdk = fakeSdk({ setup: (q) => { q.models = [{ value: "claude-opus-5", displayName: "Opus 5" }]; } });
     const events: ClientEvent[] = [];

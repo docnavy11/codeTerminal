@@ -46,6 +46,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
   // the most recent one; the client can switch immediately either way.
   const startId = (wantId && convo.get(wantId) ? wantId : null) ?? convo.newestId();
   let chat: LiveChat = (startId && convo.get(startId)) || convo.create();
+  /** undefined until this client names a browser; "" once it picks auto. */
   let clientBrowser: string | undefined;
   state.lastChat = chat;
 
@@ -60,6 +61,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
     next.attach(send, true);
     listFor();
     send({ kind: "mode", mode: next.mode });
+    if (convo.models) send(convo.models);
     send({ kind: "model", model: next.model });
     sendProject(next);
   };
@@ -71,6 +73,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
   listFor();
   sendBrowsers();
   send({ kind: "mode", mode: chat.mode });
+  if (convo.models) send(convo.models);
   send({ kind: "model", model: chat.model });
   sendProject(chat);
 
@@ -78,7 +81,17 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
     let parsed: unknown;
     try { parsed = JSON.parse(raw.toString()); } catch { return; }
     const msg = parseAgentMessage(parsed);
-    if (!msg) return;
+    if (!msg) {
+      // A prompt refused for its images is a message the person typed and
+      // the client has already cleared from the box. Dropping it silently
+      // looked like a send that did nothing; say why instead. Other
+      // malformed frames stay silent — they are not anyone's words.
+      const p = parsed as { type?: unknown; images?: unknown } | null;
+      if (p && typeof p === "object" && p.type === "prompt" && p.images !== undefined) {
+        send({ kind: "error", message: "Your message was not sent: an attached image was empty, too large or not a png/jpeg/gif/webp. Remove it and send again." });
+      }
+      return;
+    }
 
     // A throw here would be an uncaught exception — one bad message from an
     // authorised client took the whole server down. Report it to that client.
@@ -107,7 +120,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
       }
       // Which browser this client is in; follows the person across chats.
       case "browser":
-        clientBrowser = msg.instance || undefined; chat.useBrowser(clientBrowser); return;
+        clientBrowser = msg.instance; chat.useBrowser(clientBrowser); return;
       case "answer":
         chat.session.answer(msg.id, msg.answers); return;
       case "decision":

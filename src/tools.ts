@@ -137,7 +137,7 @@ export function terminalTools(getShell: () => Shell | null, tmux?: { list: () =>
  * Watches on a browser page. These return immediately: a watch is registered
  * and reports later, rather than blocking the turn for however long it takes.
  */
-export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, currentChat: () => string, prefer: () => string | undefined) {
+export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, currentChat: () => string, prefer: () => string | undefined, policy?: BrowserPolicy) {
   return createSdkMcpServer({
     name: "watch",
     version: "1.0.0",
@@ -162,14 +162,20 @@ export function watchTools(bridge: BrowserBridge, watches: WatchRegistry, curren
           if (a.until !== "changes" && !a.value) {
             return text(`"${a.until}" needs a value.`);
           }
+          // A watch reads the page every few seconds for as long as it runs,
+          // so it is a read like read_page: the same site gate, and pinned to
+          // the tab the gate looked at rather than whatever is active later.
+          const at = await tabWhere(bridge, a.tabId, prefer());
+          await ensureAllowed(policy, at, "watch", a.description);
+          const tabId = a.tabId ?? at.tabId;
           const condition = { kind: a.until, value: a.value } as WatchCondition;
           const w = watches.add({
-            chatId: currentChat(), description: a.description, url: "", tabId: a.tabId ?? null,
+            chatId: currentChat(), description: a.description, url: "", tabId: tabId ?? null,
             condition, minutes: a.minutes,
           });
           try {
             const started = (await bridge.send("watch_start", {
-              watchId: w.id, tabId: a.tabId, condition,
+              watchId: w.id, tabId, condition,
             }, prefer())) as { url?: string; title?: string };
             w.url = started.url ?? "";
             return text(
@@ -293,6 +299,36 @@ export type BrowserPolicy = {
   evalAllowed(host: string): boolean;
 };
 
+/** What each browser tool needs: looking, or changing. */
+const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", console_read: "read", network_read: "read", watch: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", upload: "act", type: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
+
+/**
+ * Where a call lands: the tab the extension resolved (its id, host, title).
+ * `problem` is why the lookup failed, when it did — a closed tab or an
+ * extension error is not a chrome:// page, and saying it was sent people
+ * looking for a restricted page that was not there.
+ */
+type Where = { host: string; tabId?: number; url?: string; title?: string; dialog?: { type: string; message: string }; problem?: string };
+async function tabWhere(bridge: BrowserBridge, id: number | undefined, prefer: string | undefined): Promise<Where> {
+  try {
+    const t = (await bridge.send("tab_url", { tabId: id }, prefer)) as { tabId?: number; url?: string; title?: string; dialog?: { type: string; message: string } };
+    return { host: hostOfUrl(t?.url), ...(typeof t?.tabId === "number" ? { tabId: t.tabId } : {}), ...(t?.url ? { url: t.url } : {}), ...(t?.title ? { title: t.title.slice(0, 80) } : {}), ...(t?.dialog ? { dialog: t.dialog } : {}) };
+  } catch (e) { return { host: "", problem: e instanceof Error ? e.message : String(e) }; }
+}
+
+/** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
+async function ensureAllowed(policy: BrowserPolicy | undefined, at: Pick<Where, "host" | "problem">, action: string, detail?: string): Promise<void> {
+  if (!policy) return;
+  if (!at.host) {
+    if (at.problem) throw new Error(`browser.${action}: could not tell which site the tab is on (${at.problem}); nothing was done.`);
+    throw new Error(`browser.${action}: the tab has no readable URL (a chrome:// or restricted page); nothing to do here.`);
+  }
+  const level = LEVEL[action] ?? "act";
+  if (policy.allowed(at.host, level)) return;
+  const answer = await policy.ask(at.host, action, detail, level);
+  if (answer !== "allow") throw new Error(`browser.${action} on ${at.host}: the user did not allow it. Do not retry; ask what to do instead.`);
+}
+
 /** What the confirm-before-submit card shows: where the form goes and what is in it. */
 export type SubmitDetail = { host: string; via: "click" | "enter"; action: string; method: string; button?: string; fields: { name: string; value: string }[]; filled: number };
 
@@ -322,50 +358,53 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
     try { fetched = await bridge.send("fetch_bytes", { tabId: a.tabId }, prefer()) as typeof fetched; }
     catch (e) { if (page) return page; throw pageErr ?? e; }
     if (!fetched || typeof fetched.data !== "string") { if (page) return page; throw pageErr ?? new Error("the page could not be read"); }
+    // The fetch follows redirects with the profile's cookies, and the gate
+    // only saw the tab's own host. Content from anywhere else goes through
+    // the gate for that host before any of it is returned.
+    try { await ensureRedirect(url, fetched.url, "read_page"); }
+    catch (e) { if (page) return page; throw e; }
     const bytes = Buffer.from(fetched.data, "base64");
     if (!/pdf/i.test(fetched.contentType ?? "") && !looksLikePdf(bytes)) { if (page) return page; throw pageErr ?? new Error("the page could not be read"); }
     const pdf = await extractPdfText(bytes, { maxChars: a.maxChars ?? 20_000 });
     return { tabId: a.tabId, title: fetched.title, url: fetched.url, kind: "pdf", pages: pdf.pages, text: pdf.text, chars: pdf.chars, truncated: pdf.truncated };
   };
 
-  /** Where a call lands: the tab's host and title. Best-effort — an older
-      extension has no tab_url, and the gate (not this) decides what is allowed. */
-  type Where = { host: string; title?: string; dialog?: { type: string; message: string } };
-  const whereFor = async (id: number | undefined): Promise<Where> => {
-    try {
-      const t = (await bridge.send("tab_url", { tabId: id }, prefer())) as { url?: string; title?: string; dialog?: { type: string; message: string } };
-      return { host: hostOfUrl(t?.url), ...(t?.title ? { title: t.title.slice(0, 80) } : {}), ...(t?.dialog ? { dialog: t.dialog } : {}) };
-    } catch { return { host: "" }; }
-  };
+  /** Where a call lands. Best-effort — an older extension has no tab_url,
+      and the gate (not this) decides what is allowed. */
+  const whereFor = (id: number | undefined): Promise<Where> => tabWhere(bridge, id, prefer());
   /** A tab with an open alert/confirm/prompt cannot run anything; say so at once. */
   const blockedBy = (at: Where, action: string): void => {
     if (at.dialog && action !== "handle_dialog") throw new Error(`browser.${action}: the tab is blocked by a JavaScript ${at.dialog.type} dialog: "${at.dialog.message.slice(0, 200)}". Answer it with handle_dialog (accept or dismiss) first; if that says it cannot, ask the user to click it.`);
   };
-  /** The host a call is about: the tab's current URL, or a navigation's destination. */
-  const hostFor = async (id: number | undefined): Promise<string> => {
-    const t = (await bridge.send("tab_url", { tabId: id }, prefer())) as { url?: string };
-    return hostOfUrl(t?.url);
-  };
+  /**
+   * The tab the gate looked at, made concrete. Without a tabId the extension
+   * resolves "the active tab" afresh on every command, so a call approved on
+   * one site ran on whatever the user switched to while the card was up
+   * (reproduced with a fake extension). The id the lookup used goes into the
+   * action instead: what was approved is what runs.
+   */
+  const pinned = <A extends { tabId?: number }>(a: A, at: Where): A =>
+    a.tabId === undefined && at.tabId !== undefined ? { ...a, tabId: at.tabId } : a;
   /** Stamp a result with where it happened (`at`), so the transcript row can say. */
   const stamp = (r: unknown, at: Where): unknown =>
     r && typeof r === "object" && !Array.isArray(r) && at.host ? { ...(r as object), at: { host: at.host, ...(at.title ? { title: at.title } : {}) } } : r;
-  /** What each tool needs: looking, or changing. */
-  const LEVEL: Record<string, Level> = { read_page: "read", snapshot: "read", screenshot: "read", download: "read", find: "read", scroll: "read", wait_for: "read", focus_tab: "read", browser_batch: "read", console_read: "read", network_read: "read", navigate: "act", click: "act", fill: "act", fill_form: "act", upload: "act", type: "act", press: "act", eval: "act", handle_dialog: "act", open_tab: "act", close_tab: "act", back: "act", forward: "act", reload: "act" };
-  /** Refuse, or ask, before touching a site that is not on the list at the level the action needs. */
-  const ensure = async (host: string, action: string, detail?: string): Promise<void> => {
-    if (!policy) return;
-    if (!host) throw new Error(`browser.${action}: the tab has no readable URL (a chrome:// or restricted page); nothing to do here.`);
-    const level = LEVEL[action] ?? "act";
-    if (policy.allowed(host, level)) return;
-    const answer = await policy.ask(host, action, detail, level);
-    if (answer !== "allow") throw new Error(`browser.${action} on ${host}: the user did not allow it. Do not retry; ask what to do instead.`);
+  const ensure = (at: Pick<Where, "host" | "problem">, action: string, detail?: string): Promise<void> => ensureAllowed(policy, at, action, detail);
+  /**
+   * fetch_bytes follows redirects with the user's cookies; the gate checked
+   * where it started. When it ended on another host, that host is gated too,
+   * after the fetch but before anything it returned is used.
+   */
+  const ensureRedirect = async (started: string, ended: string | undefined, action: string): Promise<void> => {
+    const host = hostOfUrl(ended || started);
+    if (host === hostOfUrl(started)) return;
+    await ensure({ host }, action, `redirected from ${started} to ${ended}`);
   };
   const gated = <A extends { tabId?: number }>(action: string, run: (a: A) => Promise<unknown>) =>
     async (a: A) => {
       const at = await whereFor(a.tabId);
       blockedBy(at, action);
-      if (policy) await ensure(at.host, action);
-      return text(stamp(await run(a), at));
+      await ensure(at, action);
+      return text(stamp(await run(pinned(a, at)), at));
     };
 
   const listTabs = async () => {
@@ -439,12 +478,16 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           if (bad) throw new Error(`browser_batch: "${bad.tool}" is not a read-only step (allowed: ${Object.keys(READ_STEPS).join(", ")})`);
           const at = await whereFor(a.tabId);
           blockedBy(at, "browser_batch");
-          if (policy) await ensure(at.host, "browser_batch");
+          await ensure(at, "browser_batch");
           const results: Record<string, unknown>[] = [];
           const images: { type: "image"; data: string; mimeType: string }[] = [];
           for (const [i, s] of a.steps.entries()) {
             const t0 = Date.now();
-            const args = { tabId: a.tabId, ...(s.args ?? {}) };
+            // The batch's tab is the one the gate looked at, and it wins over
+            // any tabId inside a step: a step's own tabId used to override it,
+            // so a batch approved on one site read another tab (reproduced:
+            // a bank tab's text through a batch gated on allowed.example).
+            const args = { ...(s.args && typeof s.args === "object" ? s.args as Record<string, unknown> : {}), tabId: at.tabId ?? a.tabId };
             try {
               const r = await READ_STEPS[s.tool](args) as Record<string, unknown> | unknown[] | null;
               let out: unknown = r;
@@ -501,8 +544,8 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           waitArgs(a);
           const at = await whereFor(a.tabId);
           blockedBy(at, "wait_for");
-          if (policy) await ensure(at.host, "wait_for");
-          const r = await bridge.send("wait_for", a, prefer()) as { ok: boolean; elapsedMs: number };
+          await ensure(at, "wait_for");
+          const r = await bridge.send("wait_for", pinned(a, at), prefer()) as { ok: boolean; elapsedMs: number };
           return text(stamp(r, at));
         }),
 
@@ -514,7 +557,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
       // Tab management (#6): open, close, focus, back, forward, reload.
       tool("open_tab", "Open a URL in a new tab and return its id. Use close_tab when done with it.",
         { url: z.string().describe("Absolute URL"), active: z.boolean().optional().describe("Bring it to the front (default true)") },
-        async (a) => { await ensure(hostOfUrl(a.url), "open_tab", a.url); return text(stamp(await bridge.send("open_tab", a, prefer()), { host: hostOfUrl(a.url) })); }),
+        async (a) => { await ensure({ host: hostOfUrl(a.url) }, "open_tab", a.url); return text(stamp(await bridge.send("open_tab", a, prefer()), { host: hostOfUrl(a.url) })); }),
       tool("close_tab", "Close a tab — tidy up after a lookup instead of leaving tabs behind.",
         { tabId }, gated("close_tab", (a) => bridge.send("close_tab", a, prefer()))),
       tool("focus_tab", "Bring a tab to the front (and its window), so the user sees it and it becomes the active tab.",
@@ -528,7 +571,7 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
 
       tool("navigate", "Navigate a tab to a URL, or open a new tab.",
         { tabId, url: z.string().describe("Absolute URL"), newTab: z.boolean().optional() },
-        async (a) => { await ensure(hostOfUrl(a.url), "navigate", a.url); return text(stamp(await bridge.send("navigate", a, prefer()), { host: hostOfUrl(a.url) })); }),
+        async (a) => { await ensure({ host: hostOfUrl(a.url) }, "navigate", a.url); return text(stamp(await bridge.send("navigate", a, prefer()), { host: hostOfUrl(a.url) })); }),
 
       tool("click", "Click an element, by ref from snapshot or by CSS selector. A click that submits a form with filled fields is shown to the user first, who can stop it.",
         { tabId, ref: z.string().optional(), selector: z.string().optional() },
@@ -584,9 +627,11 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         { tabId, url: z.string().optional().describe("Fetch this URL instead of the tab's own"), name: z.string().optional().describe("File name (default: from the URL or the server's suggestion)") },
         async (a) => {
           if (!getCwd) throw new Error("download is not available here");
-          const target = a.url ?? (await bridge.send("tab_url", { tabId: a.tabId }, prefer()) as { url?: string }).url ?? "";
-          await ensure(hostOfUrl(target), "download", target);
-          const f = await bridge.send("fetch_bytes", a.url ? { url: a.url } : { tabId: a.tabId }, prefer()) as { url: string; contentType: string; disposition?: string; bytes: number; data: string };
+          const at: Where = a.url ? { host: hostOfUrl(a.url) } : await whereFor(a.tabId);
+          await ensure(at, "download", a.url ?? at.url);
+          const f = await bridge.send("fetch_bytes", a.url ? { url: a.url } : pinned({ tabId: a.tabId }, at), prefer()) as { url: string; contentType: string; disposition?: string; bytes: number; data: string };
+          // Same for a download: the start was checked, the redirect was not.
+          await ensureRedirect(a.url ?? at.url ?? "", f.url, "download");
           const bytes = Buffer.from(f.data, "base64");
           const name = downloadName(a.name, f.url, f.disposition, f.contentType);
           const dir = join(getCwd(), "downloads");
@@ -602,13 +647,17 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         async (a) => {
           // eval is the one tool that is gated per call even on an allowed
           // site: it is arbitrary code in a logged-in tab.
-          const host = policy ? await hostFor(a.tabId) : "";
-          await ensure(host, "eval", a.code);
-          if (policy && !policy.evalAllowed(host)) {
+          // One card, not two: on a site not yet allowed to act, the site gate
+          // used to ask first and the eval card after it, and the site card's
+          // answer granted act for the whole chat. The eval card now stands for
+          // both, and its answer covers exactly what its buttons say.
+          const at = await whereFor(a.tabId), host = at.host;
+          if (policy && !(host && policy.allowed(host, "act") && policy.evalAllowed(host))) {
+            if (!host) await ensure(at, "eval", a.code);   // throws: no site to ask about
             const answer = await policy.ask(host, "eval", a.code, "act");
             if (answer !== "allow") throw new Error(`browser.eval on ${host}: the user did not allow it. Do not retry; ask what to do instead.`);
           }
-          return text(await bridge.send("eval", a, prefer()));
+          return text(await bridge.send("eval", pinned(a, at), prefer()));
         }),
 
       tool("screenshot",
@@ -619,14 +668,15 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
             .describe("Focus the tab before capturing (default true). Pass false to fail instead of stealing focus."),
         },
         async (a) => {
-          if (policy) await ensure(await hostFor(a.tabId), "screenshot");
+          const at = await whereFor(a.tabId);
+          await ensure(at, "screenshot");
           // Ungated by design, so the loop guard lives here: past the per-turn
           // budget the tool refuses and tells the model to report instead.
           const refused = shotAllowed();
           if (refused) return text(refused);
           // The image itself goes back to the model — no Read round trip —
           // and the file stays on disk for the transcript and for Read.
-          const shot = await screenshotToFile(bridge, a, prefer());
+          const shot = await screenshotToFile(bridge, pinned(a, at), prefer());
           return { content: [
             { type: "image" as const, data: shot.data, mimeType: shot.mime },
             { type: "text" as const, text: JSON.stringify(shot.meta, null, 2) },

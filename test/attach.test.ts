@@ -87,6 +87,20 @@ describe("attachAgent: connecting", () => {
     assert.equal(w.ctx.clients.size, 1);
   });
 
+  test("the model list comes from the last session start, not the chat's own history", async () => {
+    const w = world();
+    w.agent(); await settle();
+    assert.deepEqual(w.convo.models, { kind: "models", models: [] });
+    // A chat whose history holds no (or a stale) list still gets the current one.
+    w.convo.models = { kind: "models", models: [{ value: "opus", label: "Opus" }] };
+    const ws = w.agent();
+    assert.deepEqual(ws.last("models"), w.convo.models);
+    const other = w.convo.create(); await settle();
+    w.convo.models = { kind: "models", models: [{ value: "sonnet", label: "Sonnet" }] };
+    ws.clear(); ws.frame({ type: "open", id: other.id });
+    assert.deepEqual(ws.last("models"), w.convo.models);
+  });
+
   test("observe mode skips the replay", () => {
     const w = world();
     const c = w.convo.create(); c.recordUser("earlier");
@@ -174,6 +188,36 @@ describe("attachAgent: prompts", () => {
     ws.frame({ type: "browser", instance: "browser-A" });
     assert.equal(chat.extInstance, "browser-A");
     ws.frame({ type: "prompt", text: "x", withTab: false });
+    await settle(4);
+    assert.equal(chat.extInstance, "browser-A");
+  });
+
+  test("a prompt refused for a bad image says so instead of vanishing", async () => {
+    const w = world();
+    const ws = w.agent();
+    ws.clear();
+    // what the panel sent for a big pasted PNG: "data:," split into type "" and no data
+    ws.frame({ type: "prompt", text: "look at this", images: [{ media_type: "", data: "", thumb: "" }] });
+    await settle(4);
+    assert.equal(w.sdk.last.received.length, 0, "still not sent to the model");
+    assert.match(String(ws.last("error")?.message), /not sent: an attached image was empty/);
+  });
+
+  test("choosing auto (\"\") unpins the chat's browser, and it stays unpinned across a prompt and a chat switch", async () => {
+    const w = world();
+    const ws = w.agent();
+    const chat = w.ctx.state.lastChat!;
+    ws.frame({ type: "browser", instance: "browser-A" });
+    assert.equal(chat.extInstance, "browser-A");
+    ws.frame({ type: "browser", instance: "" });
+    assert.equal(chat.extInstance, undefined, "auto: the server picks, not the browser pinned before");
+    ws.frame({ type: "prompt", text: "x", withTab: false });
+    await settle(4);
+    assert.equal(chat.extInstance, undefined);
+    // a client that never names a browser (the desktop page) leaves a pin alone
+    ws.frame({ type: "browser", instance: "browser-A" });
+    const other = w.agent();
+    other.frame({ type: "prompt", text: "y", withTab: false });
     await settle(4);
     assert.equal(chat.extInstance, "browser-A");
   });

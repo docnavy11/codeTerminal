@@ -16,21 +16,34 @@ const stop = $("stop"), modeSel = $("mode"), modelSel = $("model"), browserSel =
    newest person's browser, never the server browser unless it is alone);
    the extension names its own; the server browser is the headless one on
    the machine. Hidden until there is a choice to make. */
-let myBrowser = null, chosenBrowser = "";
-function paintBrowsers(list) {
+/* chosenBrowser: null until this panel has said anything; "" is auto, which
+   the server takes as "unpin". */
+let myBrowser = null, chosenBrowser = null, browserList = [];
+function paintBrowsers(list = browserList) {
+  browserList = list;
   if (!browserSel) return;
   const cur = chosenBrowser;
   browserSel.replaceChildren(new Option("auto", ""));
   for (const b of list) browserSel.append(new Option(b.server ? "server browser" : b.id === myBrowser ? "this browser" : `browser ${b.id.slice(0, 6)}`, b.id));
-  if (cur && !list.some((b) => b.id === cur)) { chosenBrowser = ""; }
-  browserSel.value = chosenBrowser;
-  const show = list.length > 1 || (list.length === 1 && list[0].id !== myBrowser);
+  // The pinned browser went away. This used to flip the picker to auto
+  // without telling the server, which kept the chat pinned to the missing
+  // browser: the panel said auto, the tools said "not connected". Show the
+  // pin as it is instead; the person can pick auto (or it comes back).
+  const gone = cur && !list.some((b) => b.id === cur);
+  if (gone) browserSel.append(new Option(`browser ${cur.slice(0, 6)} (not connected)`, cur));
+  browserSel.value = chosenBrowser ?? "";
+  const show = gone || list.length > 1 || (list.length === 1 && list[0].id !== myBrowser);
   browserSel.hidden = !show; const l = $("browserlbl"); if (l) l.hidden = !show;
 }
-if (browserSel) browserSel.onchange = () => { chosenBrowser = browserSel.value; ws?.send(JSON.stringify({ type: "browser", instance: chosenBrowser })); };
+if (browserSel) browserSel.onchange = () => { chosenBrowser = browserSel.value; ws?.send(JSON.stringify({ type: "browser", instance: chosenBrowser })); paintBrowsers(); };
 const statusEl = $("status"), statusText = $("statustext"), statusTime = $("statustime");
 
 let cwdShown = "";
+/* The browser tab names the directory you are working in, so several open
+   terminals are told apart in the tab strip rather than all reading
+   "code terminal". The Chrome side panel has no tab; setting it there is
+   harmless. */
+function setTabTitle(name) { if (name) document.title = `${name} — code terminal`; }
 let streaming = null, streamRaw = "";
 let ws = null, busy = false, lastText = null, lastRaw = "", cost = 0;
 let statusSince = 0, statusTick = null, statusState = "idle";
@@ -46,7 +59,17 @@ function el(cls, text) {
   return d;
 }
 const setBusy = (v) => { busy = v; stop.disabled = !v; };
-const renderMd = (t, raw) => { t.innerHTML = DOMPurify.sanitize(marked.parse(raw), { USE_PROFILES: { html: true } }); };
+/* What the model writes is rendered here, next to the approval cards, and the
+   html profile alone kept <style>, <form>, <button> and class/style/id: a
+   reply could restyle the panel or draw something that looks like a card and
+   submits somewhere. Markdown needs none of that — links, code, tables,
+   lists and images still come through. */
+const MD_PURIFY = {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: ["style", "link", "meta", "base", "form", "input", "button", "textarea", "select", "option", "optgroup", "datalist", "output", "fieldset", "label", "dialog"],
+  FORBID_ATTR: ["class", "style", "id", "name", "form", "formaction", "action", "method", "target"],
+};
+const renderMd = (t, raw) => { t.innerHTML = DOMPurify.sanitize(marked.parse(raw), MD_PURIFY); };
 
 // Deltas arrive faster than frames. Rendering on every one re-parsed the whole
 // accumulated reply per token — measured 3.2s of main-thread time for a 24KB
@@ -93,6 +116,21 @@ function scheduleStreamRender() {
     renderMd(streaming, streamRaw);
     log.scrollTop = log.scrollHeight;
   });
+}
+
+/** An option for a model id the CLI's list does not have. */
+function unlistedModel(id) {
+  const o = new Option(`${id} (not listed)`, id);
+  o.dataset.unlisted = "1";
+  return o;
+}
+
+/* The log was just emptied (a reconnect's replay, a chat switch): forget the
+   blocks that were streaming into it. Only the reply was forgotten before, so
+   the next thinking block streamed into a detached element and never showed. */
+function resetStreams() {
+  streaming = null; streamRaw = "";
+  thinking = null; thinkRaw = "";
 }
 
 /* Everything platform-specific lives behind PLATFORM, defined by whichever
@@ -148,15 +186,19 @@ async function connect() {
     // The server replays the whole transcript on every attach. Without this
     // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
     // was already on screen — measured: the transcript doubled each time.
-    log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; streaming = null; streamRaw = ""; lastContext = null; paintContext();
+    log.replaceChildren(); cost = 0; lastText = null; lastRaw = ""; resetStreams(); lastContext = null; paintContext();
     startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0;
     // Tell the server which browser this panel is in, so this conversation's
     // browser tools act here and not in another browser that is also open.
     try {
       const instanceId = await PLATFORM.instanceId();
       myBrowser = instanceId || null;
-      if (chosenBrowser) ws.send(JSON.stringify({ type: "browser", instance: chosenBrowser }));
-      else if (instanceId) { chosenBrowser = instanceId; ws.send(JSON.stringify({ type: "browser", instance: instanceId })); }
+      // A choice already made — auto included — is repeated as it is; only a
+      // panel that never chose defaults to its own browser. Auto used to be
+      // replaced by "this browser" on every reconnect.
+      if (chosenBrowser === null && instanceId) chosenBrowser = instanceId;
+      if (chosenBrowser !== null) ws.send(JSON.stringify({ type: "browser", instance: chosenBrowser }));
+      paintBrowsers();
     } catch { /* no instance: the server falls back to the newest browser */ }
     flushQueued();
   };
@@ -194,10 +236,11 @@ function handle(m) {
       cwdShown = m.path;
       meta.textContent = cwdShown.split("/").pop() || cwdShown;
       meta.title = cwdShown;
+      setTabTitle(meta.textContent);
       break;
     case "project":
       // The panel has room for one word; the project name beats a cwd basename.
-      if (m.name && m.name !== "General") { meta.textContent = m.name; meta.title = `Project: ${m.name} — ${cwdShown}`; }
+      if (m.name && m.name !== "General") { meta.textContent = m.name; meta.title = `Project: ${m.name} — ${cwdShown}`; setTabTitle(m.name); }
       break;
     case "ready":
       if (!cwdShown) meta.textContent = String(m.model || "").replace(/\[1m\]$/, "");
@@ -208,17 +251,23 @@ function handle(m) {
     case "models": {
       // the CLI's list; keep "default" first and whatever is selected selected
       const cur = modelSel.value;
-      modelSel.replaceChildren(new Option("default", ""));
-      for (const mo of m.models ?? []) modelSel.append(new Option(mo.label, mo.value));
-      if (cur && !modelSel.querySelector(`option[value="${CSS.escape(cur)}"]`)) modelSel.append(new Option(cur, cur));
+      // The CLI's own "default" entry is the same choice as ours; it only lends its label.
+      const def = (m.models ?? []).find((mo) => mo.value === "default");
+      modelSel.replaceChildren(new Option(def?.label ?? "default", ""));
+      for (const mo of m.models ?? []) if (mo.value !== "default") modelSel.append(new Option(mo.label, mo.value));
+      if (cur && !modelSel.querySelector(`option[value="${CSS.escape(cur)}"]`)) modelSel.append(unlistedModel(cur));
       modelSel.value = cur;
       break;
     }
     case "model":
-      if (m.model && !modelSel.querySelector(`option[value="${CSS.escape(m.model)}"]`)) modelSel.append(new Option(m.model, m.model));
+      // A model the CLI does not list (set earlier, or since retired) gets an
+      // option of its own, labelled so, for this chat only: the next chat's
+      // "model" drops it rather than leaving it in the list for every chat.
+      for (const o of [...modelSel.options]) if (o.dataset.unlisted && o.value !== m.model) o.remove();
+      if (m.model && !modelSel.querySelector(`option[value="${CSS.escape(m.model)}"]`)) modelSel.append(unlistedModel(m.model));
       modelSel.value = m.model ?? "";
       break;
-    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; streaming = null; lastContext = null; paintContext(); startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0; break;
+    case "cleared":  log.replaceChildren(); cost = 0; lastText = null; resetStreams(); lastContext = null; paintContext(); startReplay(); toolRows.clear(); tasks.clear(); todoBox = null; turnTools = 0; turnShots = 0; break;
     case "replayed":
       lastText = null;
       if (!log.querySelector(".msg")) welcome();
@@ -1000,16 +1049,20 @@ async function encodeImage(file) {
   const full = draw(bmp, Math.round(bmp.width * scale), Math.round(bmp.height * scale), keepPng ? "image/png" : "image/jpeg", 0.85);
   const ts = Math.min(1, THUMB / Math.max(bmp.width, bmp.height));
   const thumb = draw(bmp, Math.max(1, Math.round(bmp.width * ts)), Math.max(1, Math.round(bmp.height * ts)), "image/jpeg", 0.7);
+  // A PNG that came out huge is better as JPEG (a photo pasted as PNG). Drawn
+  // from the same bitmap before it is closed: a closed bitmap reads as 0×0,
+  // which made this a 0×0 canvas whose data URL is "data:," — an empty image
+  // the server refused, taking the whole message with it.
+  const final = full.data.length > 2_500_000 && keepPng ? draw(bmp, full.w, full.h, "image/jpeg", 0.85) : full;
   bmp.close?.();
-  // a PNG that came out huge is better as JPEG (a photo pasted as PNG)
-  const final = full.data.length > 2_500_000 && keepPng ? draw(await createImageBitmap(file), Math.round(bmp.width * scale), Math.round(bmp.height * scale), "image/jpeg", 0.85) : full;
+  if (!final.data || !/^image\/(png|jpeg)$/.test(final.type)) throw new Error("could not encode it");
   return { media_type: final.type, data: final.data, thumb: thumb.data };
 }
 function draw(bmp, w, h, type, q) {
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   c.getContext("2d").drawImage(bmp, 0, 0, w, h);
   const url = c.toDataURL(type, q);
-  return { type: url.slice(5, url.indexOf(";")), data: url.slice(url.indexOf(",") + 1) };
+  return { type: url.slice(5, url.indexOf(";")), data: url.slice(url.indexOf(",") + 1), w, h };
 }
 
 box.addEventListener("paste", (e) => {

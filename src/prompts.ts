@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { quarantine } from "./store.js";
 
 export type Prompt = {
   id: string;
@@ -77,9 +78,11 @@ const SEED: Omit<Prompt, "id" | "createdAt" | "updatedAt">[] = [
 export class PromptStore {
   #path: string;
   #items: Prompt[] = [];
+  #warn: (l: string) => void;
 
-  constructor(path: string) {
+  constructor(path: string, o: { warn?: (l: string) => void } = {}) {
     this.#path = path;
+    this.#warn = o.warn ?? ((l) => console.warn(l));
     this.#load();
   }
 
@@ -93,9 +96,13 @@ export class PromptStore {
     }
     try {
       const parsed = JSON.parse(readFileSync(this.#path, "utf8"));
-      this.#items = Array.isArray(parsed) ? parsed.filter((p) => p?.id && p?.title) : [];
-    } catch {
+      if (!Array.isArray(parsed)) throw new Error("not a list of prompts");
+      this.#items = parsed.filter((p) => p?.id && p?.title);
+    } catch (e) {
+      // Empty, then the next save overwrote the file: one stray comma from a
+      // hand-edit lost every prompt. Move it aside and say so instead.
       this.#items = [];
+      this.#warn(`[prompts] ${this.#path} could not be read (${e instanceof Error ? e.message : e}); ${quarantine(this.#path, this.#warn)} — starting with no prompts`);
     }
   }
 

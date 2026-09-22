@@ -81,13 +81,22 @@ export function makeRunner(d: RunDeps): Runner {
   };
 }
 
-/** Delete this schedule's run chats beyond keepRuns (newest kept), unless a chat has been renamed by a person. */
+/**
+ * Delete this schedule's run chats beyond keepRuns (newest kept), unless a
+ * chat has been renamed by a person, or someone is in it right now.
+ *
+ * Read, not get: get() admits a cold chat into the pool, which spawns a
+ * Claude session per old run and can evict someone's idle chat, all to read
+ * a title. And a run chat a person has opened (attached) or is mid-turn in
+ * (busy) is theirs for now: it waits for a later prune.
+ */
 export function pruneRuns(d: { convo: Manager }, s: Schedule): string[] {
   const removed: string[] = [];
   const finished = s.runs.filter((r) => r.chatId && r.outcome !== "running");
   for (const r of finished.slice(s.keepRuns)) {
-    const chat = d.convo.get(r.chatId!);
-    const title = chat?.record.title ?? d.convo.list().find((c) => c.id === r.chatId)?.title;
+    const live = d.convo.live(r.chatId!);
+    if (live && (live.clients > 0 || live.busy)) continue;         // in use right now
+    const title = d.convo.read(r.chatId!)?.title;
     if (title === undefined) continue;                              // already gone
     if (!title.startsWith(`${s.title} · `)) continue;               // renamed: someone kept it on purpose
     d.convo.remove(r.chatId!); removed.push(r.chatId!);

@@ -45,6 +45,13 @@ describe("LiveChat: spawning and mode", () => {
     assert.equal(b.record.cwd, a.record.cwd);
   });
 
+  test("chats created in the same millisecond still have an order: the last one made is the newest", () => {
+    const { mgr } = fresh();
+    let last = "";
+    for (let i = 0; i < 50; i++) last = mgr.create().id;
+    assert.equal(mgr.newestId(), last);
+  });
+
   test("a chat admitted from disk starts in default whatever its record says", async () => {
     const { sdk, mgr, dir } = fresh();
     new Store(dir).write({ id: "aaaaaaaa-0000-0000-0000-000000000001", title: "Old", createdAt: 1, updatedAt: 1, sdkSessionId: "sid-old", cwd: null, events: [{ kind: "user", text: "x" } as never], granted: [{ type: "addRules" } as never], mode: "acceptEdits" });
@@ -215,7 +222,7 @@ describe("LiveChat: the record", () => {
     c.recordUser("/clear");
     sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-new" });
     await settle();
-    assert.equal(c.record.events.length, 0);
+    assert.equal(c.record.events.filter((e) => e.kind === "user").length, 0);
     assert.equal(c.record.title, "New chat");
     assert.equal(c.record.sdkSessionId, "sid-new");
     assert.ok(a.kinds().includes("cleared"));
@@ -451,5 +458,121 @@ describe("Manager: the pool", () => {
     const p1 = mgr.projects(); const p2 = mgr.projects();
     assert.ok(p1.length >= 1 && p1[0].general);
     assert.deepEqual(p1.map((p) => p.id), p2.map((p) => p.id));
+  });
+});
+
+describe("regressions", () => {
+  const ID = "cccccccc-0000-0000-0000-000000000001";
+  const blank = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, title: "New chat", createdAt: 1, updatedAt: 1, sdkSessionId: null, cwd: null,
+    events: [] as ClientEvent[], granted: [], mode: "default" as const, ...extra,
+  });
+
+  test("a deleted chat stays deleted: cards closed by the delete and a late titler do not write it back", async () => {
+    let releaseTitle!: (t: string | null) => void;
+    const { sdk, mgr, dir } = fresh({ titler: () => new Promise((r) => { releaseTitle = r; }) });
+    const c = mgr.create();
+    c.recordUser("hello");                         // the titler is now in flight
+    sdk.last.ask("Bash", { command: "ls" });       // a card is open
+    await settle();
+    mgr.remove(c.id);
+    releaseTitle("Late title");
+    await new Promise((r) => setTimeout(r, 600));  // past the 400 ms save debounce
+    assert.ok(!(await readdir(dir)).includes(`${c.id}.json`), "not written back into chats/");
+    assert.ok(!mgr.list().some((x) => x.id === c.id), "not listed");
+  });
+
+  test("a resume id the CLI no longer has: a fresh session starts and the prompt is sent again", async () => {
+    const { sdk, mgr, dir, client } = fresh();
+    new Store(dir).write(blank(ID, { title: "Old", sdkSessionId: "sid-gone", events: [{ kind: "user", text: "earlier" }] }));
+    const c = mgr.get(ID)!;
+    const a = client(); c.attach(a.emit);
+    await c.prompt("do it", async () => undefined); await settle();
+    const gone = sdk.last;
+    assert.equal(gone.options.resume, "sid-gone");
+    // What CLI 2.1.280 does with an unknown resume id (measured).
+    gone.result({ subtype: "error_during_execution", is_error: true, errors: ["No conversation found with session ID: sid-gone"] });
+    gone.fail(new Error("Claude Code returned an error result: No conversation found with session ID: sid-gone"));
+    await settle(10);
+    assert.equal(sdk.queries.length, 2, "rebuilt once");
+    assert.equal(sdk.last.options.resume, undefined, "as a fresh conversation");
+    assert.equal(sdk.last.received.length, 1, "the prompt was sent again");
+    assert.match(sdk.last.received[0].message.content as string, /do it/);
+    assert.equal(c.record.sdkSessionId, null);
+    const users = c.record.events.filter((e) => e.kind === "user") as { text: string; uuid?: string }[];
+    assert.deepEqual(users.map((u) => u.text), ["earlier", "do it"], "not recorded twice");
+    assert.equal(users[1].uuid, sdk.last.received[0].uuid, "rewind names the message the new session saw");
+    const note = c.record.events.find((e) => e.kind === "local" && /no longer exists/.test(e.text));
+    assert.ok(note, "the user is told, and the note is kept");
+    // The fresh session works and its id is the one kept from now on.
+    sdk.last.init("sid-fresh"); sdk.last.result(); await settle();
+    c.touch();
+    assert.equal(c.record.sdkSessionId, "sid-fresh");
+    await c.prompt("next", async () => undefined); await settle();
+    assert.equal(sdk.queries.length, 2, "no further rebuild");
+  });
+
+  test("/clear-cache is not /clear, and a /clear with no reset does not arm a later one", async () => {
+    const { sdk, mgr } = fresh();
+    const c = mgr.create();
+    c.recordUser("keep me");
+    c.recordUser("/clear-cache");
+    sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-a" });
+    await settle();
+    assert.ok(c.record.events.some((e) => e.kind === "user" && e.text === "keep me"), "not a /clear");
+    c.recordUser("/clear");
+    sdk.last.result();                              // the turn ends without a reset
+    await settle();
+    sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-b" });
+    await settle();
+    assert.ok(c.record.events.some((e) => e.kind === "user" && e.text === "keep me"), "a later unrequested reset keeps the chat");
+    assert.equal(c.record.sdkSessionId, "sid-b");
+  });
+
+  test("after /clear the record keeps ready/commands/models and a saved note naming the snapshot", async () => {
+    const { sdk, mgr, dir } = fresh();
+    const c = mgr.create();
+    sdk.last.init("sid-1");
+    sdk.last.emit({ type: "system", subtype: "commands_changed", commands: [{ name: "review", description: "", argumentHint: "" }] });
+    await settle();
+    c.recordUser("keep me");
+    c.recordUser("/clear");
+    sdk.last.emit({ type: "conversation_reset", new_conversation_id: "sid-new" });
+    await settle();
+    mgr.shutdown();
+    const rec = JSON.parse(await readFile(join(dir, `${c.id}.json`), "utf8")) as { events: ClientEvent[] };
+    const kinds = rec.events.map((e) => e.kind);
+    for (const k of ["ready", "commands", "models"]) assert.equal(kinds.filter((x) => x === k).length, 1, `${k} kept once`);
+    assert.ok(!kinds.includes("user"));
+    const note = rec.events.find((e) => e.kind === "local") as { text: string } | undefined;
+    assert.ok(note, "the clear is recorded");
+    const snaps = await readdir(join(root, "chats-snapshots"));
+    const snap = snaps.find((f) => f.startsWith(c.id) && f.includes("before-clear"))!;
+    assert.ok(note.text.includes(snap), `note names ${snap}: ${note.text}`);
+  });
+
+  test("create() reuses only a genuinely empty chat, and builds it fresh", async () => {
+    const { dir } = fresh();              // only for a fresh directory; the Manager below scans it
+    const store = new Store(dir);
+    const cleared = "cccccccc-0000-0000-0000-00000000000a";
+    const watched = "cccccccc-0000-0000-0000-00000000000b";
+    const scheduled = "cccccccc-0000-0000-0000-00000000000c";
+    const empty = "cccccccc-0000-0000-0000-00000000000d";
+    store.write(blank(cleared, { updatedAt: 40, sdkSessionId: "sid-c", events: [{ kind: "ready" }, { kind: "local", text: "Context cleared." }] }));
+    store.write(blank(watched, { updatedAt: 30, events: [{ kind: "local", text: "Watch fired — x: y" }, { kind: "text", text: "it changed" }] }));
+    store.write(blank(scheduled, { updatedAt: 20, scheduleId: "sched-1" }));
+    store.write(blank(empty, { updatedAt: 10, events: [{ kind: "ready" }, { kind: "commands", commands: [] }], titleProvisional: true, scheduleId: undefined }));
+    const m2 = new Manager(join(root, "ws"), dir, join(root, "projects"), {
+      bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined,
+      spawnQuery: fakeSdk().spawnQuery, titler: async () => null,
+    });
+    const c = m2.create();
+    assert.equal(c.id, empty, "the only unused one");
+    assert.deepEqual(Object.keys(c.record).sort(), ["createdAt", "cwd", "events", "granted", "id", "mode", "project", "sdkSessionId", "title", "updatedAt"].sort());
+    assert.equal(store.read(cleared)!.events.length, 2, "the cleared chat's note survives");
+    assert.equal(store.read(watched)!.events.length, 2, "the watch's events survive");
+    assert.equal(store.read(scheduled)!.scheduleId, "sched-1");
+    const d = m2.create(c);
+    assert.equal(d, c, "'new' on the unused chat is still that chat");
   });
 });

@@ -27,7 +27,7 @@
     "coverage": "node --import tsx --test --experimental-test-coverage test/*.test.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.266",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.280",
     "@types/yazl": "^3.3.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",

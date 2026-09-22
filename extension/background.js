@@ -654,6 +654,11 @@ async function handle(action, p) {
       const t = await resolveTab(p.tabId);
       return { tabId: t.id, url: t.url, elements: await run(t.id, () => {
         const out = [];
+        // Refs are numbered by position, so the last snapshot's e3 may now be
+        // on an element this one skips (hidden, or gone from the list) while
+        // another element gets e3: two elements, one ref, and a click went to
+        // whichever came first. Every e-ref is this snapshot's or none.
+        document.querySelectorAll('[data-ct-ref^="e"]').forEach((el) => el.removeAttribute("data-ct-ref"));
         const sel = 'a[href],button,input,textarea,select,[role="button"],[role="link"],[onclick],[contenteditable="true"]';
         document.querySelectorAll(sel).forEach((el, i) => {
           const r = el.getBoundingClientRect();

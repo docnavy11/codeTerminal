@@ -192,7 +192,7 @@ export function parseAgentMessage(raw: unknown): AgentMessage | null {
     }
     case "model": {
       const model = str("model");
-      return model !== null && /^[A-Za-z0-9._:-]{0,64}$/.test(model) ? { type: "model", model } : null;
+      return model !== null && /^[A-Za-z0-9._:\[\]-]{0,64}$/.test(model) ? { type: "model", model } : null;
     }
     case "rewind": {
       const uuid = str("uuid");

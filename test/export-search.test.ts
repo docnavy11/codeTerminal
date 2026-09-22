@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type ChatRecord } from "../src/store.js";
 import { toMarkdown, toolSummary, exportFilename } from "../src/export.js";
-import { ChatSearch, snippet } from "../src/search.js";
+import { ChatSearch, snippet, lowered } from "../src/search.js";
 
 const rec = (id: string, title: string, events: unknown[], updatedAt = 2): ChatRecord =>
   ({ id, title, createdAt: 1_700_000_000_000, updatedAt, sdkSessionId: null, cwd: "/w", project: "p1", events: events as never, granted: [], mode: "default" });
@@ -108,5 +108,15 @@ describe("ChatSearch", () => {
     const sn = snippet(long, 100, 6);
     assert.ok(sn.startsWith("…") && sn.endsWith("…")); assert.equal(sn.length, 1 + 60 + 6 + 60 + 1);
     assert.equal(snippet("a needle b", 2, 6), "a needle b");
+  });
+});
+
+describe("search snippets and characters that change length when lower-cased", () => {
+  test("the snippet is cut around the match in the original text", () => {
+    const text = "İstanbul ".repeat(30) + "the needle is here " + "x".repeat(100);
+    const { lower, origin } = lowered(text);
+    assert.equal(lower.length, text.length + 30, "each İ lower-cases to two code units");
+    const at = lower.indexOf("needle");
+    assert.equal(text.slice(origin[at], origin[at] + 6), "needle");
   });
 });

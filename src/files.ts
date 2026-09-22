@@ -1,6 +1,6 @@
 import { readdir, stat, lstat, open, writeFile, mkdir, realpath } from "node:fs/promises";
 import { resolve, join, dirname, relative, basename, sep } from "node:path";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, realpathSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Transform, type Readable } from "node:stream";
 import { rename, unlink } from "node:fs/promises";
@@ -31,7 +31,17 @@ export async function setDeniedPaths(paths: string[]): Promise<void> {
   DENIED = out;
 }
 
+/**
+ * A project's .env is the same kind of secret as ~/.ssh, and there are dozens
+ * of them under a projects folder: blocked by name wherever they sit. The
+ * documented templates stay readable.
+ */
+const SECRET_NAME = /^\.env(\..+)?$/;
+const TEMPLATE_NAME = /^\.env\.(example|sample|template|dist)$/;
+
 function isDenied(finalPath: string): boolean {
+  const name = basename(finalPath);
+  if (SECRET_NAME.test(name) && !TEMPLATE_NAME.test(name)) return true;
   return DENIED.some((d) => finalPath === d || finalPath.startsWith(d + sep));
 }
 
@@ -74,7 +84,11 @@ export async function safePath(root: string, requested: string | undefined): Pro
 
 /** Path shown to the client: relative to root, POSIX-ish, "" for the root. */
 export function toRel(root: string, abs: string): string {
-  const r = relative(resolve(root), abs);
+  // abs came through realpath; so must the root, or a root reached through a
+  // symlink (/home/dev -> /data/users/dev) yields "../../data/users/dev/sub".
+  let base = resolve(root);
+  try { base = realpathSync(base); } catch { /* a root that does not resolve: keep it as given */ }
+  const r = relative(base, abs);
   return r === "" ? "" : r.split(sep).join("/");
 }
 
@@ -230,6 +244,10 @@ export async function collectForZip(
     if (st.isSymbolicLink()) return;
     if (st.isDirectory()) {
       for (const child of await readdir(abs)) {
+        // safePath checked only the ticked names. Without this, ticking
+        // `.config` zipped `.config/gh/hosts.yml`, and ticking a project zipped
+        // its `.env` — the very files a direct download refuses.
+        if (isDenied(join(abs, child))) continue;
         await walk(join(abs, child), `${rel}/${child}`);
       }
       return;

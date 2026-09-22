@@ -1,6 +1,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { hostMatches, hostOf, applicable, fill, type Prompt } from "../src/prompts.js";
+import { mkdtemp, rm, writeFile, readFile, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { hostMatches, hostOf, applicable, fill, PromptStore, type Prompt } from "../src/prompts.js";
 
 const P = (title: string, domains: string[]): Prompt => ({
   id: title, title, text: "x", domains, createdAt: 0, updatedAt: 0,
@@ -73,5 +76,24 @@ describe("fill", () => {
   });
   test("text without placeholders is untouched", () => {
     assert.equal(fill("plain", tab), "plain");
+  });
+});
+
+describe("PromptStore keeps a file it cannot read", () => {
+  test("a broken prompts.json is moved aside and reported, not overwritten by the next save", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ct-prompts-"));
+    try {
+      const path = join(dir, "prompts.json");
+      const broken = '[{"id":"a","title":"Mine","text":"x","domains":[],},]';   // a trailing comma
+      await writeFile(path, broken);
+      const warned: string[] = [];
+      const st = new PromptStore(path, { warn: (l) => warned.push(l) });
+      assert.deepEqual(st.all(), []);
+      assert.equal(warned.length, 1); assert.match(warned[0], /could not be read .* moved aside to .*prompts\.json\.corrupt-/);
+      const aside = (await readdir(dir)).filter((f) => f.startsWith("prompts.json.corrupt-"));
+      assert.equal(aside.length, 1, "moved aside");
+      st.upsert({ title: "New", text: "y" });
+      assert.equal(await readFile(join(dir, aside[0]), "utf8"), broken, "the next save did not touch it");
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });

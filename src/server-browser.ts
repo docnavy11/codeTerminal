@@ -86,6 +86,30 @@ export function userAgentFor(bin: string): string {
   return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major || "120"}.0.0.0 Safari/537.36`;
 }
 
+/**
+ * The browser websocket Chromium announces on stderr. Only a bounded tail is
+ * kept — enough to find a line split across chunks and to quote in an error —
+ * and once the line is found the listener is removed and stderr is left
+ * draining. It used to append every chunk to one buffer for the life of the
+ * process and re-scan all of it on each one.
+ */
+export function devToolsUrl(proc: Pick<ChildProcess, "stderr" | "once" | "off">, ms = 20_000): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let buf = "";
+    const done = () => { clearTimeout(t); proc.stderr!.off("data", onData); proc.off("exit", onExit); proc.stderr!.resume(); };
+    const onData = (d: Buffer | string) => {
+      buf = (buf + d.toString()).slice(-8192);
+      // up to the end of the line: a chunk can end in the middle of the URL
+      const m = /DevTools listening on (ws:\/\/\S+)\s/.exec(buf);
+      if (m) { done(); resolve(m[1]); }
+    };
+    const onExit = (code: number | null) => { done(); reject(new Error(`Chromium exited with code ${code} before it was ready${buf ? `; stderr: ${buf.slice(-400)}` : ""}`)); };
+    const t = setTimeout(() => { done(); reject(new Error(`Chromium did not announce its DevTools port in ${ms / 1000}s${buf ? `; stderr: ${buf.slice(-400)}` : ""}`)); }, ms);
+    proc.stderr!.on("data", onData);
+    proc.once("exit", onExit);
+  });
+}
+
 /** A minimal DevTools-protocol client over the browser websocket: request ids, session routing, events. */
 class Cdp {
   #ws: WebSocket;
@@ -204,16 +228,7 @@ export class ServerBrowser {
     this.#lastError = undefined;
     const proc = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, ...(this.#o.timezone ? { TZ: this.#o.timezone } : {}) } });
     this.#proc = proc;
-    const wsUrl = await new Promise<string>((resolve, reject) => {
-      let buf = "";
-      const t = setTimeout(() => reject(new Error(`Chromium did not announce its DevTools port in 20s${buf ? `; stderr: ${buf.slice(-400)}` : ""}`)), 20_000);
-      proc.stderr!.on("data", (d) => {
-        buf += d.toString();
-        const m = /DevTools listening on (ws:\/\/[^\s]+)/.exec(buf);
-        if (m) { clearTimeout(t); resolve(m[1]); }
-      });
-      proc.once("exit", (code) => { clearTimeout(t); reject(new Error(`Chromium exited with code ${code} before it was ready${buf ? `; stderr: ${buf.slice(-400)}` : ""}`)); });
-    }).catch((e) => { this.#lastError = e.message; this.#kill(); throw e; });
+    const wsUrl = await devToolsUrl(proc).catch((e) => { this.#lastError = e.message; this.#kill(); throw e; });
     proc.on("exit", (code) => {
       if (this.#proc !== proc) return;
       this.#warn(`[server-browser] Chromium exited (${code})`);
@@ -221,15 +236,25 @@ export class ServerBrowser {
       for (const v of this.#viewers) { this.#tell(v, { kind: "gone", reason: "the server browser stopped" }); try { v.ws.close(); } catch { /* */ } }
       this.#viewers.clear(); this.onChange();
     });
-    const sock = new WebSocket(wsUrl, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
-    await new Promise<void>((resolve, reject) => { sock.once("open", () => resolve()); sock.once("error", (e) => reject(e)); });
-    const cdp = new Cdp(sock);
-    this.#cdp = cdp;
-    cdp.onClose = () => { if (this.#cdp === cdp) { this.#cdp = null; this.onChange(); } };
-    this.#startedAt = Date.now();
-    await cdp.send("Target.setDiscoverTargets", { discover: true });
-    await this.#bootstrapExtension().catch((e) => this.#warn(`[server-browser] extension bootstrap: ${e instanceof Error ? e.message : e}`));
-    if (!(await this.#pages()).length) await cdp.send("Target.createTarget", { url: "about:blank" });
+    /* From here Chromium is up and holds the profile. A failure past this
+       point (the socket, a command that does not answer) used to leave it
+       running with #proc still set, so the next start spawned a second
+       Chromium on the same profile. Whatever fails, it goes. */
+    try {
+      const sock = new WebSocket(wsUrl, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
+      await new Promise<void>((resolve, reject) => { sock.once("open", () => resolve()); sock.once("error", (e) => reject(e)); });
+      const cdp = new Cdp(sock);
+      this.#cdp = cdp;
+      cdp.onClose = () => { if (this.#cdp === cdp) { this.#cdp = null; this.onChange(); } };
+      this.#startedAt = Date.now();
+      await cdp.send("Target.setDiscoverTargets", { discover: true });
+      await this.#bootstrapExtension().catch((e) => this.#warn(`[server-browser] extension bootstrap: ${e instanceof Error ? e.message : e}`));
+      if (!(await this.#pages()).length) await cdp.send("Target.createTarget", { url: "about:blank" });
+    } catch (e) {
+      this.#lastError = e instanceof Error ? e.message : String(e);
+      this.#kill();
+      throw e;
+    }
     this.#log(`[server-browser] started pid ${proc.pid}, ${bin}, profile ${this.#o.profileDir}`);
     this.onChange();
   }

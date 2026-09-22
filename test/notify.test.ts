@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { Notifier, escapeMd, notifyConfigFromEnv } from "../src/notify.js";
+import { Notifier, escapeMd, notifyConfigFromEnv, telegramTexts } from "../src/notify.js";
 
 const fakeFetch = (log: { url: string; init: RequestInit }[], status = 200) => (async (url: string | URL | Request, init?: RequestInit) => { log.push({ url: String(url), init: init ?? {} }); return new Response(status === 200 ? "ok" : "nope", { status }); }) as typeof fetch;
 
@@ -14,6 +14,43 @@ describe("notifier", () => {
     assert.equal(log[0].url, "https://api.telegram.org/botT/sendMessage");
     const body = JSON.parse(String(log[0].init.body)); assert.equal(body.chat_id, "42"); assert.equal(body.parse_mode, "MarkdownV2");
     assert.equal(body.text, "*Jobs — done · $1\\.55*\n12 new \\(3 worth a look\\)\\.\nhttp://x/?chat\\=abc");
+  });
+  test("telegram: a real API response's message_id comes back for the two-way listener to bind a reply to", async () => {
+    const fakeSendMessage = (async (url: string | URL | Request) => {
+      if (String(url).includes("sendMessage")) return new Response(JSON.stringify({ ok: true, result: { message_id: 42 } }), { status: 200 });
+      return new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    const n = new Notifier({ telegram: { token: "T", chatId: "9" }, fetch: fakeSendMessage });
+    const r = await n.send({ title: "t", message: "m" });
+    assert.deepEqual(r, { sent: ["telegram"], failed: [], telegramMessageId: 42 });
+  });
+  test("telegram: a long message is cut before escaping, split into valid parts, each with the link", async () => {
+    /* Every MarkdownV2 special must be escaped, and a backslash must escape
+       something — a lone trailing one (an escape pair cut in half) makes
+       Telegram refuse the whole message. */
+    const valid = (s: string) => { for (let i = 0; i < s.length; i++) { if (s[i] === "\\") { if (!/[_*[\]()~`>#+\-=|{}.!\\]/.test(s[i + 1] ?? "")) return false; i++; } else if (/[_*[\]()~`>#+\-=|{}.!]/.test(s[i])) return false; } return true; };
+    const unescape = (s: string) => s.replace(/\\(.)/g, "$1");
+    const url = "http://x/?chat=abc";
+    for (const message of [".".repeat(3990), "a.".repeat(3000) + "\n" + "b".repeat(4000) + "😀".repeat(900)]) {
+      const log: { url: string; init: RequestInit }[] = [];
+      const n = new Notifier({ telegram: { token: "T", chatId: "42" }, fetch: fakeFetch(log) });
+      assert.deepEqual((await n.send({ title: "Jobs — done", message, url })).sent, ["telegram"]);
+      const texts = log.map((l) => JSON.parse(String(l.init.body)).text as string);
+      let whole = "";
+      texts.forEach((t, i) => {
+        assert.ok(t.length <= 4096, `part ${i + 1} is ${t.length} chars`);
+        const m = /^\*(.*)\*\n([\s\S]*)\nhttp:\/\/x\/\?chat\\=abc$/.exec(t);
+        assert.ok(m, `part ${i + 1} has the bold title, a body and the link at the end`);
+        assert.ok(valid(m[1]) && valid(m[2]), `part ${i + 1} is valid MarkdownV2`);
+        assert.equal(unescape(m[1]), texts.length > 1 ? `Jobs — done (${i + 1}/${texts.length})` : "Jobs — done");
+        whole += unescape(m[2]);
+      });
+      assert.ok(texts.length > 1, "split, not cut");
+      assert.equal(whole, message, "nothing lost, nothing added, no surrogate pair split");
+    }
+    const huge = telegramTexts({ title: "T", message: "x".repeat(50_000), url });
+    assert.equal(huge.length, 5, "a notification, not a transcript: at most five parts");
+    assert.match(huge[4], /x…\nhttp:\/\/x\/\?chat\\=abc$/, "the cut is marked, and the link survives it");
   });
   test("webhook json and ntfy shapes; a token becomes a bearer header", async () => {
     const log: { url: string; init: RequestInit }[] = [];

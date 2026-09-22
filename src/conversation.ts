@@ -10,6 +10,25 @@ import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project 
 
 const MAX_EVENTS = 3000;
 
+/** The CLI's words when a resume id names a conversation it does not have. */
+const GONE = /No conversation found with session ID/;
+
+/**
+ * Events that describe the session process rather than the conversation: the
+ * record keeps only the latest of each, a /clear keeps them, and a chat holding
+ * nothing else has never been used.
+ */
+const SESSION_KINDS = new Set<ClientEvent["kind"]>(["ready", "commands", "models"]);
+
+/**
+ * Date.now(), but never the same value twice in this process. "Newest chat"
+ * is the highest updatedAt; two chats stamped in the same millisecond (two
+ * clients, a run starting as someone clicks New) tied, and the tie went to
+ * whichever the store happened to list first — the older one.
+ */
+let lastStamp = 0;
+export function stamp(): number { lastStamp = Math.max(Date.now(), lastStamp + 1); return lastStamp; }
+
 /**
  * How many conversations may hold a live `claude` process at once. Each is a
  * real subprocess, so this is a memory and CPU ceiling, not a stylistic one.
@@ -33,13 +52,23 @@ export class LiveChat {
   #titling = false;
   /** Set only when the user actually sends /clear. */
   #clearRequested = false;
+  /**
+   * Set by close(). A closed chat never writes its record again: closing the
+   * session emits approval_closed for open cards (and a busy turn's result can
+   * land later still), and each used to schedule a save — reproduced: a deleted
+   * chat was written back into chats/ 400 ms after Store.remove archived it.
+   */
+  #closed = false;
   #onChange: () => void;
 
   #onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void;
+  #onModels: (e: Extract<ClientEvent, { kind: "models" }>) => void;
   constructor(rec: ChatRecord, store: Store, workspace: string,
               deps: Omit<SessionDeps, "chatId">, mode: PermissionMode, onChange: () => void,
-              onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void = () => {}) {
+              onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void = () => {},
+              onModels: (e: Extract<ClientEvent, { kind: "models" }>) => void = () => {}) {
     this.#onReady = onReady;
+    this.#onModels = onModels;
     this.#rec = rec;
     this.#store = store;
     this.#workspace = workspace;
@@ -56,12 +85,53 @@ export class LiveChat {
     const s = new Session(this.#rec.cwd ?? this.#workspace, this.#record,
       { ...deps, chatId: this.#rec.id, prefer: () => this.#extInstance, ...(this.#budgetUsd !== undefined ? { maxBudgetUsd: this.#budgetUsd } : {}) });
     if (this.#unattended) s.setUnattended(this.#unattended);
+    this.#inFlight = null;
+    this.#resumeGone = false;
     // Pass the mode into start() so the SDK launches with it. Setting it after
     // start (the old `void s.setMode(mode)`) raced the query into existence and
     // left the session running in "default".
     s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted, mode, this.#rec.model)
+      .catch((err) => this.#record({ kind: "error", message: String(err) }))
+      // start() settles when the stream ends; only this chat's current session matters.
+      .then(() => { if (s === this.#session && !this.#closed && this.#resumeGone) this.#startOver(); })
+      // Nothing here may become an unhandled rejection: that ends the server.
       .catch((err) => this.#record({ kind: "error", message: String(err) }));
     return s;
+  }
+
+  /**
+   * What was sent to a session that has not said `ready` yet, so it can be sent
+   * again if that session turns out to have nothing to resume. The images are
+   * kept in full here (the record keeps thumbnails) and dropped at `ready`.
+   */
+  #inFlight: { text: string; context?: string; images: { media_type: string; data: string }[]; uuid: string } | null = null;
+  /** The CLI said the conversation it was asked to resume does not exist. */
+  #resumeGone = false;
+
+  #send(text: string, context?: string, images: { media_type: string; data: string }[] = []): string {
+    const uuid = this.#session.send(text, context, images);
+    if (this.#inFlight === null) this.#inFlight = { text, context, images, uuid };
+    return uuid;
+  }
+
+  /**
+   * The SDK session this chat saved no longer exists on the CLI's side. The
+   * CLI answers the first prompt with an error result and exits, and every
+   * rebuild resumed the same id again — reproduced with the fake SDK: four
+   * prompts, four sessions all resuming the gone id, every prompt dropped. Start a fresh conversation instead, say so,
+   * and send the prompt that hit the failure again rather than losing it.
+   */
+  #startOver(): void {
+    const lost = this.#rec.sdkSessionId;
+    const retry = this.#inFlight;
+    this.#rec.sdkSessionId = null;
+    this.#record({ kind: "local", text: `The saved Claude session${lost ? ` (${lost})` : ""} no longer exists, so Claude does not remember this conversation. Started a new session${retry ? " and sent your last message again" : ""}.` });
+    this.#restart();
+    if (!retry) return;
+    const uuid = this.#send(retry.text, retry.context, retry.images);
+    // Rewind names the user message by the uuid the CLI saw; that is the new one now.
+    const ev = this.#rec.events.find((e) => e.kind === "user" && e.uuid === retry.uuid) as { uuid?: string } | undefined;
+    if (ev) ev.uuid = uuid;
   }
 
   get id(): string { return this.#rec.id; }
@@ -82,8 +152,12 @@ export class LiveChat {
    */
   #extInstance: string | undefined;
   get extInstance(): string | undefined { return this.#extInstance; }
+  /** undefined: the caller has no say (keep the pin); "": auto, unpin; else pin that browser. */
   useBrowser(instance: string | undefined): void {
-    if (instance) this.#extInstance = instance;
+    // "" used to be ignored like undefined, so picking "auto" in the panel
+    // never unpinned the chat: the panel said auto while the tools kept
+    // acting in (or refusing for want of) the browser pinned before.
+    if (instance !== undefined) this.#extInstance = instance || undefined;
   }
 
   /** A scheduled run: nobody answers cards. Survives the session rebuilds a project/mode change causes. */
@@ -101,6 +175,7 @@ export class LiveChat {
   /* ---------------- events ---------------- */
 
   #record = (e: ClientEvent): void => {
+    if (this.#closed) { this.#emitAll(e); return; }
     // Live-only: status and deltas are the same words the completed events
     // carry, so persisting them would duplicate every reply.
     if (e.kind === "rewind") this.#lastRewind = { uuid: e.uuid, ok: e.canRewind, files: e.files.length };
@@ -116,22 +191,39 @@ export class LiveChat {
         return;
       }
       this.#clearRequested = false;
-      this.#snapshot("before-clear");
-      this.#rec.events = [];
+      const snap = this.#snapshot("before-clear");
+      // The session's ready/commands/models describe the process, not the
+      // conversation, and do not arrive again after a clear: dropping them
+      // left a reloaded chat with no slash-command menu. The note is saved,
+      // not only shown, so a reloaded chat still says where its past went.
+      const note: ClientEvent = { kind: "local", text: snap
+        ? `Context cleared — the earlier conversation is saved in ${snap}`
+        : "Context cleared — the earlier conversation could not be snapshotted." };
+      this.#rec.events = [...this.#rec.events.filter((x) => SESSION_KINDS.has(x.kind)), note];
       this.#rec.title = "New chat";
       this.#rec.titleProvisional = false;
       this.#rec.sdkSessionId = e.newId;
       this.#save();
       this.#emitAll({ kind: "cleared" });
-      this.#emitAll({ kind: "local", text: "Context cleared." });
+      this.#emitAll(note);
       this.#onChange();
       return;
     }
 
-    if (e.kind === "ready") this.#onReady(e);
-    if (e.kind === "ready" || e.kind === "commands") {
+    if (e.kind === "ready") { this.#onReady(e); this.#inFlight = null; }
+    if (e.kind === "models") this.#onModels(e);
+    // Measured against CLI 2.1.280 with a made-up resume id: an error result
+    // "No conversation found with session ID: <id>", then the stream throws
+    // with the same words. Either one is enough.
+    if ((e.kind === "turn_end" && GONE.test(e.stopped ?? "")) || (e.kind === "error" && GONE.test(e.message))) this.#resumeGone = true;
+    if (SESSION_KINDS.has(e.kind)) {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
+    // A /clear turn that ends without a reset must not leave the flag armed:
+    // the next unrequested reset — a fresh-session flow — would then wipe the
+    // chat. Measured once on CLI 2.1.280: a real /clear emits its reset
+    // before the turn's result, so this does not cancel a /clear that worked.
+    if (e.kind === "turn_end") this.#clearRequested = false;
     this.#rec.events.push(e);
     if (this.#rec.events.length > MAX_EVENTS) {
       this.#rec.events.splice(0, this.#rec.events.length - MAX_EVENTS);
@@ -170,7 +262,7 @@ export class LiveChat {
       const ctx = await context();
       if (this.#session.dead) this.#restart();
       // The record keeps thumbnails only; the full images are for the model.
-      const uuid = this.#session.send(text, ctx, images);
+      const uuid = this.#send(text, ctx, images);
       this.recordUser(text, ctx, images.map((i) => ({ media_type: i.media_type, thumb: i.thumb })), uuid);
     } finally {
       this.#sending = false;
@@ -178,7 +270,8 @@ export class LiveChat {
   }
 
   recordUser(text: string, context?: string, images?: { media_type: string; thumb: string }[], uuid?: string): void {
-    if (/^\s*\/clear\b/.test(text)) this.#clearRequested = true;
+    // Exactly /clear: \b also matched /clear-cache and any command named like it.
+    if (/^\s*\/clear\s*$/.test(text)) this.#clearRequested = true;
     this.#record({ kind: "user", text, context, ...(images?.length ? { images } : {}), ...(uuid ? { uuid } : {}) });
     if (this.#rec.title === "New chat") {
       this.#rec.title = titleFrom(this.#rec.events);
@@ -259,7 +352,7 @@ export class LiveChat {
     if (this.#session.dead) this.#restart();
     // The detail is page-derived; sending it as context puts it inside the
     // nonce-delimited untrusted block rather than inline in the instruction.
-    this.#session.send(prompt, `watch report: ${detail}`);
+    this.#send(prompt, `watch report: ${detail}`);
     return "woken";
   }
 
@@ -290,7 +383,13 @@ export class LiveChat {
 
   close(): void {
     if (this.#saveTimer) { clearTimeout(this.#saveTimer); this.#saveTimer = null; }
-    this.#save();
+    // A flush, not an update: stamping it made a chat pushed out of the pool
+    // (or closed at shutdown) the "newest", so the page opened it instead of
+    // the chat just made.
+    this.#save(false);
+    // Closed before the session is: its close emits into #record, and nothing
+    // it says from here on may reach the disk (see #closed).
+    this.#closed = true;
     this.#session.close();
   }
 
@@ -320,25 +419,31 @@ export class LiveChat {
 
   /* ---------------- persistence ---------------- */
 
-  #snapshot(why: string): void {
+  /** The snapshot's path, or null when it could not be written. */
+  #snapshot(why: string): string | null {
     try {
       const dir = join(dirname(this.#store.dir), "chats-snapshots");
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, `${this.#rec.id}-${why}-${Date.now()}.json`), JSON.stringify(this.#rec));
-    } catch { /* a missing snapshot must not block the operation */ }
+      const path = join(dir, `${this.#rec.id}-${why}-${Date.now()}.json`);
+      writeFileSync(path, JSON.stringify(this.#rec));
+      return path;
+    } catch { return null; /* a missing snapshot must not block the operation */ }
   }
 
   #scheduleSave(): void {
-    if (this.#saveTimer) return;
+    if (this.#saveTimer || this.#closed) return;
     this.#saveTimer = setTimeout(() => { this.#saveTimer = null; this.#save(); }, 400);
   }
 
   #saveFailed = false;
-  #save(): void {
+  #save(touch = true): void {
+    // Also reached from async paths (the titler, a rename) that can finish
+    // after the chat was deleted; one write then would resurrect the file.
+    if (this.#closed) return;
     this.#rec.sdkSessionId = this.#session?.sdkSessionId ?? this.#rec.sdkSessionId;
     this.#rec.granted = this.#session?.granted ?? this.#rec.granted;
     this.#rec.mode = this.#session?.mode ?? this.#rec.mode;
-    this.#rec.updatedAt = Date.now();
+    if (touch) this.#rec.updatedAt = stamp();
     const ok = this.#store.write(this.#rec);
     // Say so once per outage — a full disk used to lose the transcript silently.
     if (!ok && !this.#saveFailed) {
@@ -366,6 +471,13 @@ export class Manager {
   readySeen = false;
   /** From the most recent session start: each in-process MCP server and its status; null before any. */
   mcpServers: { name: string; status: string }[] | null = null;
+  /**
+   * The CLI's model list from the most recent session start. It is the same
+   * for every chat, but it used to reach a client only as an event in the
+   * chat's own history, so a chat whose history no longer held one (trimmed,
+   * or never started this run) offered nothing but "default".
+   */
+  models: Extract<ClientEvent, { kind: "models" }> | null = null;
   onChatRemoved?: (id: string) => void;
 
   constructor(workspace: string, dir: string, projectsRoot: string,
@@ -453,7 +565,7 @@ export class Manager {
     if (live) { live.touch(); return true; }
     const rec = this.#read(id);
     if (!rec) return false;
-    rec.updatedAt = Date.now();
+    rec.updatedAt = stamp();
     this.#store.write(rec);
     this.onListChanged?.();
     return true;
@@ -467,28 +579,41 @@ export class Manager {
     if (!rec) return false;
     rec.project = target.general ? undefined : target.id;
     rec.cwd = target.path;
-    rec.updatedAt = Date.now();
+    rec.updatedAt = stamp();
     this.#store.write(rec);
     this.onListChanged?.();
     return true;
   }
 
   create(from?: LiveChat): LiveChat {
-    const now = Date.now();
+    const now = stamp();
     // "New" while already on an unused chat is the same chat.
     if (from && from.record.events.every((e) => e.kind !== "user")) return from;
     // Every "new" click wrote a "New chat" record before a word was said
     // (measured: one 0-turn file per attach to an empty store), and the
     // abandoned ones piled up in the picker. Reuse one instead of minting
     // another, so there is at most one empty chat on disk at a time.
-    const spare = this.#store.list().find((c) => c.turns === 0 && c.title === "New chat" && !this.#chats.has(c.id));
-    const spareRec = spare ? this.#read(spare.id) : null;
+    //
+    // "0 turns, titled New chat" is not the same as unused: a /clear leaves
+    // exactly that, and so does a watch that fired into a cleared chat. Both
+    // were taken — their events deleted with no snapshot, the old scheduleId
+    // kept. The summary cannot tell, so the record is read to check — one
+    // candidate at a time, stopping at the first that is really unused.
+    let spareRec: ChatRecord | null = null;
+    for (const c of this.#store.list()) {
+      if (c.turns !== 0 || c.title !== "New chat" || c.scheduleId || this.#chats.has(c.id)) continue;
+      const r = this.#read(c.id);
+      if (r && unused(r)) { spareRec = r; break; }
+    }
     if (spareRec) {
+      // Built afresh, only the id carried over: spreading the old record kept
+      // whatever else it had (a scheduleId, a stale titleProvisional).
       const rec: ChatRecord = {
-        ...spareRec, createdAt: now, updatedAt: now, sdkSessionId: null, events: [], granted: [],
-        mode: "default", cwd: from?.record.cwd ?? null, project: from?.record.project,
+        id: spareRec.id, title: "New chat", createdAt: now, updatedAt: now,
+        sdkSessionId: null, cwd: from?.record.cwd ?? null, project: from?.record.project,
+        ...(from?.record.model ? { model: from.record.model } : {}),
+        events: [], granted: [], mode: "default",
       };
-      if (from?.record.model) rec.model = from.record.model; else delete rec.model;
       this.#store.write(rec);
       const chat = this.#admit(rec, from?.mode ?? "default");
       this.onListChanged?.();
@@ -516,7 +641,8 @@ export class Manager {
   #admit(rec: ChatRecord, mode: PermissionMode = "default"): LiveChat {
     this.#evictIfFull();
     const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, mode,
-      () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers?.filter((s) => OUR_SERVERS.has(s.name)) ?? null; });
+      () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers?.filter((s) => OUR_SERVERS.has(s.name)) ?? null; },
+      (models) => { this.models = models; });
     this.#chats.set(rec.id, chat);
     return chat;
   }
@@ -551,6 +677,11 @@ export class Manager {
     for (const c of this.#chats.values()) c.close();
     this.#chats.clear();
   }
+}
+
+/** Never used: nothing in it but what a session says about itself, and no schedule owns it. */
+function unused(rec: ChatRecord): boolean {
+  return !rec.scheduleId && rec.events.every((e) => SESSION_KINDS.has(e.kind));
 }
 
 /** Title rule shared by live and on-disk renames. */

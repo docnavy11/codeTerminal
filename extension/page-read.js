@@ -29,10 +29,24 @@
   /** Where the content is: <main>, <article>, [role=main], else body. */
   const root = () => document.querySelector("main, article, [role=main]") || document.body;
 
-  let refSeq = 0;
+  /* This file is injected afresh on every call, but the refs it hands out
+     stay on the elements. A counter that restarted at 0 each time gave a new
+     element a ref an old one still carried (reproduced: find "Delete" → f1,
+     find "Cancel" → f1 as well, and click f1 pressed Delete). So the next
+     number continues from the highest ref already in the page. */
+  let refSeq = null;
   const refOf = (el) => {
     let r = el.getAttribute("data-ct-ref");
-    if (!r) { r = "f" + (++refSeq); el.setAttribute("data-ct-ref", r); }
+    if (!r) {
+      if (refSeq === null) {
+        refSeq = 0;
+        for (const e of document.querySelectorAll("[data-ct-ref^='f']")) {
+          const n = Number(e.getAttribute("data-ct-ref").slice(1));
+          if (Number.isInteger(n) && n > refSeq) refSeq = n;
+        }
+      }
+      r = "f" + (++refSeq); el.setAttribute("data-ct-ref", r);
+    }
     return r;
   };
   const labelOf = (el) => {

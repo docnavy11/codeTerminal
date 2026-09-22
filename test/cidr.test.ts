@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { parseIp, parseCidr, ipInCidr, ipInAny, isPrivateCidr, parseTrustedCidrs } from "../src/cidr.js";
+import { parseIp, parseCidr, ipInCidr, ipInAny, isPrivateCidr, parseTrustedCidrs, isUnspecified } from "../src/cidr.js";
 
 describe("parseIp", () => {
   test("IPv4", () => {
@@ -94,5 +94,12 @@ describe("parseTrustedCidrs — boot-time enforcement", () => {
   });
   test("throws on malformed input", () => {
     assert.throws(() => parseTrustedCidrs("garbage"), /not a valid CIDR/);
+  });
+});
+
+describe("isUnspecified", () => {
+  test("every spelling of 'all interfaces', and nothing else", () => {
+    for (const a of ["0.0.0.0", "::", "::0", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0"]) assert.equal(isUnspecified(a), true, a);
+    for (const a of ["127.0.0.1", "100.64.0.1", "::1", "fd7a:115c:a1e0::1", "not-an-ip", ""]) assert.equal(isUnspecified(a), false, a);
   });
 });

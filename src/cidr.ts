@@ -79,6 +79,16 @@ export function parseIp(raw: string): { v: 4 | 6; n: bigint } | null {
 }
 
 /** Parse "10.0.0.0/24" (bare address means a /32 or /128). */
+/**
+ * True for the address that means "every interface": 0.0.0.0 and ::, in any
+ * spelling a resolver or parser accepts (::0, 0:0:0:0:0:0:0:0, ::ffff:0.0.0.0).
+ */
+export function isUnspecified(raw: string): boolean {
+  const ip = parseIp(raw);
+  if (!ip) return false;
+  return ip.n === 0n || (ip.v === 6 && ip.n === 0xffff00000000n);
+}
+
 export function parseCidr(raw: string): Cidr | null {
   const [addr, bitsRaw, ...rest] = raw.trim().split("/");
   if (rest.length) return null;

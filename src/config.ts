@@ -29,8 +29,11 @@ export function parseEnvFile(text: string): Record<string, string> {
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
     let v = m[2].trim();
-    if ((v.startsWith('"') && v.endsWith('"') && v.length > 1) || (v.startsWith("'") && v.endsWith("'") && v.length > 1)) {
-      v = v.slice(1, -1);
+    // A quoted value may carry a comment after its closing quote:
+    // HOST="100.64.0.1"  # tailnet ip. Kept whole, the quotes became part of the value.
+    const q = /^(["'])(.*?)\1\s*(?:#.*)?$/.exec(v);
+    if (q) {
+      v = q[2];
     } else {
       const hash = v.indexOf(" #");                 // a trailing comment, not a value containing '#'
       if (hash >= 0) v = v.slice(0, hash).trim();
@@ -64,6 +67,9 @@ export const STATE_SLOTS = {
   schedules: { env: "CODETERM_SCHEDULES", name: "schedules.json" },
   usage: { env: "CODETERM_USAGE", name: "usage.json" },
   browserAllow: { env: "CODETERM_BROWSER_ALLOW_FILE", name: "browser-allow.json" },
+  /** The standing Telegram chat's cwd — just a CLAUDE.md telling it how to
+      query this server's own state (schedules, chats, prompts) over loopback. */
+  telegramContext: { env: "CODETERM_TELEGRAM_CONTEXT", name: "telegram-context" },
   serverBrowserProfile: { env: "CODETERM_SERVER_BROWSER_PROFILE", name: join("server-browser", "profile") },
 } satisfies Record<string, Slot>;
 
