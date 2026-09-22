@@ -158,6 +158,18 @@ test("toRel is empty at the root and relative below it", async () => {
   assert.equal(toRel(root, join(root, "sub", "ok.txt")), "sub/ok.txt");
 });
 
+test("a root reached through a symlink still lists and resolves relative to itself", async () => {
+  // The paths list() hands back went through realpath; toRel did not, so they
+  // came out as "../../real/sub" and were refused when sent back.
+  const link = join(root, "..", `link-${Date.now()}`);
+  await symlink(root, link);
+  try {
+    const l = await list(link, "sub");
+    assert.equal(l.path, "sub");
+    assert.ok(await safePath(link, l.path));
+  } finally { await rm(link, { force: true }); }
+});
+
 // M3: the file browser opens on the home directory, which holds the Claude
 // credentials and SSH keys. safePath blocks a denylist of subtrees even though
 // they sit inside the root — a browser download of ~/.claude/.credentials.json
@@ -194,6 +206,15 @@ describe("denied paths (credentials, keys)", () => {
 
   test("leaves everything else readable", async () => {
     assert.ok((await safePath(root, "a.txt")).endsWith("a.txt"));
+  });
+
+  test(".env files are blocked by name anywhere; templates are not", async () => {
+    await mkdir(join(root, "app"), { recursive: true });
+    for (const n of [".env", ".env.local", ".env.production", ".env.example", ".envrc"]) await writeFile(join(root, "app", n), "X=1");
+    for (const n of [".env", ".env.local", ".env.production"]) await assert.rejects(() => safePath(root, `app/${n}`), /blocked/, n);
+    for (const n of [".env.example", ".envrc"]) assert.ok(await safePath(root, `app/${n}`), n);
+    const { entries } = await collectForZip(root, "", ["app"], 1e9);
+    assert.deepEqual(entries.map((e) => e.name).sort(), ["app/.env.example", "app/.envrc"]);
   });
 
   test("zipping a folder leaves out what the denylist covers inside it", async () => {

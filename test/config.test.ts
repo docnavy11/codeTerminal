@@ -90,3 +90,10 @@ describe("statePath", () => {
     assert.equal(new Set(names).size, names.length);
   });
 });
+
+describe("parseEnvFile: quoted values with a trailing comment", () => {
+  test("the quotes and the comment both go", () => {
+    assert.deepEqual(parseEnvFile(`A="100.64.0.1"   # tailnet ip\nB='x' # c\nC="has # inside"\nD=plain # c\nE="unterminated`),
+      { A: "100.64.0.1", B: "x", C: "has # inside", D: "plain", E: '"unterminated' });
+  });
+});

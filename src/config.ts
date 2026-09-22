@@ -29,8 +29,11 @@ export function parseEnvFile(text: string): Record<string, string> {
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
     let v = m[2].trim();
-    if ((v.startsWith('"') && v.endsWith('"') && v.length > 1) || (v.startsWith("'") && v.endsWith("'") && v.length > 1)) {
-      v = v.slice(1, -1);
+    // A quoted value may carry a comment after its closing quote:
+    // HOST="100.64.0.1"  # tailnet ip. Kept whole, the quotes became part of the value.
+    const q = /^(["'])(.*?)\1\s*(?:#.*)?$/.exec(v);
+    if (q) {
+      v = q[2];
     } else {
       const hash = v.indexOf(" #");                 // a trailing comment, not a value containing '#'
       if (hash >= 0) v = v.slice(0, hash).trim();

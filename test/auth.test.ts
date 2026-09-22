@@ -82,3 +82,14 @@ describe("denyReason", () => {
     assert.equal(await a.denyReason(req({ ip: "::ffff:127.0.0.1" })), null);
   });
 });
+
+describe("CODETERM_ORIGINS behind a reverse proxy", () => {
+  test("a listed name is accepted on the default ports too, and a full origin as given", async () => {
+    const a = await createAuth({ host: "127.0.0.1", port: 8123, extraOrigins: ["claude.example.com", "https://other.example:8443"], forceLocal: false, trustedCidrSpec: undefined, deps: { self: async () => null } });
+    for (const o of ["https://claude.example.com", "http://claude.example.com", "https://claude.example.com:8123", "https://other.example:8443"]) {
+      assert.equal(await a.denyReason(req({ ip: "127.0.0.1", origin: o })), null, o);
+    }
+    assert.match((await a.denyReason(req({ ip: "127.0.0.1", origin: "https://claude.example.com.evil.example" })))!, /origin/);
+    assert.match((await a.denyReason(req({ ip: "127.0.0.1", origin: "https://other.example" })))!, /origin/, "a full origin keeps its port");
+  });
+});

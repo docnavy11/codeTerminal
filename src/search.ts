@@ -51,9 +51,13 @@ export class ChatSearch {
         : this.#texts(c.id, c.updatedAt);
       const matches: SearchHit["matches"] = [];
       for (const t of texts) {
-        const at = t.text.toLowerCase().indexOf(q);
+        const { lower, origin } = lowered(t.text);
+        const at = lower.indexOf(q);
         if (at < 0) continue;
-        matches.push({ i: t.i, kind: t.kind, snippet: snippet(t.text, at, q.length) });
+        // The match was found in the lower-cased text; some characters change
+        // length when lower-cased ("İ" becomes two), so map it back before cutting.
+        const from = origin[at], to = at + q.length < origin.length ? origin[at + q.length] : t.text.length;
+        matches.push({ i: t.i, kind: t.kind, snippet: snippet(t.text, from, to - from) });
         if (matches.length >= perChat) break;
       }
       const titleMatch = c.title.toLowerCase().includes(q);
@@ -62,6 +66,19 @@ export class ChatSearch {
     }
     return hits;
   }
+}
+
+/** The lower-cased text, and for each of its code units the index it came from in the original. */
+export function lowered(text: string): { lower: string; origin: number[] } {
+  let lower = ""; const origin: number[] = [];
+  for (let i = 0; i < text.length;) {
+    const ch = String.fromCodePoint(text.codePointAt(i)!);
+    const l = ch.toLowerCase();
+    lower += l;
+    for (let k = 0; k < l.length; k++) origin.push(i);
+    i += ch.length;
+  }
+  return { lower, origin };
 }
 
 /** ~60 chars either side of the match, whitespace collapsed, ellipses where cut. */

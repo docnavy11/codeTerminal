@@ -6,6 +6,7 @@ import { pipeline, type Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { lookup } from "node:dns/promises";
 import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
@@ -25,6 +26,7 @@ import { tmuxAvailable, listSessions, createSession, renameSession, killSession,
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
+import { isUnspecified } from "./cidr.js";
 import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
 import { buildSetup } from "./setup.js";
@@ -219,7 +221,10 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
      no pane in the UI. Everything else works unchanged. */
   const SHELL = cfg.shell !== false;
 
-  if (HOST === "0.0.0.0" || HOST === "::") {
+  // Not just the two usual spellings: "::0", "0" and "0x0" bind every
+  // interface too, and the resolver is what turns "0" into 0.0.0.0.
+  const bindAddrs = [HOST, ...await lookup(HOST, { all: true }).then((r) => r.map((a) => a.address), () => [])];
+  if (bindAddrs.some(isUnspecified)) {
     throw new AuthRefused("Refusing to bind all interfaces. /pty is an ungated shell; keep it on the tailnet.");
   }
   mkdirSync(WORKSPACE, { recursive: true });
@@ -229,6 +234,9 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     ...cfg.denyExtra,
     // The server's own secrets, wherever the project sits.
     join(ROOT, ".env"),
+    // The server browser's profile: its cookies and saved logins are the
+    // sessions it was signed into, one download away otherwise.
+    cfg.serverBrowser?.profileDir ?? join(ROOT, "server-browser", "profile"),
   ]);
 
   // The Chrome extension dials in here; browser tools speak through it.
@@ -923,4 +931,9 @@ if (isMain) {
   };
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGINT", () => stop("SIGINT"));
+  // One stray rejection used to end the process, and with it every chat, run
+  // and shell. Log it loudly and keep serving; the code that threw is the bug.
+  process.on("unhandledRejection", (reason) => {
+    console.error("[unhandled rejection]", reason instanceof Error ? reason.stack ?? reason.message : reason);
+  });
 }
