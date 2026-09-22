@@ -251,7 +251,8 @@ chats here:
 |---|---|
 | `list_chats` | the conversations, newest first |
 | `read_chat` | a chat's recent history, and whether it is busy or waiting for you |
-| `send_prompt` | prompt a chat (or a new one) and, by default, wait for the reply |
+| `send_prompt` | prompt a chat (or a new one, optionally in a project, optionally a saved prompt) and, by default, wait for the reply |
+| `notify` | send you a Telegram / webhook notification, titled "via MCP · …"; at most 10 per 10 minutes (only when a target is configured) |
 | `stop_chat` | interrupt the turn a chat is running |
 | `list_schedules` | the scheduled prompts |
 | `list_terminals`, `read_terminal` | the tmux sessions and their recent output (only with the shell on) |
@@ -262,7 +263,7 @@ chats here:
 | `list_files`, `read_file` | the file browser's root, with its denylist (keys, credentials, `.env`) |
 | `health` | version, auth mode, browsers connected, whether a session has come up |
 
-Everything below `stop_chat` in that list only reads.
+Everything below `notify` in that list only reads.
 
 It sits behind the same check as every other route — the tailnet owner,
 loopback, or a trusted CIDR; never a page on another origin — so an MCP

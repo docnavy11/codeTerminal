@@ -771,6 +771,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     convo, publicBase, version: pkgVersion,
     schedules: () => schedules.list().map(scheduleView),
     prompts: () => prompts.all(), watches, filesRoot: FILES_ROOT,
+    ...(notifier.targets.length ? { notify: (n: { title: string; message: string; url?: string }) => notifier.send(n) } : {}),
     health: () => ({
       version: pkgVersion, node: process.version, auth: auth.mode, shell: SHELL,
       browsers: bridge.instances.filter((i) => !i.startsWith("pending:")),
