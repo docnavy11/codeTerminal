@@ -3,6 +3,17 @@ import { join } from "node:path";
 import type { PermissionMode, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import type { ClientEvent } from "./protocol.js";
 
+/**
+ * Move an unreadable JSON file aside (`<path>.corrupt-<timestamp>`) before a
+ * store starts empty, so the next save cannot overwrite what was there.
+ * Returns where it went, for the caller's warning.
+ */
+export function quarantine(path: string, warn: (l: string) => void = () => {}): string {
+  const aside = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  try { renameSync(path, aside); return `moved aside to ${aside}`; }
+  catch (e) { warn(`[store] could not move ${path} aside: ${e instanceof Error ? e.message : e}`); return "left in place (could not move it aside)"; }
+}
+
 export type ChatRecord = {
   id: string;
   title: string;

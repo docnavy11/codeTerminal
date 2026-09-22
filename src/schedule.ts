@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { quarantine } from "./store.js";
 
 export type When = { text: string; cron: string; tz: string };
 
@@ -224,10 +225,22 @@ export function nextRun(cron: string, tz: string, after: Date): Date | null {
 export class ScheduleStore {
   #path: string;
   #items: Schedule[] = [];
-  constructor(path: string) { this.#path = path; this.#load(); }
+  #warn: (l: string) => void;
+  constructor(path: string, o: { warn?: (l: string) => void } = {}) { this.#path = path; this.#warn = o.warn ?? ((l) => console.warn(l)); this.#load(); }
   #load(): void {
     if (!existsSync(this.#path)) return;
-    try { const raw = JSON.parse(readFileSync(this.#path, "utf8")); if (Array.isArray(raw)) this.#items = raw; } catch { /* a broken file starts empty; the next save rewrites it */ }
+    try {
+      const raw = JSON.parse(readFileSync(this.#path, "utf8"));
+      if (!Array.isArray(raw)) throw new Error("not a list of schedules");
+      this.#items = raw;
+    } catch (e) {
+      /* Starting empty and letting the next save rewrite the file wiped every
+         schedule over one stray comma (reproduced: a trailing comma). The
+         file is moved aside instead, so a hand-edit can be repaired and put
+         back, and it is said loudly — an empty list with no word is how this
+         would otherwise be discovered. */
+      this.#warn(`[schedule] ${this.#path} could not be read (${e instanceof Error ? e.message : e}); ${quarantine(this.#path, this.#warn)} — starting with no schedules`);
+    }
   }
   #save(): void {
     mkdirSync(dirname(this.#path), { recursive: true });
@@ -249,7 +262,7 @@ export class ScheduleStore {
     this.#items[i] = merged; this.#save(); return { ...merged };
   }
   remove(id: string): boolean { const n = this.#items.length; this.#items = this.#items.filter((x) => x.id !== id); if (this.#items.length === n) return false; this.#save(); return true; }
-  /** Internal updates from the scheduler: nextAt and runs. */
+  /** Internal updates from the scheduler: nextAt and runs. Applied in memory first, so a failed write (thrown) still leaves the change in effect until the next save. */
   patch(id: string, f: (s: Schedule) => void): void { const s = this.#items.find((x) => x.id === id); if (!s) return; f(s); this.#save(); }
   #validate(input: ScheduleInput, fixed: Pick<Schedule, "id" | "createdAt" | "updatedAt" | "nextAt" | "runs">): Schedule {
     const title = String(input.title ?? "").trim(); if (!title) throw new Error("a schedule needs a title");

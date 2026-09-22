@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWhen, describe as words, nextRun, ScheduleStore, Scheduler, type Schedule, type Run, type RunResult } from "../src/schedule.js";
@@ -186,5 +186,25 @@ describe("every N: only even intervals", () => {
     assert.equal(words("0 */7 * * *"), "cron 0 */7 * * *");
     assert.equal(words("*/45 * * * *"), "cron */45 * * * *");
     assert.equal(words("0 */6 * * *"), "every 6 hours");
+  });
+});
+
+describe("the store keeps a file it cannot read", () => {
+  test("a broken schedules.json is moved aside and reported, not overwritten by the next save", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ct-schedc-"));
+    try {
+      const path = join(dir, "schedules.json");
+      const broken = '[{"id":"a","title":"Jobs",},]';   // a trailing comma from a hand-edit
+      await writeFile(path, broken);
+      const warned: string[] = [];
+      const st = new ScheduleStore(path, { warn: (l) => warned.push(l) });
+      assert.deepEqual(st.list(), []);
+      assert.equal(warned.length, 1); assert.match(warned[0], /could not be read .* moved aside to .*schedules\.json\.corrupt-/);
+      const aside = (await readdir(dir)).filter((f) => f.startsWith("schedules.json.corrupt-"));
+      assert.equal(aside.length, 1, "moved aside");
+      assert.equal(await readFile(join(dir, aside[0]), "utf8"), broken, "byte for byte");
+      st.add({ title: "New", prompt: "p", when: { text: "daily", tz: "UTC" } });
+      assert.equal(await readFile(join(dir, aside[0]), "utf8"), broken, "the next save did not touch it");
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
