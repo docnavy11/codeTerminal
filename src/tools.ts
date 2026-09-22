@@ -462,7 +462,11 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
           const images: { type: "image"; data: string; mimeType: string }[] = [];
           for (const [i, s] of a.steps.entries()) {
             const t0 = Date.now();
-            const args = { tabId: a.tabId, ...(s.args ?? {}) };
+            // The batch's tab is the one the gate looked at, and it wins over
+            // any tabId inside a step: a step's own tabId used to override it,
+            // so a batch approved on one site read another tab (reproduced:
+            // a bank tab's text through a batch gated on allowed.example).
+            const args = { ...(s.args && typeof s.args === "object" ? s.args as Record<string, unknown> : {}), tabId: at.tabId ?? a.tabId };
             try {
               const r = await READ_STEPS[s.tool](args) as Record<string, unknown> | unknown[] | null;
               let out: unknown = r;

@@ -463,6 +463,24 @@ describe("browser tools", () => {
     assert.match(await call(browserTools(b2, () => undefined), "eval", { code: "x" }), /x/, "no policy: no tab_url call, no ask");
   });
 
+  test("browser_batch: a step's own tabId cannot take the batch to a tab the gate never saw", async () => {
+    const asks: string[] = []; const read: unknown[] = [];
+    const policy = { allowed: (h: string) => h === "allowed.example", evalAllowed: () => false, ask: async (h: string) => { asks.push(h); return "deny" as const; } };
+    const { bridge } = bridged({
+      tab_url: (p) => p.tabId === 2 ? { tabId: 2, url: "https://bank.example/acct" } : { tabId: 1, url: "https://allowed.example/" },
+      find: (p) => { read.push(p.tabId); return { count: 0, matches: [] }; },
+      read_page: (p) => { read.push(p.tabId); return { text: p.tabId === 2 ? "balance 12 345,67 on the bank page" : "an allowed page, long enough" }; },
+    });
+    const srv = browserTools(bridge, () => undefined, undefined, policy);
+    const out = await call(srv, "browser_batch", { tabId: 1, steps: [{ tool: "read_page", args: { tabId: 2 } }, { tool: "find", args: { tabId: 2, text: "x" } }] });
+    assert.doesNotMatch(out, /balance/, "the bank tab's text never comes back");
+    assert.deepEqual(read, [1, 1], "every step ran on the gated tab");
+    assert.deepEqual(asks, []);
+    read.length = 0;
+    await call(srv, "browser_batch", { steps: [{ tool: "read_page", args: { tabId: 2 } }] });
+    assert.deepEqual(read, [1], "no tabId on the batch: the active tab the gate resolved, not the step's");
+  });
+
   test("read_page on a PDF tab: the viewer refuses, the bytes are fetched, the text comes back", async () => {
     const pdf = makePdf([["Invoice 0039", "Amount 12,50"]]);
     const calls: string[] = [];
