@@ -242,7 +242,7 @@ export class Session {
             d.confirmSubmit === false ? undefined : (detail) => this.#askSubmit(detail)) } : {}),
           // The chat id is this session's own, so a watch is always attributed
           // to the conversation that set it.
-          ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer) } : {}),
+          ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer, d.browserAllow === undefined ? undefined : this.#browserPolicy) } : {}),
           ...(d.prompts ? { prompts: promptTools(d.prompts) } : {}),
           ...(d.filesRoot ? { files: fileTools(d.filesRoot, this.#workspace, (e) => this.#emit(e)) } : {}),
         },

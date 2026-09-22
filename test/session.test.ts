@@ -603,6 +603,44 @@ describe("browser release at turn end", () => {
 });
 
 describe("browser site gate through the session", () => {
+  test("eval on a site not allowed to act: one card; 'Allow once' is that call only; a watch is gated too", async () => {
+    const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+    const { BrowserAllowlist } = await import("../src/browser-allow.js");
+    const { BrowserBridge } = await import("../src/browser.js");
+    const { WatchRegistry } = await import("../src/watches.js");
+    const { FakeWs } = await import("./fakes/ws.js");
+    const allow = new BrowserAllowlist(join(await mkdtemp(join(tmpdir(), "ct-gate-")), "allow.json"));
+    const bridge = new BrowserBridge(() => {}, 500);
+    const ext = new FakeWs();
+    const origSend = ext.send.bind(ext);
+    ext.send = (data: string | Buffer) => { origSend(data); const msg = JSON.parse(String(data)); if (!msg.id) return; setImmediate(() => ext.frame({ id: msg.id, ok: true, result: msg.action === "tab_url" ? { tabId: 1, url: "https://bank.example/acct" } : msg.action === "eval" ? { value: 2 } : { ok: true, title: "t", url: "https://bank.example/acct", found: false } })); };
+    bridge.attach(ext as never); ext.frame({ type: "hello", instance: "b" });
+    const sdk = fakeSdk(); const events: ClientEvent[] = [];
+    const s = new Session("/w", (e) => events.push(e), { chatId: "c", bridge, getShell: () => null, watches: new WatchRegistry(), prompts: null, prefer: () => undefined, spawnQuery: sdk.spawnQuery, browserAllow: allow });
+    const done = s.start();
+    type Reg = Record<string, { callback?: Function; handler?: Function }>;
+    const callTool = (reg: Reg, name: string, args: Record<string, unknown>) => (reg[name].callback ?? reg[name].handler)!(args, {}) as Promise<{ content: { text: string }[] }>;
+    const servers = sdk.last.options.mcpServers as Record<string, { instance: { _registeredTools: Reg } }>;
+    const tools = servers.browser.instance._registeredTools;
+    const cards = () => events.filter((e) => e.kind === "approval") as Extract<ClientEvent, { kind: "approval" }>[];
+    let p = callTool(tools, "eval", { tabId: 1, code: "1+1" }); await settle(6);
+    assert.equal(cards().length, 1); assert.equal((cards()[0].input as { action: string }).action, "eval");
+    s.decide(cards()[0].id, "allow"); await p;
+    assert.equal(cards().length, 1, "one card, not a site card and then an eval card");
+    assert.deepEqual(allow.all(), [], "nothing on the standing list");
+    p = callTool(tools, "click", { tabId: 1, ref: "f1" }); await settle(6);
+    assert.equal(cards().length, 2, "'once' did not grant act for the chat: the click asks");
+    s.decide(cards()[1].id, "deny"); await p.catch(() => {});
+    p = callTool(tools, "eval", { tabId: 1, code: "2+2" }); await settle(6);
+    assert.equal(cards().length, 3, "and the next eval asks again");
+    s.decide(cards()[2].id, "deny"); await p.catch(() => {});
+    const w = callTool(servers.watch.instance._registeredTools, "page", { tabId: 1, description: "d", until: "changes", minutes: 5 }); await settle(6);
+    assert.equal(cards().length, 4, "a watch on a site not allowed to read asks");
+    assert.equal((cards()[3].input as { level: string }).level, "read", "at read level, like read_page");
+    s.decide(cards()[3].id, "deny"); await w.catch(() => {});
+    s.close(); await done;
+  });
+
   test("a new site puts a card in front of the user; allow is this chat, always is the standing list; deny fails the tool", async () => {
     const { mkdtemp } = await import("node:fs/promises"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
     const { BrowserAllowlist } = await import("../src/browser-allow.js");

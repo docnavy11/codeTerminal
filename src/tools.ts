@@ -647,9 +647,13 @@ export function browserTools(bridge: BrowserBridge, prefer: () => string | undef
         async (a) => {
           // eval is the one tool that is gated per call even on an allowed
           // site: it is arbitrary code in a logged-in tab.
+          // One card, not two: on a site not yet allowed to act, the site gate
+          // used to ask first and the eval card after it, and the site card's
+          // answer granted act for the whole chat. The eval card now stands for
+          // both, and its answer covers exactly what its buttons say.
           const at = await whereFor(a.tabId), host = at.host;
-          await ensure(at, "eval", a.code);
-          if (policy && !policy.evalAllowed(host)) {
+          if (policy && !(host && policy.allowed(host, "act") && policy.evalAllowed(host))) {
+            if (!host) await ensure(at, "eval", a.code);   // throws: no site to ask about
             const answer = await policy.ask(host, "eval", a.code, "act");
             if (answer !== "allow") throw new Error(`browser.eval on ${host}: the user did not allow it. Do not retry; ask what to do instead.`);
           }
