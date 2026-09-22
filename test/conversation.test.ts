@@ -513,4 +513,29 @@ describe("regressions", () => {
     const snap = snaps.find((f) => f.startsWith(c.id) && f.includes("before-clear"))!;
     assert.ok(note.text.includes(snap), `note names ${snap}: ${note.text}`);
   });
+
+  test("create() reuses only a genuinely empty chat, and builds it fresh", async () => {
+    const { dir } = fresh();              // only for a fresh directory; the Manager below scans it
+    const store = new Store(dir);
+    const cleared = "cccccccc-0000-0000-0000-00000000000a";
+    const watched = "cccccccc-0000-0000-0000-00000000000b";
+    const scheduled = "cccccccc-0000-0000-0000-00000000000c";
+    const empty = "cccccccc-0000-0000-0000-00000000000d";
+    store.write(blank(cleared, { updatedAt: 40, sdkSessionId: "sid-c", events: [{ kind: "ready" }, { kind: "local", text: "Context cleared." }] }));
+    store.write(blank(watched, { updatedAt: 30, events: [{ kind: "local", text: "Watch fired — x: y" }, { kind: "text", text: "it changed" }] }));
+    store.write(blank(scheduled, { updatedAt: 20, scheduleId: "sched-1" }));
+    store.write(blank(empty, { updatedAt: 10, events: [{ kind: "ready" }, { kind: "commands", commands: [] }], titleProvisional: true, scheduleId: undefined }));
+    const m2 = new Manager(join(root, "ws"), dir, join(root, "projects"), {
+      bridge: null, getShell: () => null, watches: null, prompts: null, prefer: () => undefined,
+      spawnQuery: fakeSdk().spawnQuery, titler: async () => null,
+    });
+    const c = m2.create();
+    assert.equal(c.id, empty, "the only unused one");
+    assert.deepEqual(Object.keys(c.record).sort(), ["createdAt", "cwd", "events", "granted", "id", "mode", "project", "sdkSessionId", "title", "updatedAt"].sort());
+    assert.equal(store.read(cleared)!.events.length, 2, "the cleared chat's note survives");
+    assert.equal(store.read(watched)!.events.length, 2, "the watch's events survive");
+    assert.equal(store.read(scheduled)!.scheduleId, "sched-1");
+    const d = m2.create(c);
+    assert.equal(d, c, "'new' on the unused chat is still that chat");
+  });
 });

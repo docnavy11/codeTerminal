@@ -529,14 +529,27 @@ export class Manager {
     // (measured: one 0-turn file per attach to an empty store), and the
     // abandoned ones piled up in the picker. Reuse one instead of minting
     // another, so there is at most one empty chat on disk at a time.
-    const spare = this.#store.list().find((c) => c.turns === 0 && c.title === "New chat" && !this.#chats.has(c.id));
-    const spareRec = spare ? this.#read(spare.id) : null;
+    //
+    // "0 turns, titled New chat" is not the same as unused: a /clear leaves
+    // exactly that, and so does a watch that fired into a cleared chat. Both
+    // were taken — their events deleted with no snapshot, the old scheduleId
+    // kept. The summary cannot tell, so the record is read to check — one
+    // candidate at a time, stopping at the first that is really unused.
+    let spareRec: ChatRecord | null = null;
+    for (const c of this.#store.list()) {
+      if (c.turns !== 0 || c.title !== "New chat" || c.scheduleId || this.#chats.has(c.id)) continue;
+      const r = this.#read(c.id);
+      if (r && unused(r)) { spareRec = r; break; }
+    }
     if (spareRec) {
+      // Built afresh, only the id carried over: spreading the old record kept
+      // whatever else it had (a scheduleId, a stale titleProvisional).
       const rec: ChatRecord = {
-        ...spareRec, createdAt: now, updatedAt: now, sdkSessionId: null, events: [], granted: [],
-        mode: "default", cwd: from?.record.cwd ?? null, project: from?.record.project,
+        id: spareRec.id, title: "New chat", createdAt: now, updatedAt: now,
+        sdkSessionId: null, cwd: from?.record.cwd ?? null, project: from?.record.project,
+        ...(from?.record.model ? { model: from.record.model } : {}),
+        events: [], granted: [], mode: "default",
       };
-      if (from?.record.model) rec.model = from.record.model; else delete rec.model;
       this.#store.write(rec);
       const chat = this.#admit(rec, from?.mode ?? "default");
       this.onListChanged?.();
@@ -600,6 +613,11 @@ export class Manager {
     for (const c of this.#chats.values()) c.close();
     this.#chats.clear();
   }
+}
+
+/** Never used: nothing in it but what a session says about itself, and no schedule owns it. */
+function unused(rec: ChatRecord): boolean {
+  return !rec.scheduleId && rec.events.every((e) => SESSION_KINDS.has(e.kind));
 }
 
 /** Title rule shared by live and on-disk renames. */
