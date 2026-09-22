@@ -252,7 +252,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const lastChatCwd = () => state.lastChat?.cwd ?? WORKSPACE;
 
   const watches = new WatchRegistry();
-  const prompts = new PromptStore(cfg.promptsPath);
+  const prompts = new PromptStore(cfg.promptsPath, { warn });
   const browserAllow = cfg.browserAllowPath ? new BrowserAllowlist(cfg.browserAllowPath, cfg.browserAllowSeed) : null;
 
   const convo = new Manager(
@@ -711,7 +711,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state, browserWatchers, broadcast };
 
   /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
-  const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"));
+  const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"), { warn });
   const notifier = new Notifier({ ...(cfg.notify ?? {}), log, warn });
   /* Where a notification tells you to go. The bind address is right for a
      laptop on the same tailnet, but it is an IP: it reads badly on a phone
