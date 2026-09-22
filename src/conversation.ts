@@ -21,6 +21,15 @@ const GONE = /No conversation found with session ID/;
 const SESSION_KINDS = new Set<ClientEvent["kind"]>(["ready", "commands", "models"]);
 
 /**
+ * Date.now(), but never the same value twice in this process. "Newest chat"
+ * is the highest updatedAt; two chats stamped in the same millisecond (two
+ * clients, a run starting as someone clicks New) tied, and the tie went to
+ * whichever the store happened to list first — the older one.
+ */
+let lastStamp = 0;
+export function stamp(): number { lastStamp = Math.max(Date.now(), lastStamp + 1); return lastStamp; }
+
+/**
  * How many conversations may hold a live `claude` process at once. Each is a
  * real subprocess, so this is a memory and CPU ceiling, not a stylistic one.
  */
@@ -374,7 +383,10 @@ export class LiveChat {
 
   close(): void {
     if (this.#saveTimer) { clearTimeout(this.#saveTimer); this.#saveTimer = null; }
-    this.#save();
+    // A flush, not an update: stamping it made a chat pushed out of the pool
+    // (or closed at shutdown) the "newest", so the page opened it instead of
+    // the chat just made.
+    this.#save(false);
     // Closed before the session is: its close emits into #record, and nothing
     // it says from here on may reach the disk (see #closed).
     this.#closed = true;
@@ -424,14 +436,14 @@ export class LiveChat {
   }
 
   #saveFailed = false;
-  #save(): void {
+  #save(touch = true): void {
     // Also reached from async paths (the titler, a rename) that can finish
     // after the chat was deleted; one write then would resurrect the file.
     if (this.#closed) return;
     this.#rec.sdkSessionId = this.#session?.sdkSessionId ?? this.#rec.sdkSessionId;
     this.#rec.granted = this.#session?.granted ?? this.#rec.granted;
     this.#rec.mode = this.#session?.mode ?? this.#rec.mode;
-    this.#rec.updatedAt = Date.now();
+    if (touch) this.#rec.updatedAt = stamp();
     const ok = this.#store.write(this.#rec);
     // Say so once per outage — a full disk used to lose the transcript silently.
     if (!ok && !this.#saveFailed) {
@@ -553,7 +565,7 @@ export class Manager {
     if (live) { live.touch(); return true; }
     const rec = this.#read(id);
     if (!rec) return false;
-    rec.updatedAt = Date.now();
+    rec.updatedAt = stamp();
     this.#store.write(rec);
     this.onListChanged?.();
     return true;
@@ -567,14 +579,14 @@ export class Manager {
     if (!rec) return false;
     rec.project = target.general ? undefined : target.id;
     rec.cwd = target.path;
-    rec.updatedAt = Date.now();
+    rec.updatedAt = stamp();
     this.#store.write(rec);
     this.onListChanged?.();
     return true;
   }
 
   create(from?: LiveChat): LiveChat {
-    const now = Date.now();
+    const now = stamp();
     // "New" while already on an unused chat is the same chat.
     if (from && from.record.events.every((e) => e.kind !== "user")) return from;
     // Every "new" click wrote a "New chat" record before a word was said

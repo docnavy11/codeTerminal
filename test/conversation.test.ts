@@ -45,6 +45,13 @@ describe("LiveChat: spawning and mode", () => {
     assert.equal(b.record.cwd, a.record.cwd);
   });
 
+  test("chats created in the same millisecond still have an order: the last one made is the newest", () => {
+    const { mgr } = fresh();
+    let last = "";
+    for (let i = 0; i < 50; i++) last = mgr.create().id;
+    assert.equal(mgr.newestId(), last);
+  });
+
   test("a chat admitted from disk starts in default whatever its record says", async () => {
     const { sdk, mgr, dir } = fresh();
     new Store(dir).write({ id: "aaaaaaaa-0000-0000-0000-000000000001", title: "Old", createdAt: 1, updatedAt: 1, sdkSessionId: "sid-old", cwd: null, events: [{ kind: "user", text: "x" } as never], granted: [{ type: "addRules" } as never], mode: "acceptEdits" });
