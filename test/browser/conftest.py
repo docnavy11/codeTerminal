@@ -29,11 +29,14 @@ class Server:
         self.log = open(os.path.join(self.root, "server.log"), "ab")
 
     def start(self, timeout=20):
-        env = dict(os.environ, ROOT=self.root, PORT=str(self.port))
+        env = dict(os.environ, ROOT=self.root, PORT=str(self.port), CT_EXIT_WITH_PARENT="1")
         # node directly, in its own process group: terminating an `npx` wrapper
         # leaves the real server alive and the port taken.
         self.proc = subprocess.Popen([shutil.which("node"), "--import", "tsx", "test/fixtures/fake-server.ts"], cwd=REPO, env=env,
-                                     stdout=subprocess.PIPE, stderr=self.log, start_new_session=True)
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, start_new_session=True)
+        # stdin is never written: it is how the server notices this process is
+        # gone. A run killed by a timeout or an aborted push never reached
+        # stop(), and its servers stayed up for days (six found, 2026-09-22).
         t0 = time.time(); buf = b""
         while time.time() - t0 < timeout:
             if self.proc.poll() is not None: break

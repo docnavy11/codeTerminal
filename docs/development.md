@@ -42,6 +42,18 @@ browser suites when what they cover has changed — and refuses when one fails
 (`--no-verify` overrides). It was added after a commit with a syntax error in
 it reached CI.
 
+A browser failure there is rerun once, alone. On a busy box a Chromium page
+can stop answering for longer than a click's 30 s — three pages in three
+workers at once, 2026-09-22, in a run that took 158 s instead of ~35 — and
+that is not a regression. What passes alone lets the push through, named, with
+the load and memory pressure at the time; what fails again refuses it. Not
+reproduced on demand: 13 runs, idle and with 12 CPU hogs, all passed.
+
+The fixture server a browser test starts exits when the test run does, even a
+run that was killed: it watches a stdin pipe the run holds and never writes
+to. Before that, an idle one outlived its killed parent; nine were found
+running, 9–12 days old.
+
 Which suite a test belongs in is decided by what it needs to launch. Anything
 that starts a browser is out of `npm test`: the server-browser suite lived
 there until 2026-09-15 and failed twice on GitHub's runner, where the image's
