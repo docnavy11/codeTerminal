@@ -1683,3 +1683,54 @@ def test_a_link_to_a_chat_beats_a_collapsed_transcript(page, server):
     wait(page, "() => document.getElementById('left').clientWidth < 40", what="still collapsed on a plain visit")
     page.click("#lshow")
     assert page.errors == []
+
+
+def _stub_clipboard(page):
+    page.evaluate("""() => { window.__copied = []; navigator.clipboard.writeText = async (t) => { window.__copied.push(t); }; }""")
+
+
+def test_a_program_copying_via_osc52_reaches_the_clipboard_only_right_after_a_gesture(page, server):
+    """tmux hands its own selection to the outer terminal as OSC 52. Any
+    program can print that sequence, so it is honoured only just after a click
+    or a key in the pane — never from output arriving on its own."""
+    open_ui(page, server)
+    wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", what="pty open")
+    _stub_clipboard(page)
+    page.click("#term")
+    page.keyboard.type("printf '\\033]52;c;%s\\a' \"$(printf copied-by-osc52 | base64)\"\n")
+    wait(page, "() => window.__copied.includes('copied-by-osc52')", 10, "OSC 52 right after typing reached the clipboard")
+    page.keyboard.type("sleep 3; printf '\\033]52;c;%s\\a' \"$(printf sneaky | base64)\"; echo DONE-$((6*7))\n")
+    wait(page, "() => document.querySelector('#term').innerText.includes('DONE-42')", 15, "the late print ran")
+    assert "sneaky" not in page.evaluate("() => window.__copied")
+    assert page.evaluate("() => TERMPANE && true")
+
+
+def test_a_plain_drag_in_tmux_copies_the_selection(page, server):
+    """With tmux's mouse on, a drag is tmux's own selection; on release tmux
+    copies it and sends it out as OSC 52, which the pane puts on the clipboard."""
+    import subprocess, uuid
+    if subprocess.run(["tmux", "-V"], capture_output=True).returncode != 0:
+        pytest.skip("no tmux on this machine")
+    name = "cttest-c-" + uuid.uuid4().hex[:8]
+    try:
+        open_ui(page, server)
+        page.wait_for_selector('.pane-hd .tab[data-view="sessions"]:not([hidden])', timeout=SHORT)
+        page.click('.pane-hd .tab[data-view="sessions"]')
+        page.fill("#snew", name); page.click("#screate")
+        page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
+        subprocess.run(["tmux", "set", "-t", "=" + name, "mouse", "on"], capture_output=True)
+        page.click("#term"); page.keyboard.type("clear; echo DRAGME-$((6*7))-END\n")
+        wait(page, "() => document.querySelector('#term').innerText.includes('DRAGME-42-END')", what="marker printed")
+        _stub_clipboard(page)
+        box = page.evaluate("""() => {
+          const row = [...document.querySelectorAll('#term .xterm-rows > div')].find((r) => r.textContent.startsWith('DRAGME-42-END'));
+          const r = row.getBoundingClientRect(); const cw = r.width / TERMPANE_COLS();
+          return { x: r.left + 1, y: r.top + r.height / 2, w: cw * 'DRAGME-42-END'.length };
+        }""".replace("TERMPANE_COLS()", "(document.querySelector('#term .xterm-rows > div').textContent.length || 80)"))
+        page.mouse.move(box["x"], box["y"]); page.mouse.down()
+        page.mouse.move(box["x"] + box["w"] / 2, box["y"], steps=5)
+        page.mouse.move(box["x"] + box["w"] - 2, box["y"], steps=5)
+        page.mouse.up()
+        wait(page, "() => window.__copied.some((t) => t.includes('DRAGME-42'))", 10, "tmux's selection reached the clipboard")
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)

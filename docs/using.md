@@ -700,6 +700,16 @@ retries every 3 s and starts a fresh shell — the pane used to stay dead until
 the page was reloaded. At most `MAX_SHELLS` (8) shells are open at once; a
 page opening sockets in a loop gets close code 1013, not a fork bomb.
 
+**Copy out of it.** A selection goes to the clipboard the moment you let go
+of the mouse; Ctrl+Shift+C, Cmd+C or Ctrl+Insert copies it again. In a tmux
+session with `mouse on`, a plain drag is tmux's own selection: tmux copies it
+and hands it to the pane as OSC 52, and the pane puts it on the clipboard —
+this also works from tmux's copy mode, for text long scrolled out of view. To
+select with the browser instead, past tmux, hold Shift while dragging (Option
+on a Mac). OSC 52 is honoured only within two seconds of a click or key in the
+pane, since any program can print it, and a request to *read* the clipboard is
+never answered.
+
 **Paste an image into it.** The CLI running in the pane — Claude Code, say —
 reads files, not clipboards, so a pasted screenshot would otherwise be nothing
 at all: xterm only looks at the text flavour of a paste, and an image carries
