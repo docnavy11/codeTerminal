@@ -61,6 +61,9 @@ export type ServerConfig = {
       "who can be answered by" to "whoever texts your configured Telegram chat",
       which the plain notify targets above do not. */
   telegramControl?: boolean;
+  /** cwd for the standing "Telegram" chat — a CLAUDE.md telling it how to
+      query this server's own schedules/chats/prompts over loopback lives here. */
+  telegramContextDir?: string;
   /** Standing list of sites the browser tools may use without asking; null disables the gate. */
   browserAllowPath: string | null;
   browserAllowSeed: string[];
@@ -115,6 +118,7 @@ export function envConfig(): ServerConfig {
     schedulesPath: state.schedules,
     notify: notifyConfigFromEnv(),
     telegramControl: process.env.CODETERM_TELEGRAM_CONTROL === "1",
+    telegramContextDir: state.telegramContext,
     usagePath: state.usage,
     browserAllowPath: process.env.CODETERM_BROWSER_GATE === "0" ? null : state.browserAllow,
     serverBrowser: { profileDir: state.serverBrowserProfile,
@@ -701,19 +705,20 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
   const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"));
   const notifier = new Notifier({ ...(cfg.notify ?? {}), log, warn });
-  /* Two-way: a reply answers the pending card, or prompts, whichever chat the
-     notification named. Requires both a configured Telegram target and the
-     separate opt-in — sending notifications does not by itself mean replies
-     get to drive the agent. */
-  const telegramListener = cfg.notify?.telegram && cfg.telegramControl
-    ? new TelegramListener({ convo, token: cfg.notify.telegram.token, chatId: cfg.notify.telegram.chatId, log, warn })
-    : null;
-  telegramListener?.start();
   /* Where a notification tells you to go. The bind address is right for a
      laptop on the same tailnet, but it is an IP: it reads badly on a phone
      and it breaks the day the machine gets a new one. CODETERM_PUBLIC_URL
      names the address you would actually type. */
   const publicBase = (cfg.publicUrl ?? `http://${HOST}:${port}`).replace(/\/+$/, "");
+  /* Two-way: a reply answers the pending card, or prompts, whichever chat the
+     notification named. Requires both a configured Telegram target and the
+     separate opt-in — sending notifications does not by itself mean replies
+     get to drive the agent. */
+  const telegramListener = cfg.notify?.telegram && cfg.telegramControl
+    ? new TelegramListener({ convo, notifier, token: cfg.notify.telegram.token, chatId: cfg.notify.telegram.chatId, publicBase,
+                             contextDir: cfg.telegramContextDir ?? join(WORKSPACE, ".telegram-context"), apiBase: `http://127.0.0.1:${PORT}`, log, warn })
+    : null;
+  telegramListener?.start();
   /* A card in a run nobody is watching. The notification is the only thing
      that can reach you, and a link into that chat is the whole answer: a
      client attaching while a card is open is sent it (measured), so opening

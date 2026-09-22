@@ -23,13 +23,21 @@ work. Behind an authenticating reverse proxy on a private network is fine.
 
 **`CODETERM_TELEGRAM_CONTROL=1` is the one deliberate exception to "never by
 a shared secret."** It lets a reply in the configured Telegram chat answer a
-pending card or send a new prompt — i.e. whoever controls that chat can now
-drive the agent, with whatever mode and shell access the target chat's
-session already has, from outside the tailnet/identity model entirely. Its
-"secret" is the bot token plus your phone's own access to that Telegram
-chat; treat a leaked token or a lost, unlocked phone accordingly. Off by
-default, and a separate opt-in from the plain Telegram notify pair, which
-only ever sends, never reads.
+pending card, send a new prompt, or talk to the standing "Telegram" chat it
+creates on first use — i.e. whoever controls that chat can now drive the
+agent, with whatever mode and shell access the target chat's session
+already has, from outside the tailnet/identity model entirely. The standing
+chat itself runs in **Auto** (the CLI's own judgement of what is safe to
+run without asking — the same default a new schedule gets; plain "Ask" left
+it stuck on every ordinary command with nobody watching a browser tab to
+approve one), so something the CLI judges safe can run before you ever see
+a card; anything it is not sure about still raises one, answerable the same
+way. A reply that lands in some other chat by falling back to what was last
+mentioned inherits whatever mode *that* chat is already in, which may be
+more permissive still. Its "secret" is the bot token plus your phone's own
+access to that Telegram chat; treat a leaked token or a lost, unlocked
+phone accordingly. Off by default, and a separate opt-in from the plain
+Telegram notify pair, which only ever sends, never reads.
 
 ## The gates that do exist
 

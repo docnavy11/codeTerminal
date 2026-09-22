@@ -64,6 +64,9 @@ export const STATE_SLOTS = {
   schedules: { env: "CODETERM_SCHEDULES", name: "schedules.json" },
   usage: { env: "CODETERM_USAGE", name: "usage.json" },
   browserAllow: { env: "CODETERM_BROWSER_ALLOW_FILE", name: "browser-allow.json" },
+  /** The standing Telegram chat's cwd — just a CLAUDE.md telling it how to
+      query this server's own state (schedules, chats, prompts) over loopback. */
+  telegramContext: { env: "CODETERM_TELEGRAM_CONTEXT", name: "telegram-context" },
   serverBrowserProfile: { env: "CODETERM_SERVER_BROWSER_PROFILE", name: join("server-browser", "profile") },
 } satisfies Record<string, Slot>;
 

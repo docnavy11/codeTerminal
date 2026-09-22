@@ -274,6 +274,36 @@ describe("the approval gate", () => {
     assert.equal(m.statuses().at(-1), "idle");
   });
 
+  test("a card's notification/status detail names the actual command or file, not just the tool", async () => {
+    const seen: string[] = [];
+    m.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m.q.ask("Bash", { command: "curl -s http://127.0.0.1:8123/schedules" });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0], "asked:Bash: curl -s http://127.0.0.1:8123/schedules");
+
+    seen.length = 0;
+    const m2 = make();
+    m2.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m2.q.ask("Edit", { file_path: "/tmp/notes.txt", old_string: "a", new_string: "b" });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0], "asked:Edit: /tmp/notes.txt");
+
+    seen.length = 0;
+    const m3 = make();
+    m3.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m3.q.ask("WebFetch", { url: "https://x.example" });   // neither field present: falls back to the bare tool name
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0], "asked:WebFetch");
+
+    seen.length = 0;
+    const m4 = make();
+    m4.s.setUnattended({ waitMs: 30, onEvent: (k, d) => seen.push(`${k}:${d}`) });
+    m4.q.ask("Bash", { command: "x".repeat(200) });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(seen[0].length, "asked:Bash: ".length + 120, "one long command does not swallow the rest of the message");
+    assert.match(seen[0], /…$/);
+  });
+
   test("always: the suggestions are granted and remembered for resume", async () => {
     const sugg = [{ type: "addRules", rules: [{ toolName: "Bash" }] }] as never[];
     const { promise } = m.q.ask("Bash", {}, sugg);

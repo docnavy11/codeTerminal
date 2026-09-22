@@ -135,6 +135,22 @@ type Pending = {
   question?: { input: Record<string, unknown>; questions: AskQuestion[] };
 };
 
+/**
+ * What to call a pending card in a notification or status line. The tool
+ * name alone ("Bash") told a scheduled run's Telegram or webhook target
+ * nothing to decide on; this adds the one field a person would actually
+ * look for, the same fields manage.js's own summarise() reads off a
+ * finished tool call's input, capped so one long command does not swallow
+ * the rest of the message.
+ */
+function describeCard(tool: string, input: unknown): string {
+  const i = input as Record<string, unknown> | null | undefined;
+  const detail = i && typeof i.command === "string" ? i.command
+    : i && typeof i.file_path === "string" ? i.file_path : "";
+  if (!detail) return tool;
+  return `${tool}: ${detail.length > 120 ? `${detail.slice(0, 119)}…` : detail}`;
+}
+
 /** "Opus 5.5 with 1M context · Best for…" → "Opus 5.5 with 1M context"; the CLI's own default says so. */
 export function modelLabel(m: { value: string; displayName?: string; description?: string }): string {
   const lead = m.description?.split(" · ")[0]?.trim();
@@ -359,7 +375,7 @@ export class Session {
     const emitCard = (diff: Awaited<ReturnType<typeof previewDiff>>) => {
       if (!this.#pending.has(id)) return;
       this.#emit({ kind: "approval", id, tool, input, canAlways: sugg.length > 0, ...(diff ? { diff } : {}) });
-    this.#autoDeny(id, tool);
+      this.#autoDeny(id, describeCard(tool, input));
       this.#pushStatus();
     };
     if (tool === "Edit" || tool === "Write" || tool === "MultiEdit") {
