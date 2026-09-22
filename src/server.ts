@@ -30,6 +30,7 @@ import { isUnspecified } from "./cidr.js";
 import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
 import { buildSetup } from "./setup.js";
+import { mcpHandler } from "./mcp.js";
 import { toMarkdown, exportFilename } from "./export.js";
 import { BrowserAllowlist, normaliseHost, LEVELS, type Level } from "./browser-allow.js";
 import { readFileSync } from "node:fs";
@@ -764,6 +765,13 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     res.status(r.failed.length && !r.sent.length ? 502 : 200).json(r);
   });
   const scheduleView = (s: ReturnType<ScheduleStore["get"]>) => s && ({ ...s, words: describeCron(s.when.cron), running: scheduler.isRunning(s.id), runs: s.runs.slice(0, 20) });
+  // codeTerminal as an MCP server for other agents (src/mcp.ts). Same guard as
+  // everything else; it can prompt and read chats but never answer their cards.
+  app.all("/mcp", guard, express.json({ limit: "1mb" }), mcpHandler({
+    convo, publicBase, version: pkgVersion,
+    schedules: () => schedules.list().map(scheduleView),
+    ...(SHELL ? { tmux: { list: async () => (await haveTmux()) ? listSessions() : [], capture: (name: string, lines: number) => capture(name, lines) } } : {}),
+  }));
   app.get("/schedules", guard, (_req, res) => { res.json({ schedules: schedules.list().map(scheduleView), prompts: prompts.all().map((p) => ({ id: p.id, title: p.title })), projects: convo.projects().map((p) => ({ id: p.id, name: p.name })) }); });
   app.get("/schedules/preview", guard, (req, res) => {
     try {
