@@ -10,6 +10,9 @@ import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project 
 
 const MAX_EVENTS = 3000;
 
+/** The CLI's words when a resume id names a conversation it does not have. */
+const GONE = /No conversation found with session ID/;
+
 /**
  * Events that describe the session process rather than the conversation: the
  * record keeps only the latest of each, a /clear keeps them, and a chat holding
@@ -73,12 +76,53 @@ export class LiveChat {
     const s = new Session(this.#rec.cwd ?? this.#workspace, this.#record,
       { ...deps, chatId: this.#rec.id, prefer: () => this.#extInstance, ...(this.#budgetUsd !== undefined ? { maxBudgetUsd: this.#budgetUsd } : {}) });
     if (this.#unattended) s.setUnattended(this.#unattended);
+    this.#inFlight = null;
+    this.#resumeGone = false;
     // Pass the mode into start() so the SDK launches with it. Setting it after
     // start (the old `void s.setMode(mode)`) raced the query into existence and
     // left the session running in "default".
     s.start(this.#rec.sdkSessionId ?? undefined, this.#rec.granted, mode, this.#rec.model)
+      .catch((err) => this.#record({ kind: "error", message: String(err) }))
+      // start() settles when the stream ends; only this chat's current session matters.
+      .then(() => { if (s === this.#session && !this.#closed && this.#resumeGone) this.#startOver(); })
+      // Nothing here may become an unhandled rejection: that ends the server.
       .catch((err) => this.#record({ kind: "error", message: String(err) }));
     return s;
+  }
+
+  /**
+   * What was sent to a session that has not said `ready` yet, so it can be sent
+   * again if that session turns out to have nothing to resume. The images are
+   * kept in full here (the record keeps thumbnails) and dropped at `ready`.
+   */
+  #inFlight: { text: string; context?: string; images: { media_type: string; data: string }[]; uuid: string } | null = null;
+  /** The CLI said the conversation it was asked to resume does not exist. */
+  #resumeGone = false;
+
+  #send(text: string, context?: string, images: { media_type: string; data: string }[] = []): string {
+    const uuid = this.#session.send(text, context, images);
+    if (this.#inFlight === null) this.#inFlight = { text, context, images, uuid };
+    return uuid;
+  }
+
+  /**
+   * The SDK session this chat saved no longer exists on the CLI's side. The
+   * CLI answers the first prompt with an error result and exits, and every
+   * rebuild resumed the same id again — reproduced with the fake SDK: four
+   * prompts, four sessions all resuming the gone id, every prompt dropped. Start a fresh conversation instead, say so,
+   * and send the prompt that hit the failure again rather than losing it.
+   */
+  #startOver(): void {
+    const lost = this.#rec.sdkSessionId;
+    const retry = this.#inFlight;
+    this.#rec.sdkSessionId = null;
+    this.#record({ kind: "local", text: `The saved Claude session${lost ? ` (${lost})` : ""} no longer exists, so Claude does not remember this conversation. Started a new session${retry ? " and sent your last message again" : ""}.` });
+    this.#restart();
+    if (!retry) return;
+    const uuid = this.#send(retry.text, retry.context, retry.images);
+    // Rewind names the user message by the uuid the CLI saw; that is the new one now.
+    const ev = this.#rec.events.find((e) => e.kind === "user" && e.uuid === retry.uuid) as { uuid?: string } | undefined;
+    if (ev) ev.uuid = uuid;
   }
 
   get id(): string { return this.#rec.id; }
@@ -153,8 +197,12 @@ export class LiveChat {
       return;
     }
 
-    if (e.kind === "ready") this.#onReady(e);
+    if (e.kind === "ready") { this.#onReady(e); this.#inFlight = null; }
     if (e.kind === "models") this.#onModels(e);
+    // Measured against CLI 2.1.280 with a made-up resume id: an error result
+    // "No conversation found with session ID: <id>", then the stream throws
+    // with the same words. Either one is enough.
+    if ((e.kind === "turn_end" && GONE.test(e.stopped ?? "")) || (e.kind === "error" && GONE.test(e.message))) this.#resumeGone = true;
     if (SESSION_KINDS.has(e.kind)) {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
@@ -201,7 +249,7 @@ export class LiveChat {
       const ctx = await context();
       if (this.#session.dead) this.#restart();
       // The record keeps thumbnails only; the full images are for the model.
-      const uuid = this.#session.send(text, ctx, images);
+      const uuid = this.#send(text, ctx, images);
       this.recordUser(text, ctx, images.map((i) => ({ media_type: i.media_type, thumb: i.thumb })), uuid);
     } finally {
       this.#sending = false;
@@ -291,7 +339,7 @@ export class LiveChat {
     if (this.#session.dead) this.#restart();
     // The detail is page-derived; sending it as context puts it inside the
     // nonce-delimited untrusted block rather than inline in the instruction.
-    this.#session.send(prompt, `watch report: ${detail}`);
+    this.#send(prompt, `watch report: ${detail}`);
     return "woken";
   }
 

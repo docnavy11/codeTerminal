@@ -475,6 +475,36 @@ describe("regressions", () => {
     assert.ok(!mgr.list().some((x) => x.id === c.id), "not listed");
   });
 
+  test("a resume id the CLI no longer has: a fresh session starts and the prompt is sent again", async () => {
+    const { sdk, mgr, dir, client } = fresh();
+    new Store(dir).write(blank(ID, { title: "Old", sdkSessionId: "sid-gone", events: [{ kind: "user", text: "earlier" }] }));
+    const c = mgr.get(ID)!;
+    const a = client(); c.attach(a.emit);
+    await c.prompt("do it", async () => undefined); await settle();
+    const gone = sdk.last;
+    assert.equal(gone.options.resume, "sid-gone");
+    // What CLI 2.1.280 does with an unknown resume id (measured).
+    gone.result({ subtype: "error_during_execution", is_error: true, errors: ["No conversation found with session ID: sid-gone"] });
+    gone.fail(new Error("Claude Code returned an error result: No conversation found with session ID: sid-gone"));
+    await settle(10);
+    assert.equal(sdk.queries.length, 2, "rebuilt once");
+    assert.equal(sdk.last.options.resume, undefined, "as a fresh conversation");
+    assert.equal(sdk.last.received.length, 1, "the prompt was sent again");
+    assert.match(sdk.last.received[0].message.content as string, /do it/);
+    assert.equal(c.record.sdkSessionId, null);
+    const users = c.record.events.filter((e) => e.kind === "user") as { text: string; uuid?: string }[];
+    assert.deepEqual(users.map((u) => u.text), ["earlier", "do it"], "not recorded twice");
+    assert.equal(users[1].uuid, sdk.last.received[0].uuid, "rewind names the message the new session saw");
+    const note = c.record.events.find((e) => e.kind === "local" && /no longer exists/.test(e.text));
+    assert.ok(note, "the user is told, and the note is kept");
+    // The fresh session works and its id is the one kept from now on.
+    sdk.last.init("sid-fresh"); sdk.last.result(); await settle();
+    c.touch();
+    assert.equal(c.record.sdkSessionId, "sid-fresh");
+    await c.prompt("next", async () => undefined); await settle();
+    assert.equal(sdk.queries.length, 2, "no further rebuild");
+  });
+
   test("/clear-cache is not /clear, and a /clear with no reset does not arm a later one", async () => {
     const { sdk, mgr } = fresh();
     const c = mgr.create();
