@@ -36,10 +36,13 @@ export class LiveChat {
   #onChange: () => void;
 
   #onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void;
+  #onModels: (e: Extract<ClientEvent, { kind: "models" }>) => void;
   constructor(rec: ChatRecord, store: Store, workspace: string,
               deps: Omit<SessionDeps, "chatId">, mode: PermissionMode, onChange: () => void,
-              onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void = () => {}) {
+              onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void = () => {},
+              onModels: (e: Extract<ClientEvent, { kind: "models" }>) => void = () => {}) {
     this.#onReady = onReady;
+    this.#onModels = onModels;
     this.#rec = rec;
     this.#store = store;
     this.#workspace = workspace;
@@ -129,7 +132,8 @@ export class LiveChat {
     }
 
     if (e.kind === "ready") this.#onReady(e);
-    if (e.kind === "ready" || e.kind === "commands") {
+    if (e.kind === "models") this.#onModels(e);
+    if (e.kind === "ready" || e.kind === "commands" || e.kind === "models") {
       this.#rec.events = this.#rec.events.filter((x) => x.kind !== e.kind);
     }
     this.#rec.events.push(e);
@@ -366,6 +370,13 @@ export class Manager {
   readySeen = false;
   /** From the most recent session start: each in-process MCP server and its status; null before any. */
   mcpServers: { name: string; status: string }[] | null = null;
+  /**
+   * The CLI's model list from the most recent session start. It is the same
+   * for every chat, but it used to reach a client only as an event in the
+   * chat's own history, so a chat whose history no longer held one (trimmed,
+   * or never started this run) offered nothing but "default".
+   */
+  models: Extract<ClientEvent, { kind: "models" }> | null = null;
   onChatRemoved?: (id: string) => void;
 
   constructor(workspace: string, dir: string, projectsRoot: string,
@@ -516,7 +527,8 @@ export class Manager {
   #admit(rec: ChatRecord, mode: PermissionMode = "default"): LiveChat {
     this.#evictIfFull();
     const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, mode,
-      () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers?.filter((s) => OUR_SERVERS.has(s.name)) ?? null; });
+      () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers?.filter((s) => OUR_SERVERS.has(s.name)) ?? null; },
+      (models) => { this.models = models; });
     this.#chats.set(rec.id, chat);
     return chat;
   }

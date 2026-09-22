@@ -87,6 +87,20 @@ describe("attachAgent: connecting", () => {
     assert.equal(w.ctx.clients.size, 1);
   });
 
+  test("the model list comes from the last session start, not the chat's own history", async () => {
+    const w = world();
+    w.agent(); await settle();
+    assert.deepEqual(w.convo.models, { kind: "models", models: [] });
+    // A chat whose history holds no (or a stale) list still gets the current one.
+    w.convo.models = { kind: "models", models: [{ value: "opus", label: "Opus" }] };
+    const ws = w.agent();
+    assert.deepEqual(ws.last("models"), w.convo.models);
+    const other = w.convo.create(); await settle();
+    w.convo.models = { kind: "models", models: [{ value: "sonnet", label: "Sonnet" }] };
+    ws.clear(); ws.frame({ type: "open", id: other.id });
+    assert.deepEqual(ws.last("models"), w.convo.models);
+  });
+
   test("observe mode skips the replay", () => {
     const w = world();
     const c = w.convo.create(); c.recordUser("earlier");

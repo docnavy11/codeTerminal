@@ -60,6 +60,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
     next.attach(send, true);
     listFor();
     send({ kind: "mode", mode: next.mode });
+    if (convo.models) send(convo.models);
     send({ kind: "model", model: next.model });
     sendProject(next);
   };
@@ -71,6 +72,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
   listFor();
   sendBrowsers();
   send({ kind: "mode", mode: chat.mode });
+  if (convo.models) send(convo.models);
   send({ kind: "model", model: chat.model });
   sendProject(chat);
 
