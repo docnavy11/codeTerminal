@@ -149,6 +149,27 @@ describe("/mcp", () => {
     }
   });
 
+  test("skills: install, list, read, update, remove — yours and a project's", async () => {
+    const md = "---\nname: greet\ndescription: Say hello. Use when greeting.\n---\n\nSay hello.\n";
+    const r = (await call("install_skill", { name: "greet", skillMd: md, files: [{ path: "hello.sh", content: "echo hi", executable: true }] })).body as { where: string; dir: string };
+    assert.equal(r.where, "user"); assert.match(r.dir, /home\/\.claude\/skills\/greet$/);
+    const list = (await call("list_skills")).body as { skills: { name: string }[] };
+    assert.deepEqual(list.skills.map((x) => x.name), ["greet"]);
+    const read = (await call("read_skill", { name: "greet" })).body as { skillMd: string; files: { path: string }[] };
+    assert.equal(read.skillMd, md); assert.deepEqual(read.files.map((f) => f.path), ["SKILL.md", "hello.sh"]);
+    assert.match((await call("install_skill", { name: "greet", skillMd: md })).raw, /already exists/);
+    const up = (await call("install_skill", { name: "greet", skillMd: md.replace("Say hello.\n", "Say hi.\n"), overwrite: true })).body as { replaced: string };
+    assert.match(up.replaced, /skills-archive\/greet-/);
+    const proj = (await call("install_skill", { name: "greet", skillMd: md, project: "p1" })).body as { where: string; dir: string };
+    assert.equal(proj.where, "project p1"); assert.match(proj.dir, /projects\/p1\/\.claude\/skills\/greet$/);
+    const gone = (await call("remove_skill", { name: "greet" })).body as { archivedTo: string };
+    assert.match(gone.archivedTo, /skills-archive\/greet-/);
+    assert.deepEqual(((await call("list_skills")).body as { skills: unknown[] }).skills, []);
+    assert.equal(((await call("list_skills", { project: "p1" })).body as { skills: unknown[] }).skills.length, 1);
+    assert.equal((await call("install_skill", { name: "../x", skillMd: md })).isError, true);
+    assert.equal((await call("list_skills", { project: "nope" })).isError, true);
+  });
+
   test("notify is not offered when the server has no notification target", async () => {
     assert.ok(!(await client.listTools()).tools.some((t) => t.name === "notify"));
   });

@@ -770,7 +770,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   app.all("/mcp", guard, express.json({ limit: "1mb" }), mcpHandler({
     convo, publicBase, version: pkgVersion,
     schedules: () => schedules.list().map(scheduleView),
-    prompts: () => prompts.all(), watches, filesRoot: FILES_ROOT,
+    prompts: () => prompts.all(), watches, filesRoot: FILES_ROOT, claudeHome: join(cfg.home, ".claude"),
     ...(notifier.targets.length ? { notify: (n: { title: string; message: string; url?: string }) => notifier.send(n) } : {}),
     health: () => ({
       version: pkgVersion, node: process.version, auth: auth.mode, shell: SHELL,
