@@ -389,6 +389,21 @@ function waitForTurn(chat: LiveChat, timeoutMs: number): { done: Promise<TurnRes
   return { done, cancel: () => { clearTimeout(timer); chat.detach(watch); } };
 }
 
+/**
+ * A tools/call may leave out `arguments` when it has none to give. The SDK
+ * then validates `undefined` against the tool's schema and refuses the call,
+ * even when every field is optional ("expected object, received undefined",
+ * met live on list_skills). No arguments means an empty object.
+ */
+export function withArguments(body: unknown): unknown {
+  const fix = (m: unknown) => {
+    const msg = m as { method?: string; params?: { arguments?: unknown } } | null;
+    if (msg && msg.method === "tools/call" && msg.params && msg.params.arguments === undefined) msg.params.arguments = {};
+    return m;
+  };
+  return Array.isArray(body) ? body.map(fix) : fix(body);
+}
+
 /** The Express handler: one stateless server + transport per request. */
 export function mcpHandler(d: McpDeps) {
   return async (req: Request, res: Response): Promise<void> => {
@@ -397,7 +412,7 @@ export function mcpHandler(d: McpDeps) {
     res.on("close", () => { void transport.close(); void server.close(); });
     try {
       await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await transport.handleRequest(req, res, withArguments(req.body));
     } catch (e) {
       if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: e instanceof Error ? e.message : String(e) }, id: null });
     }

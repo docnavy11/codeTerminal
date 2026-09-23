@@ -66,6 +66,14 @@ describe("/mcp", () => {
     gate.abort(); await gate.promise.catch(() => {});
   });
 
+  test("a call with no arguments at all works for a tool whose fields are all optional", async () => {
+    // Some clients leave `arguments` out; the SDK refused that as "expected object, received undefined".
+    for (const name of ["list_chats", "list_skills", "spend", "list_files", "health"]) {
+      const r = await client.callTool({ name }) as ToolText;
+      assert.notEqual(r.isError, true, `${name}: ${r.content[0]?.text}`);
+    }
+  });
+
   test("wait:false returns at once; a busy chat is refused; unknown ids are errors", async () => {
     const before = s.sdk.queries.length;
     const r = (await call("send_prompt", { text: "long job", wait: false })).body as { status: string; chatId: string };
