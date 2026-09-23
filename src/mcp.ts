@@ -25,6 +25,8 @@ import { toMarkdown } from "./export.js";
 import * as files from "./files.js";
 import { fill } from "./prompts.js";
 import type { Project } from "./projects.js";
+import { listSkills, readSkill, installSkill, removeSkill, MAX_FILES } from "./skills.js";
+import { join } from "node:path";
 
 export type McpDeps = {
   convo: Manager;
@@ -42,6 +44,8 @@ export type McpDeps = {
   filesRoot?: string;
   /** Health: version, browsers, auth mode and the like — what /setup would say. */
   health?: () => Record<string, unknown>;
+  /** ~/.claude: skills live in its skills/, and are archived to skills-archive/. */
+  claudeHome?: string;
   /** The server's notifier (Telegram / webhook), when any target is configured. */
   notify?: (n: { title: string; message: string; url?: string }) => Promise<{ sent: string[]; failed: { target: string; error: string }[] }>;
 };
@@ -250,6 +254,56 @@ export function buildMcpServer(d: McpDeps): McpServer {
     }, async () => text(health()));
   }
 
+  if (d.claudeHome) {
+    const home = d.claudeHome;
+    /** Where a skill lives: every chat's (~/.claude/skills), or one project's. */
+    const place = (project?: string): { root: string; archive: string; where: string } => {
+      if (!project) return { root: join(home, "skills"), archive: join(home, "skills-archive"), where: "user" };
+      const all = d.convo.projects();
+      const p = all.find((x) => x.id === project) ?? all.find((x) => x.name.toLowerCase() === project.toLowerCase());
+      if (!p || p.general) throw new Error(`No project ${project}. list_projects shows what there is.`);
+      return { root: join(p.path, ".claude", "skills"), archive: join(p.path, ".claude", "skills-archive"), where: `project ${p.name}` };
+    };
+    const guarded = async (fn: () => Promise<unknown>) => { try { return text(await fn()); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); } };
+    const projectArg = z.string().max(200).optional().describe("A project id or name for that project's skills; omit for your own (~/.claude/skills), which every chat loads");
+
+    server.registerTool("list_skills", {
+      description: "The Claude Code skills installed on this machine: yours (every chat loads them) and, with project, one project's. Name, description, directory.",
+      inputSchema: { project: projectArg },
+      annotations: { readOnlyHint: true },
+    }, async ({ project }) => guarded(async () => { const p = place(project); return { where: p.where, root: p.root, skills: await listSkills(p.root) }; }));
+
+    server.registerTool("read_skill", {
+      description: "A skill's SKILL.md and the list of its other files.",
+      inputSchema: { name: z.string().max(64), project: projectArg },
+      annotations: { readOnlyHint: true },
+    }, async ({ name, project }) => guarded(async () => readSkill(place(project).root, name)));
+
+    server.registerTool("install_skill", {
+      description:
+        "Install a skill, or update one with overwrite (the old version is archived, not deleted). SKILL.md needs frontmatter with name and description. " +
+        `Up to ${MAX_FILES} more files (scripts, references) as relative paths. New chats pick it up; a chat already running keeps what it started with.`,
+      inputSchema: {
+        name: z.string().max(64).describe("Directory name: lower-case letters, digits, . _ -"),
+        skillMd: z.string().min(1),
+        files: z.array(z.object({ path: z.string().max(300), content: z.string(), executable: z.boolean().optional() })).max(MAX_FILES).optional(),
+        overwrite: z.boolean().optional().describe("Replace an existing skill of that name"),
+        project: projectArg,
+      },
+    }, async ({ name, skillMd, files, overwrite, project }) => guarded(async () => {
+      const p = place(project);
+      return { where: p.where, ...(await installSkill(p.root, p.archive, { name, skillMd, files, overwrite })) };
+    }));
+
+    server.registerTool("remove_skill", {
+      description: "Remove a skill. It is moved to skills-archive/ beside the skills directory, not deleted, so it can be put back with one mv.",
+      inputSchema: { name: z.string().max(64), project: projectArg },
+    }, async ({ name, project }) => guarded(async () => {
+      const p = place(project);
+      return { where: p.where, removed: name, archivedTo: await removeSkill(p.root, p.archive, name) };
+    }));
+  }
+
   if (d.notify) {
     const notify = d.notify;
     server.registerTool("notify", {
@@ -335,6 +389,21 @@ function waitForTurn(chat: LiveChat, timeoutMs: number): { done: Promise<TurnRes
   return { done, cancel: () => { clearTimeout(timer); chat.detach(watch); } };
 }
 
+/**
+ * A tools/call may leave out `arguments` when it has none to give. The SDK
+ * then validates `undefined` against the tool's schema and refuses the call,
+ * even when every field is optional ("expected object, received undefined",
+ * met live on list_skills). No arguments means an empty object.
+ */
+export function withArguments(body: unknown): unknown {
+  const fix = (m: unknown) => {
+    const msg = m as { method?: string; params?: { arguments?: unknown } } | null;
+    if (msg && msg.method === "tools/call" && msg.params && msg.params.arguments === undefined) msg.params.arguments = {};
+    return m;
+  };
+  return Array.isArray(body) ? body.map(fix) : fix(body);
+}
+
 /** The Express handler: one stateless server + transport per request. */
 export function mcpHandler(d: McpDeps) {
   return async (req: Request, res: Response): Promise<void> => {
@@ -343,7 +412,7 @@ export function mcpHandler(d: McpDeps) {
     res.on("close", () => { void transport.close(); void server.close(); });
     try {
       await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await transport.handleRequest(req, res, withArguments(req.body));
     } catch (e) {
       if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: e instanceof Error ? e.message : String(e) }, id: null });
     }

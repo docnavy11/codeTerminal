@@ -50,6 +50,8 @@ They constrain *Claude*, not an intruder:
 - Per-turn caps on tool calls, screenshots and cost.
 - `/mcp` lets another agent prompt and read chats, but never answer their
   cards: what a prompt from there leads to stops for you like any other.
+  Its skill tools are the exception, by choice: they write the skills every
+  chat loads, with no card (archived on update and removal, never deleted).
 
 See [Running it for real → Authentication](docs/running.md#authentication) and
 [The browser](docs/browser-tools.md) for the full model, and

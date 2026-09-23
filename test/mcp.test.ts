@@ -66,6 +66,14 @@ describe("/mcp", () => {
     gate.abort(); await gate.promise.catch(() => {});
   });
 
+  test("a call with no arguments at all works for a tool whose fields are all optional", async () => {
+    // Some clients leave `arguments` out; the SDK refused that as "expected object, received undefined".
+    for (const name of ["list_chats", "list_skills", "spend", "list_files", "health"]) {
+      const r = await client.callTool({ name }) as ToolText;
+      assert.notEqual(r.isError, true, `${name}: ${r.content[0]?.text}`);
+    }
+  });
+
   test("wait:false returns at once; a busy chat is refused; unknown ids are errors", async () => {
     const before = s.sdk.queries.length;
     const r = (await call("send_prompt", { text: "long job", wait: false })).body as { status: string; chatId: string };
@@ -147,6 +155,27 @@ describe("/mcp", () => {
       const e = await call("send_prompt", args);
       assert.equal(e.isError, true, JSON.stringify(args)); assert.match(e.raw, re);
     }
+  });
+
+  test("skills: install, list, read, update, remove — yours and a project's", async () => {
+    const md = "---\nname: greet\ndescription: Say hello. Use when greeting.\n---\n\nSay hello.\n";
+    const r = (await call("install_skill", { name: "greet", skillMd: md, files: [{ path: "hello.sh", content: "echo hi", executable: true }] })).body as { where: string; dir: string };
+    assert.equal(r.where, "user"); assert.match(r.dir, /home\/\.claude\/skills\/greet$/);
+    const list = (await call("list_skills")).body as { skills: { name: string }[] };
+    assert.deepEqual(list.skills.map((x) => x.name), ["greet"]);
+    const read = (await call("read_skill", { name: "greet" })).body as { skillMd: string; files: { path: string }[] };
+    assert.equal(read.skillMd, md); assert.deepEqual(read.files.map((f) => f.path), ["SKILL.md", "hello.sh"]);
+    assert.match((await call("install_skill", { name: "greet", skillMd: md })).raw, /already exists/);
+    const up = (await call("install_skill", { name: "greet", skillMd: md.replace("Say hello.\n", "Say hi.\n"), overwrite: true })).body as { replaced: string };
+    assert.match(up.replaced, /skills-archive\/greet-/);
+    const proj = (await call("install_skill", { name: "greet", skillMd: md, project: "p1" })).body as { where: string; dir: string };
+    assert.equal(proj.where, "project p1"); assert.match(proj.dir, /projects\/p1\/\.claude\/skills\/greet$/);
+    const gone = (await call("remove_skill", { name: "greet" })).body as { archivedTo: string };
+    assert.match(gone.archivedTo, /skills-archive\/greet-/);
+    assert.deepEqual(((await call("list_skills")).body as { skills: unknown[] }).skills, []);
+    assert.equal(((await call("list_skills", { project: "p1" })).body as { skills: unknown[] }).skills.length, 1);
+    assert.equal((await call("install_skill", { name: "../x", skillMd: md })).isError, true);
+    assert.equal((await call("list_skills", { project: "nope" })).isError, true);
   });
 
   test("notify is not offered when the server has no notification target", async () => {

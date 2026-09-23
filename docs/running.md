@@ -262,8 +262,19 @@ chats here:
 | `spend` | cost per chat and in total — per chat only: turns carry no timestamps |
 | `list_files`, `read_file` | the file browser's root, with its denylist (keys, credentials, `.env`) |
 | `health` | version, auth mode, browsers connected, whether a session has come up |
+| `list_skills`, `read_skill` | the Claude Code skills in `~/.claude/skills` (or a project's `.claude/skills`) |
+| `install_skill`, `remove_skill` | install or update a skill (SKILL.md plus files), or remove one; see below |
 
-Everything below `notify` in that list only reads.
+Of the rest, only `install_skill` and `remove_skill` write.
+
+The skill tools have **no approval gate**, by the owner's choice (one user,
+tailnet only). That is a real grant: a skill is instructions every new chat
+loads — the Auto-mode Telegram chat and scheduled runs included — so whatever
+can call `/mcp` can change what all of them do from then on. Nothing is
+deleted: an update moves the old version to `skills-archive/` beside the
+skills directory first, and a removal is the same move, so either is undone
+with one `mv`. New chats pick a change up; a chat already running keeps what
+it started with.
 
 It sits behind the same check as every other route — the tailnet owner,
 loopback, or a trusted CIDR; never a page on another origin — so an MCP
