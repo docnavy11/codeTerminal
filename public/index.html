@@ -476,6 +476,8 @@ globalThis.PLATFORM = {
      has the extension connected — usually the one this tab is in. */
   async instanceId() { return null; },
   openUrl(url) { location.href = url; },
+  /* A page (unlike the side panel) can start a download with an <a download> click. */
+  async saveUrl(url, filename) { const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); },
   /* Per tab: sessionStorage, so two tabs keep two chats and a reload keeps this one. */
   async recallChat() { try { const q = new URLSearchParams(location.search).get("chat"); if (q) { history.replaceState(null, "", location.pathname); return q; } return sessionStorage.getItem("ct.chat"); } catch { return null; } },
   async rememberChat(id) { try { sessionStorage.setItem("ct.chat", id); } catch {} },

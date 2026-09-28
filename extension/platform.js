@@ -33,6 +33,10 @@ globalThis.PLATFORM = {
 
   openUrl(url) { chrome.tabs.create({ url }); },
 
+  /* Save a (blob) URL as a file. The side panel cannot start a download with
+     an <a download> click; chrome.downloads can. */
+  async saveUrl(url, filename) { await chrome.downloads.download({ url, filename }); },
+
   /* The chat this window's panel is on, keyed by window id: two windows keep
      two chats. Session storage — window ids do not outlive the browser. */
   async recallChat() {
