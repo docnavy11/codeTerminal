@@ -402,7 +402,10 @@ function fileCard(m) {
   body.append(name, meta);
   const row = document.createElement("div"); row.className = "row";
   const dl = document.createElement("button"); dl.className = "allow"; dl.textContent = "Download";
-  dl.onclick = (e) => { e.stopPropagation(); download(m.path, m.name); };
+  dl.onclick = (e) => {
+    e.stopPropagation();
+    download(m.path, m.name).catch((err) => { dl.textContent = "Download failed"; dl.title = err.message; });
+  };
   const show = document.createElement("button"); show.textContent = "Show in files";
   show.onclick = (e) => { e.stopPropagation(); showInFiles(m.path); };
   row.append(dl, show);
@@ -433,7 +436,7 @@ async function fileChip(row, abs) {
   const rel = await cwdRelOf(abs);
   if (rel === null) return;
   const chip = document.createElement("button"); chip.className = "dlchip"; chip.textContent = "⬇"; chip.title = `Download ${rel}`;
-  chip.onclick = (e) => { e.stopPropagation(); download(rel, rel.split("/").pop()); };
+  chip.onclick = (e) => { e.stopPropagation(); download(rel, rel.split("/").pop()).catch((err) => { chip.title = `Download failed: ${err.message}`; }); };
   row.querySelector(".tl")?.append(" ", chip);
 }
 async function cwdRelOf(p) {
@@ -1402,10 +1405,9 @@ function renderSelection() {
 const sameOrigin = () => PLATFORM.name !== "extension";
 function saveBlob(blob, name) {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  // Through PLATFORM: an <a download> click inside a side panel does nothing,
+  // so the extension hands the blob to chrome.downloads instead.
+  return PLATFORM.saveUrl(url, name).finally(() => setTimeout(() => URL.revokeObjectURL(url), 60000));
 }
 /** POST into a hidden iframe: the attachment response becomes a download, the page stays put. */
 function formDownload(action, fields) {
@@ -1466,7 +1468,7 @@ function rowFor(e) {
   if (e.kind === "file") {
     const dl = document.createElement("span");
     dl.className = "dl"; dl.textContent = "↓"; dl.title = "Download";
-    dl.onclick = (ev) => { ev.stopPropagation(); download(full, e.name); };
+    dl.onclick = (ev) => { ev.stopPropagation(); download(full, e.name).catch((err) => fnote(`download: ${err.message}`)); };
     row.append(dl);
   }
   row.onclick = () => (e.kind === "dir" ? browse(full) : view(full, e));
@@ -1482,8 +1484,8 @@ async function download(path, name) {
     return;
   }
   const r = await fetch(url);
-  if (!r.ok) return;
-  saveBlob(await r.blob(), name);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  await saveBlob(await r.blob(), name);
 }
 
 async function view(path, entry) {
@@ -1494,7 +1496,7 @@ async function view(path, entry) {
   const back = document.createElement("button");
   back.textContent = "← back"; back.onclick = () => browse(cwdPath);
   const dl = document.createElement("button");
-  dl.textContent = "Download"; dl.onclick = () => download(path, entry.name);
+  dl.textContent = "Download"; dl.onclick = () => download(path, entry.name).catch((err) => fnote(`download: ${err.message}`));
   const op = document.createElement("button"); op.textContent = "Open in tab"; op.hidden = !viewableInTab(entry.name); op.onclick = () => openInTab(path);
   hd.append(back, dl, op, Object.assign(document.createElement("span"),
     { textContent: `${entry.name} · ${fmtSize(entry.size)}` }));
