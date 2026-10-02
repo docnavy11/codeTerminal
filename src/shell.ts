@@ -1,5 +1,6 @@
 import { spawn, type IPty } from "node-pty";
 import { existsSync } from "node:fs";
+import { tmuxStart } from "./tmux.js";
 
 /**
  * One PTY per WebSocket. This is a real shell with no approval gate — the gate
@@ -51,18 +52,26 @@ export class Shell {
     const cols_ = clamp(cols, 20, 500), rows_ = clamp(rows, 5, 200);
     this.#session = session ?? null;
 
-    const [cmd, args] = session
+    const env = shellEnv();
+    let cmd: string, args: string[];
+    if (session) {
       // -A: attach if it exists, create if not. The size is passed so a fresh
-      // session is born at this client's size rather than 80x24.
-      ? ["tmux", ["new-session", "-A", "-s", session, "-x", String(cols_), "-y", String(rows_), "-c", cwd]] as const
-      : [shell, ["-l"]] as const;
+      // session is born at this client's size rather than 80x24. Started via
+      // tmuxStart so the server survives a restart of this service.
+      const t = tmuxStart(["new-session", "-A", "-s", session, "-x", String(cols_), "-y", String(rows_), "-c", cwd], env);
+      cmd = t.cmd; args = t.args;
+      // The pty gets the caller's env as before; only systemd-run needs the runtime dir.
+      env.XDG_RUNTIME_DIR = t.env.XDG_RUNTIME_DIR ?? env.XDG_RUNTIME_DIR;
+    } else {
+      cmd = shell; args = ["-l"];
+    }
 
-    this.#pty = spawn(cmd, [...args], {
+    this.#pty = spawn(cmd, args, {
       name: "xterm-256color",
       cwd,
       cols: cols_,
       rows: rows_,
-      env: shellEnv(),
+      env: env as { [key: string]: string },
     });
 
     this.#pty.onData((chunk) => {

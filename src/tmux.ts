@@ -15,6 +15,7 @@
  * Nothing here is namespaced, on purpose.
  */
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -36,6 +37,29 @@ export type TmuxSession = {
 /** Fields in the order the format string asks for them. */
 const FORMAT = ["#{session_name}", "#{pane_current_path}", "#{session_windows}", "#{session_attached}",
                 "#{session_created}", "#{session_activity}", "#{pane_current_command}"].join("\t");
+
+/**
+ * How to run a tmux command that may start the tmux server (`new-session`).
+ *
+ * A server started from inside code-terminal.service lives in that unit's
+ * cgroup, and `systemctl restart` kills the whole cgroup: every session died
+ * with every restart (seen 2026-10-02 06:35). Under a transient user scope the
+ * server sits in the user manager's cgroup instead and outlives the unit. The
+ * system service has no user-bus variables, so XDG_RUNTIME_DIR is supplied;
+ * without systemd-run, the user bus or a uid, it is plain tmux as before.
+ * Wrapping a command whose server already runs is harmless: only the client
+ * lands in the scope.
+ */
+export function tmuxStart(args: string[], env: NodeJS.ProcessEnv = process.env): { cmd: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const uid = process.getuid?.();
+  const runtime = uid === undefined ? undefined : `/run/user/${uid}`;
+  if (!runtime || !existsSync(`${runtime}/bus`) || !existsSync("/usr/bin/systemd-run")) return { cmd: "tmux", args, env };
+  return {
+    cmd: "/usr/bin/systemd-run",
+    args: ["--user", "--scope", "--quiet", "tmux", ...args],
+    env: { ...env, XDG_RUNTIME_DIR: env.XDG_RUNTIME_DIR || runtime },
+  };
+}
 
 /** tmux is optional: the tab is hidden when it is not installed. */
 export async function tmuxAvailable(): Promise<boolean> {
@@ -67,7 +91,8 @@ export function validName(name: string): boolean {
 export async function createSession(name: string, cwd: string): Promise<void> {
   if (!validName(name)) throw new Error("a session name is letters, digits, dot, dash or underscore (1–64)");
   // Detached: the client attaches over its own socket a moment later.
-  await run("tmux", ["new-session", "-d", "-s", name, "-c", cwd], { timeout: 5000 });
+  const t = tmuxStart(["new-session", "-d", "-s", name, "-c", cwd]);
+  await run(t.cmd, t.args, { timeout: 5000, env: t.env });
 }
 
 /* A bare `-t name` is a prefix match when no session has that exact name:
