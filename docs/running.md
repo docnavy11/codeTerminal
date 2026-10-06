@@ -294,7 +294,7 @@ has no cards, and a prompt sent to it runs whatever it leads to. Chats
 ## Limits
 
 Three ceilings, all in `.env`, all chosen as "a legitimate turn should never
-get here" rather than measured: **`CODETERM_MAX_TOOL_CALLS`** (100) interrupts
+get here" rather than measured: **`CODETERM_MAX_TOOL_CALLS`** (400) interrupts
 a turn that keeps calling tools and says so in the transcript;
 **`CODETERM_MAX_SCREENSHOTS`** (15) makes the screenshot tool refuse past that
 many in one turn and tell the model to report what it has; **`CODETERM_MAX_BUDGET_USD`**

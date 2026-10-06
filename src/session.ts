@@ -37,7 +37,7 @@ export const ALLOW_BYPASS = process.env.CODETERM_ALLOW_BYPASS === "1";
  */
 const num = (v: string | undefined, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
 /** Tool calls in one turn before the session is interrupted. */
-export const MAX_TOOL_CALLS = num(process.env.CODETERM_MAX_TOOL_CALLS, 100);
+export const MAX_TOOL_CALLS = num(process.env.CODETERM_MAX_TOOL_CALLS, 400);
 /** Screenshots in one turn before the tool refuses and asks the model to report. */
 export const MAX_SCREENSHOTS = num(process.env.CODETERM_MAX_SCREENSHOTS, 15);
 /** The in-process MCP servers this process registers; the tool-server check alarms only about these. */

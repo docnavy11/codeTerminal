@@ -30,7 +30,9 @@ import { isUnspecified } from "./cidr.js";
 import { attachAgent, attachShell, type AttachContext } from "./attach.js";
 import { ALLOW_BYPASS, type SessionDeps } from "./session.js";
 import { buildSetup } from "./setup.js";
-import { mcpHandler } from "./mcp.js";
+import { mcpHandler, serveMcp } from "./mcp.js";
+import { RemoteGate } from "./remote-gate.js";
+import { browserTools } from "./tools.js";
 import { toMarkdown, exportFilename } from "./export.js";
 import { BrowserAllowlist, normaliseHost, LEVELS, type Level } from "./browser-allow.js";
 import { readFileSync } from "node:fs";
@@ -709,7 +711,11 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
 
   const browserWatchers = new Set<() => void>();
   const broadcast = new Set<(e: ClientEvent) => void>();
-  const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state, browserWatchers, broadcast };
+  /* Browser tools for Claude Code sessions outside a chat (tmux), at /mcp/browser.
+     Their site and submit cards go to every side panel; see remote-gate.ts. */
+  const remoteGate = new RemoteGate(browserAllow, (e) => { for (const send of broadcast) send(e); });
+  remoteGate.onAsk = (what) => log(`[mcp/browser] asking: ${what}`);
+  const ctx: AttachContext = { convo, bridge, filesRoot: FILES_ROOT, workspace: WORKSPACE, clients, state, browserWatchers, broadcast, remoteGate };
 
   /* Scheduled prompts: the store, the runner (a chat per run), the ticking scheduler. */
   const schedules = new ScheduleStore(cfg.schedulesPath ?? join(dirname(cfg.promptsPath), "schedules.json"), { warn });
@@ -781,6 +787,9 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     }),
     ...(SHELL ? { tmux: { list: async () => (await haveTmux()) ? listSessions() : [], capture: (name: string, lines: number) => capture(name, lines) } } : {}),
   }));
+  app.all("/mcp/browser", guard, express.json({ limit: "1mb" }), serveMcp(() =>
+    browserTools(bridge, () => undefined, undefined, remoteGate.policy(), () => WORKSPACE, FILES_ROOT,
+      cfg.confirmSubmit === false ? undefined : remoteGate.confirmSubmit).instance));
   app.get("/schedules", guard, (_req, res) => { res.json({ schedules: schedules.list().map(scheduleView), prompts: prompts.all().map((p) => ({ id: p.id, title: p.title })), projects: convo.projects().map((p) => ({ id: p.id, name: p.name })) }); });
   app.get("/schedules/preview", guard, (req, res) => {
     try {

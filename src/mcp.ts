@@ -11,8 +11,9 @@
  * itself an agent, and an agent that could approve its own Bash would have
  * turned the gate into a formality. A turn that stops on a card is reported
  * as waiting, with the link a person opens to answer it. The browser tools
- * are left out for the same reason — their site gate asks in a chat, and
- * there is no chat on this side to ask in.
+ * are left out of this server: they are served on their own at /mcp/browser,
+ * where the site gate and the submit check put their card in the side panel
+ * (remote-gate.ts) — a person answers, never the caller.
  */
 import type { Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -406,8 +407,17 @@ export function withArguments(body: unknown): unknown {
 
 /** The Express handler: one stateless server + transport per request. */
 export function mcpHandler(d: McpDeps) {
+  return serveMcp(() => buildMcpServer(d));
+}
+
+/**
+ * Any MCP server, served the same stateless way. /mcp/browser uses it for the
+ * browser tools a chat has, built by tools.ts and gated by RemoteGate: their
+ * cards go to the side panel, since the caller may not answer them itself.
+ */
+export function serveMcp(build: () => McpServer) {
   return async (req: Request, res: Response): Promise<void> => {
-    const server = buildMcpServer(d);
+    const server = build();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { void transport.close(); void server.close(); });
     try {

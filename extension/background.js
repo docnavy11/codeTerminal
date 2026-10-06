@@ -215,6 +215,11 @@ function observeAgent() {
     // A watch firing is the whole reason notifications exist: by definition
     // you are not looking at the panel when it happens.
     // A scheduled run ended: the whole point of scheduling is that you were not there.
+    // A Claude Code session in tmux waits on this card; no chat status says so.
+    if (m.kind === "approval" && m.input?.origin === "terminal") {
+      notify("A terminal session needs you", m.tool === "submit" ? `Submit a form on ${m.input.host}?` : `${m.input.action} on ${m.input.host}?`);
+    }
+
     if (m.kind === "schedule_done") {
       notify(`${m.title} — ${m.outcome.replace("-", " ")}`, `${m.summary || ""}${m.costUsd != null ? ` · $${m.costUsd.toFixed(2)}` : ""}`.slice(0, 180));
     }

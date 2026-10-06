@@ -183,6 +183,8 @@ async function connect() {
     lastSeen = Date.now();
     dot.classList.add("on");
     meta.textContent = "";
+    // terminal cards still open are resent on attach; the rest expired meanwhile
+    document.getElementById("remotebar")?.replaceChildren();
     // The server replays the whole transcript on every attach. Without this
     // reset a reconnect (restart, sleep, wifi blip) appended the replay to what
     // was already on screen — measured: the transcript doubled each time.
@@ -335,7 +337,8 @@ function handle(m) {
     case "approval":        renderApproval(m); break;
     case "question":        renderQuestion(m); break;
     case "approval_closed": {
-      const c = log.querySelector(`[data-approval="${m.id}"]`);
+      const c = document.querySelector(`[data-approval="${m.id}"]`);
+      if (c?.parentElement?.id === "remotebar") { c.remove(); break; }
       if (c) {
         c.classList.add("done");
         c.querySelectorAll("button,input").forEach((b) => (b.disabled = true));
@@ -708,17 +711,20 @@ function renderPlan(m) {
    allowed on. "Allow" is this chat; "Always" puts the site on the standing
    list. eval asks per call: "Allow once" / "Allow on this site (this chat)". */
 function renderApproval(m) {
+  // a terminal card is resent on every (re)connect while it is open
+  if (m.input?.origin === "terminal" && document.querySelector(`[data-approval="${m.id}"]`)) return;
   if (m.tool === "ExitPlanMode") return renderPlan(m);
   if (m.tool === "submit") return renderSubmit(m);
   const site = m.tool === "browser";
+  const term = m.input?.origin === "terminal";
   const card = el("card" + (site ? " site" : ""));
   card.dataset.approval = m.id; card.dataset.tool = m.tool;
   const h = document.createElement("h4");
-  h.textContent = site
+  h.textContent = (term ? "Terminal session: " : "") + (site
     ? (m.input?.action === "eval" ? `Run JavaScript on ${m.input.host}?`
       : m.input?.level === "act" ? `Let Claude act on ${m.input?.host || "this site"}?`
       : `Let Claude read ${m.input?.host || "this site"}?`)
-    : `Approve ${m.tool}?`;
+    : `Approve ${m.tool}?`);
   const pre = m.diff ? renderDiff(m.diff) : document.createElement("pre");
   if (!m.diff) pre.textContent = site
     ? (m.input?.action === "eval" ? String(m.input.detail ?? "")
@@ -728,8 +734,8 @@ function renderApproval(m) {
   row.className = "row";
   const choices = site
     ? (m.input?.action === "eval"
-      ? [["Allow once", "allow", "allow"], ["Allow on this site (this chat)", "always", "allow"], ["Deny", "deny", "deny"]]
-      : [["Allow (this chat)", "allow", "allow"], ["Always (this site)", "always", "allow"], ["Deny", "deny", "deny"]])
+      ? [["Allow once", "allow", "allow"], [`Allow on this site (${term ? "until restart" : "this chat"})`, "always", "allow"], ["Deny", "deny", "deny"]]
+      : [[`Allow (${term ? "until restart" : "this chat"})`, "allow", "allow"], ["Always (this site)", "always", "allow"], ["Deny", "deny", "deny"]])
     : [["Approve", "allow", "allow"], ["Deny", "deny", "deny"]];
   if (!site && m.canAlways) choices.splice(1, 0, ["Always", "always", "allow"]);
   for (const [label, decision, cls] of choices) {
@@ -745,7 +751,17 @@ function renderApproval(m) {
     row.append(b);
   }
   card.append(h, pre, row);
+  if (term) toRemoteBar(card);
   log.scrollTop = log.scrollHeight;
+}
+
+/* A card from a Claude Code session outside any chat (tmux, over
+   /mcp/browser): it belongs to no transcript, so it sits above the open
+   chat in every host, and goes when answered or expired. */
+function toRemoteBar(card) {
+  let bar = document.getElementById("remotebar");
+  if (!bar) { bar = document.createElement("div"); bar.id = "remotebar"; log.parentElement.insertBefore(bar, log); }
+  bar.append(card);
 }
 
 /* A scheduled run finished while you were (probably) elsewhere: a strip
@@ -766,10 +782,11 @@ function scheduleBanner(m) {
    or Stop. No "always": every submit is worth a look. */
 function renderSubmit(m) {
   const d = m.input || {};
+  const term = d.origin === "terminal";
   const card = el("card submit");
   card.dataset.approval = m.id; card.dataset.tool = "submit";
   const h = document.createElement("h4");
-  h.textContent = `Submit this form on ${d.host || "this site"}?`;
+  h.textContent = `${d.origin === "terminal" ? "Terminal session: " : ""}Submit this form on ${d.host || "this site"}?`;
   const pre = document.createElement("pre");
   let path = d.action || "";
   try { const u = new URL(d.action); path = u.pathname + u.search; } catch { /* keep */ }
@@ -788,6 +805,7 @@ function renderSubmit(m) {
     row.append(b);
   }
   card.append(h, pre, row);
+  if (term) toRemoteBar(card);
   log.scrollTop = log.scrollHeight;
 }
 
