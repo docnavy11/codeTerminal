@@ -321,6 +321,8 @@
   .card .diff .l.del { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, transparent); }
   .card .diff .l.hunk { color:var(--dim); font-style:italic; opacity:0.8; }
   #schedbar { flex-shrink:0; }
+  #remotebar { flex-shrink:0; max-height:50vh; overflow:auto; }
+  #remotebar .card { margin:6px 8px; }
   #schedbar .sb { display:flex; align-items:center; gap:8px; padding:6px 10px; font-size:0.85rem; background:var(--panel); border-bottom:1px solid var(--line); border-left:3px solid var(--accent); }
   #schedbar .sb.done { border-left-color:var(--ok); } #schedbar .sb.failed, #schedbar .sb.missed { border-left-color:var(--bad); } #schedbar .sb.needed-you, #schedbar .sb.stopped { border-left-color:var(--warn); }
   #schedbar .sb span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

@@ -8,6 +8,7 @@ import * as files from "./files.js";
 import { wantsContext } from "./prompt.js";
 import { resolveProject } from "./projects.js";
 import { parseAgentMessage, type AgentMessage, type ClientEvent, type ShellMessage } from "./protocol.js";
+import type { RemoteGate } from "./remote-gate.js";
 
 /**
  * The per-connection protocol loops for /ws (agent) and /pty (shell). Pulled
@@ -25,6 +26,8 @@ export type AttachContext = {
   browserWatchers?: Set<() => void>;
   /** Every attached client's raw sender, for events that concern everyone (a scheduled run finished). */
   broadcast?: Set<(e: ClientEvent) => void>;
+  /** Cards from browser tools used outside a chat (/mcp/browser), shown in every client. */
+  remoteGate?: RemoteGate;
   /** Cross-connection state that is "whatever was most recent" by design. */
   state: {
     /** The chat most recently attached to; a shell pane opens in its cwd. */
@@ -70,6 +73,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
   ctx.browserWatchers?.add(sendBrowsers);
   ctx.broadcast?.add(send);
   chat.attach(send, replay);
+  for (const e of ctx.remoteGate?.pending() ?? []) send(e);
   listFor();
   sendBrowsers();
   send({ kind: "mode", mode: chat.mode });
@@ -124,6 +128,7 @@ export function attachAgent(ws: WebSocket, ctx: AttachContext, replay = true, wa
       case "answer":
         chat.session.answer(msg.id, msg.answers); return;
       case "decision":
+        if (ctx.remoteGate?.has(msg.id)) { ctx.remoteGate.decide(msg.id, msg.decision); return; }
         chat.session.decide(msg.id, msg.decision, msg.mode); return;
       case "cwd": {
         const target = chat;
