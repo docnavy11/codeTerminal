@@ -1,0 +1,52 @@
+{
+  "entries": [
+    {
+      "date": "2026-10-10",
+      "status": "done",
+      "topic": "Board: an answer must reach the session that asked",
+      "result": "Owner found that replying to a question did not reach the tmux session: the answer was saved but the hook fetched only open items, and chats were prompted only when idle. Now an idle tmux asker gets the answer typed in, GET /todos carries the last 24 h of answered questions, and the hook prints the ones addressed to its own session first. Verified end to end with a throwaway tmux session (typed answer acted on in 2 s) and a test for the chat path."
+    },
+    {
+      "date": "2026-10-09",
+      "status": "done",
+      "topic": "Board: sessions as containers in In progress, a Done board per session",
+      "result": "Owner corrected the per-session-columns reading: keep the kanban, but In progress holds every session as a container (task card or empty slot), and a second board below, Done, has one column per session; the sessions strip stays as a multi-select filter with a tmux-only switch, remembered per device."
+    },
+    {
+      "date": "2026-10-09",
+      "status": "done",
+      "topic": "Board keeper: Haiku reads each thread and moves the cards",
+      "result": "The heuristic recorder put a paused conversation in done with the previous reply as result; owner caught it. Replaced by a Haiku 5.5 read per thread (summary, title, status working/done/needs_you/idle, result, question) that the server turns into done items and owner questions, deduplicated per session, forced right after a chat's turn end, 10 s tick for tmux. Accuracy on real threads not yet measured."
+    },
+    {
+      "date": "2026-10-09",
+      "status": "done",
+      "topic": "Board: inline approvals and filters, after a look at the field",
+      "result": "Owner asked for inspiration from tools that do this. Surveyed Kanban Code, Anthropic's Agent View, claude-code-kanban, Vibe Kanban, Conductor (docs/design-todos.md §14). Adopted: open approval cards shown on the Needs-you card with Allow/Deny that resume the chat (POST /board/decide), and filtering the kanban by project tag or session pill. Not adopted: a Review column, worktree per task."
+    },
+    {
+      "date": "2026-10-09",
+      "status": "done",
+      "topic": "Board: one kanban across projects",
+      "result": "Fourth layout in a day. The lanes were rejected outright; asked to choose, the owner picked a classic kanban: Queue · In progress · Needs you · Done across all projects, cards tagged by project with the session as a name and state dot, a sessions strip above as the drop target for assigning. Finished turns are recorded in done (first sentence of the reply as result; duplicates skipped). Mockup and live page built from the same files."
+    },
+    {
+      "date": "2026-10-09",
+      "status": "done",
+      "topic": "Board redesign: thread insight and three columns",
+      "result": "Owner asked via the board's own queue (first item sent to a session, taken by tmux:modchanger). Session cards now carry a one-line Haiku 5.5 summary (cached, refreshed when the transcript changes, max every 90 s), exact working/idle read from the tmux pane's spinner or done line (measured on three live panes), model and context %, and the queue is to do / in progress / done. Verified live on dev with a headless render; src/insight.ts + 6 tests. Same day: busy sessions without a board item appear in the in-progress column with their prompt; the last prompt and last words are read from the pane with tool chrome filtered out; summaries persist in workspace/.insights.json across restarts; a theme switch on the page."
+    },
+    {
+      "date": "2026-10-09",
+      "status": "done",
+      "topic": "Project todos and the board",
+      "result": "Built into codeTerminal, not a mod: todo.json per project root (server sole writer, gitignored globally), /board.html across projects with sessions busy/idle and the queue, a For-you section where chats file questions via todos.ask, send-next to idle chats, MCP tools + a UserPromptSubmit hook and status-line fragment for terminal sessions. Verified on dev 2026-10-09: 676 tests (5 pre-existing failures unrelated), live board lists 3 projects, hook and status line print the queue. Design: docs/design-todos.md."
+    },
+    {
+      "date": "2026-10-09",
+      "status": "done",
+      "topic": "Board: send next to a tmux session",
+      "result": "Built 2026-10-09: the board types the item into an idle tmux session (send-keys -l + Enter, pane must read idle), claimed as tmux:<name>. Measured on a throwaway session: one prompt, reply in 2 s. Owner asked the same day."
+    }
+  ]
+}

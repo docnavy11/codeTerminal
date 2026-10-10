@@ -1149,6 +1149,13 @@ $("manage").onclick = async () => {
   if (tab) { tab.click(); return; }   // moreMenu's own handler closes the menu
   PLATFORM.openUrl((await base()) + "/manage.html");
 };
+// The board: the desktop has a tab for it in the right pane; the panel and
+// the phone open the page itself.
+$("board").onclick = async () => {
+  const tab = document.querySelector('.tabs .tab[data-view="board"]');
+  if (tab) { tab.click(); return; }
+  PLATFORM.openUrl((await base()) + "/board.html");
+};
 $("setup").onclick = async () => PLATFORM.openUrl((await base()) + "/setup.html");
 // The panel has no terminal and no split view; the full UI does.
 $("openui").onclick = async () => PLATFORM.openUrl((await base()) + "/");

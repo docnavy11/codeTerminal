@@ -34,6 +34,7 @@ Part of [code terminal](../README.md).
 - [Chrome side panel](#chrome-side-panel)
 - [The shell pane](#the-shell-pane)
 - [Sessions](#sessions)
+- [The board: sessions and todos per project](#the-board-sessions-and-todos-per-project)
 - [Right-click and notifications](#right-click-and-notifications)
 
 ## Chats
@@ -775,6 +776,111 @@ pane. It reads; it does not type.
 /sessions/:name`, behind the same guard as everything else. The tab is absent
 when tmux is not installed and when `CODETERM_SHELL=0` — attaching to a
 session is opening a shell, so it obeys the same switch.
+
+## The board: sessions and todos per project
+
+The right pane's **board** tab (also `/board.html`, and **Board** in the ⋯
+menu on the phone and in the side panel) is one board across every project
+with something going on. Three columns: **Queue**, **In progress**, **Needs
+you**. In progress holds every session as a container: a header with a
+state dot (green idle, blue busy, amber waiting for you), the name, project
+and model, and inside it the session's task as a card while it is busy or
+an empty slot while it is idle. Under the three columns a second board,
+**Done**, has one column per session with what that session finished, and
+a trailing column for items finished from the board without a session. A
+card is a task; its project is a small colored tag.
+
+Above both boards, a strip of **sessions** is the filter. Click any number
+of pills to show only those sessions and their work; click project tags on
+cards to add whole projects; **tmux only** drops every chat. The selection
+is remembered on this device and **✕ clear filter** resets it. Hover a pill
+for its one-line summary; double-click a chat's pill to open the chat. The
+page follows the app's theme, and the **theme** button switches auto → dark
+→ light for the app and the board alike. Design and the decisions behind
+it: `docs/design-todos.md`.
+
+**Queue.** Add a task with the box above the columns, picking a project
+first. Drag to reorder within a project, double-click to edit, ✓ to mark done
+without a session, ✕ to drop. The list lives in a `todo.json` at the
+project's git root — one per project, written only by this server, and kept
+out of git (it is in the global excludes on the server, not committed: it
+churns with every claim).
+
+**Assigning.** Drag a queued card onto an idle session's slot (slots of that
+project light up while you drag), or press **Assign next ▶** in the slot for
+the project's top item. The item is claimed for that session and handed over: a chat is
+prompted, a tmux session is typed into as one line, Enter included, with a
+note telling it to finish through the `done_todo` MCP tool. Only a session
+whose state is exactly idle takes a card; a terminal that reads `probably
+idle` (pane unreadable) does not. Nothing starts without a drop or a press.
+
+**In progress.** In each session's container: the board item it holds, with
+✓ to mark done and ↩ to release back to the queue (a claim is never released
+by itself), or, when it is busy on something you typed directly, the
+keeper's title for that work with its one-line summary under it, marked
+*not on the board*, with the activity timer (tmux) or steps count (chat). An
+idle session shows the empty slot. Session state is exact for chats. For a tmux
+session it is read from its pane: a spinner with a timer means working, a
+done line or bare prompt means idle; the output-age guess remains only as a
+fallback and says *probably*.
+
+**Needs you.** Questions a session filed for you with `todos.ask` (a decision
+it should not take alone, or work only you can do), each with an answer box,
+plus chats stopped on an approval card. The card itself is on the board
+(`Bash: npm test`, `submit on indeed.com`) with **Allow** and **Deny**, the
+same decision the side panel's buttons make, so a stopped session resumes
+without you opening it. A question from Claude still opens the chat: its
+answer is text or a choice, not a yes or no. When a
+notifier is configured a new question is one line on your phone; the
+masthead counts everything that needs you. **Reply** records the answer and
+hands it to the session that asked: a chat that is idle is prompted with it
+at once; a tmux session at its prompt gets it typed in, Enter included. A
+session that is busy reads it at its next prompt — a chat through the
+queue block, a tmux session through the hook, which prints the owner's
+answers to that session's questions first. ✓ closes without an answer; ✕
+drops. Verified with a throwaway tmux session: the typed answer arrived and
+was acted on within two seconds.
+
+**Done.** The second board: one column per session with the last six things
+it finished, each with the result in one line; items finished from the
+board without a session get a column of their own at the end. Not only
+queued ones. A keeper reads every session's
+latest exchange with Haiku and answers with the task's title and where it
+stands: working, done, needs you, or idle. When it reads *done*, the task
+lands here under that title with the result in one line, signed by the
+session. When it reads *needs you*, the question lands in Needs you. A chat
+is read right after each turn ends; tmux sessions on a ten-second tick. The
+same finished task is recorded once per session, and nothing is recorded
+for a session holding a board item, which it closes itself. The keeper's
+read is a judgement, not a measurement: a report of progress is *working*,
+a report of completion is *done*.
+
+**What the sessions know.** Every prompt to a chat carries the project's
+queue as owner-authored context after your text: what the chat holds, what
+is queued, and answers to what it asked. A chat has tools of its own —
+`todos.list`, `todos.claim`, `todos.done`, `todos.add` and `todos.ask`. The
+summaries on the strip and the cards come from Haiku, cached per session,
+refreshed in the background only when the transcript changed and at most
+every ninety seconds, and kept across restarts in
+`workspace/.insights.json`; they draw on the same Claude subscription as the
+sessions.
+
+**Terminal sessions.** A Claude Code session in tmux or on the laptop takes
+part through the server's MCP endpoint (`/mcp`: `list_todos`, `add_todo`,
+`claim_todo`, `done_todo`, `drop_todo`) and two small scripts in
+`deploy/hooks/`: `todo-context.sh`, a `UserPromptSubmit` hook that appends
+the project's queue to every prompt, and `todo-status.sh`, which prints
+`todo 3 queued · 1 held` for a status line. Both read the cwd from the hook's
+JSON, call `GET /todos?dir=…`, and print nothing when there is nothing to
+say or the server is unreachable. The hook also reads its own tmux session
+name from `$TMUX_PANE`, so answers the owner gave to that session's
+questions come first in its output. Point `CODETERM_URL` at the server if it is not
+this box's tailnet address.
+
+The board is polled (every four seconds while the page is visible, and
+right after anything you do), not pushed: one page for one person, and a
+poll keeps the phone and the framed desktop tab on the same code with no
+socket of their own.
 
 ## Right-click and notifications
 

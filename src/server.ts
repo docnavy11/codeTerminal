@@ -1,10 +1,10 @@
 import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { pipeline, type Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { lookup } from "node:dns/promises";
 import { Manager } from "./conversation.js";
@@ -22,7 +22,10 @@ import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe a
 import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
 import { TelegramListener } from "./telegram-listener.js";
-import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture } from "./tmux.js";
+import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture, sendLine, hasSession } from "./tmux.js";
+import { TodoStore, buildBoard, projectRootOf, type TodoFor } from "./todos.js";
+import { Insights, readPane, lastAssistantText, lastUserText, type Assessor, type Assessment } from "./insight.js";
+import { transcript } from "./mcp.js";
 import { ZipFile } from "yazl";
 import { heartbeat } from "./heartbeat.js";
 import { createAuth, AuthRefused, type Auth, type AuthConfig } from "./auth.js";
@@ -93,6 +96,10 @@ export type ServerConfig = {
   authDeps?: AuthConfig["deps"];
   spawnQuery?: SessionDeps["spawnQuery"];
   titler?: SessionDeps["titler"];
+  /** The board keeper's model read of a thread (insight.ts). Tests inject one; production uses Haiku. */
+  assessor?: Assessor;
+  /** How often the keeper reads every session (ms); default 10 s. */
+  keeperMs?: number;
   /** Whether systemd started this process; defaults to what INVOCATION_ID says. */
   systemd?: boolean;
   /** Socket heartbeat period; tests shorten it. */
@@ -258,6 +265,12 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const prompts = new PromptStore(cfg.promptsPath, { warn });
   const browserAllow = cfg.browserAllowPath ? new BrowserAllowlist(cfg.browserAllowPath, cfg.browserAllowSeed) : null;
 
+  /* Project todos and the board (docs/design-todos.md): one todo.json per
+     project root, this process its only writer. */
+  const todos = new TodoStore({ warn });
+  const todoRoot = (cwd: string) => projectRootOf(cwd, cfg.projectsRoot);
+  const insights = new Insights(cfg.assessor, Date.now, join(WORKSPACE, ".insights.json"));
+
   const convo = new Manager(
     WORKSPACE,
     cfg.chatsDir,
@@ -265,6 +278,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     // prefer is replaced per-chat by LiveChat, which knows its own browser.
     { bridge, getShell: () => (SHELL ? state.activeShell : null), shell: SHELL,
       tmux: { list: async () => (await haveTmux()) ? listSessions() : [], capture: (name, lines) => capture(name, lines) }, watches, prompts, prefer: () => undefined, browserAllow, filesRoot: FILES_ROOT, confirmSubmit: cfg.confirmSubmit !== false, warn,
+      todos: { store: todos, rootFor: todoRoot },
       ...(cfg.spawnQuery ? { spawnQuery: cfg.spawnQuery } : {}),
       ...(cfg.titler ? { titler: cfg.titler } : {}) },
   );
@@ -777,6 +791,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     convo, publicBase, version: pkgVersion,
     schedules: () => schedules.list().map(scheduleView),
     prompts: () => prompts.all(), watches, filesRoot: FILES_ROOT, claudeHome: join(cfg.home, ".claude"),
+    todos: { store: todos, rootFor: todoWhere },
     ...(notifier.targets.length ? { notify: (n: { title: string; message: string; url?: string }) => notifier.send(n) } : {}),
     health: () => ({
       version: pkgVersion, node: process.version, auth: auth.mode, shell: SHELL,
@@ -790,6 +805,220 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   app.all("/mcp/browser", guard, express.json({ limit: "1mb" }), serveMcp(() =>
     browserTools(bridge, () => undefined, undefined, remoteGate.policy(), () => WORKSPACE, FILES_ROOT,
       cfg.confirmSubmit === false ? undefined : remoteGate.confirmSubmit).instance));
+  /* ---- project todos and the board ----
+     The board is polled (GET /board every few seconds by board.html), not
+     pushed: it is one page for one person, and a poll keeps the phone and
+     the framed desktop tab on the same code with no socket of their own. */
+  /** A project id or name, or an absolute directory under the projects root or the files root → the project root. Throws on anything else. */
+  function todoWhere(where: string): string {
+    const w = String(where ?? "").trim();
+    if (!w) throw new Error("say which project: an id, a name, or a directory");
+    const known = convo.projects().find((p) => !p.general && (p.id === w || p.name.toLowerCase() === w.toLowerCase()));
+    if (known) return todoRoot(known.path);
+    if (!w.startsWith("/")) throw new Error(`no project ${w}; give its id, its name, or an absolute directory`);
+    const abs = resolve(w);
+    const under = (root: string) => abs === resolve(root) || abs.startsWith(resolve(root) + "/");
+    if (!under(cfg.projectsRoot) && !under(FILES_ROOT) && !under(WORKSPACE)) throw new Error(`${w} is outside the projects root`);
+    if (!existsSync(abs)) throw new Error(`${w} does not exist`);
+    return todoRoot(abs);
+  }
+  const todoFail = (res: express.Response, e: unknown) => res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  /**
+   * Every live session with what the keeper knows about it. Shared by the
+   * board (GET /board) and the keeper's own tick. A pane running Claude says
+   * exactly whether it is working; its transcript tail and a chat's last
+   * entries go to the model (cached, insight.ts).
+   */
+  const gatherSessions = async () => {
+    const sessions = SHELL && (await haveTmux()) ? await listSessions().catch(() => []) : [];
+    const tmux = await Promise.all(sessions.map(async (s) => {
+      let pane: ReturnType<typeof readPane> | undefined;
+      if (s.command === "claude") { try { pane = readPane(await capture(s.name, 80)); } catch { pane = undefined; } }
+      const a = pane ? insights.get(`tmux:${s.name}`, pane.transcript) : null;
+      return { name: s.name, path: s.path, command: s.command, activityAt: s.activityAt, attached: s.attached,
+        ...(pane ? { pane, summary: a?.summary ?? null, task: a } : {}) };
+    }));
+    const chats = convo.liveChats().map((c) => {
+      const rec = c.record;
+      const a = insights.get(`chat:${c.id}`, transcript(rec.events, 12).join("\n"));
+      return { id: c.id, title: rec.title, cwd: c.cwd, project: rec.project ?? null, busy: c.busy, waiting: c.waiting, lastTouched: c.lastTouched, steps: c.steps,
+        lastText: lastAssistantText(rec.events as { kind: string; text?: string }[]),
+        lastPrompt: lastUserText(rec.events as { kind: string; text?: string }[]),
+        pending: c.waiting ? c.session.pendingCards() : [],
+        summary: a?.summary ?? null, task: a, model: c.model };
+    });
+    insights.keep([...chats.map((c) => `chat:${c.id}`), ...tmux.map((s) => `tmux:${s.name}`)]);
+    return { chats, tmux };
+  };
+  const rootOfChat = (rec: { project?: string }) => (rec.project ? todoRoot(resolveProject(convo.projects(), rec.project).path) : resolve(WORKSPACE));
+  const board = async () => {
+    const { chats, tmux } = await gatherSessions();
+    keeperApply(chats, tmux);
+    return buildBoard({ now: Date.now(), projectsRoot: cfg.projectsRoot, projects: convo.projects(), chats, tmux, todos });
+  };
+
+  /* The keeper (docs/design-todos.md §15). Haiku reads each thread's tail
+     and says what the task is and where it stands; the server turns that
+     into board moves: "done" → a done item titled by the model, with its
+     result; "needs_you" → a question for the owner. Deduplicated by title
+     per session, so a thread that stays finished is recorded once. Nothing
+     is recorded for a session that holds a board item: the item is the
+     task, and the session closes it itself. */
+  const alreadyRecorded = (root: string, by: string, title: string) =>
+    todos.read(root).some((i) => i.status === "done" && i.claimedBy === by && i.text === title);
+  /* One open question per session: the model rephrases the same question on
+     every refresh (seen live: two wordings of "go back to the header fix?"
+     from one session), so a session with an open ask does not get a second. */
+  const alreadyAsked = (root: string, by: string, question: string) =>
+    todos.read(root).some((i) => i.for === "owner" && i.addedBy === by && (i.text === question || i.status === "queued"));
+  const applyOne = (root: string, key: string, a: Assessment | null | undefined) => {
+    if (!a || !a.title) return;
+    try {
+      if (todos.open(root).some((i) => i.claimedBy === key)) return;
+      if (a.status === "done" && !alreadyRecorded(root, key, a.title)) todos.record(root, { text: a.title, result: a.result, by: key });
+      else if (a.status === "needs_you" && a.question && !alreadyAsked(root, key, a.question)) todos.add(root, { text: a.question, for: "owner", addedBy: key });
+    } catch (e) { warn(`[todos] keeper: ${e instanceof Error ? e.message : String(e)}`); }
+  };
+  const keeperApply = (chats: { id: string; project: string | null; task?: Assessment | null }[], tmux: { name: string; path: string; task?: Assessment | null }[]) => {
+    for (const c of chats) applyOne(rootOfChat({ project: c.project ?? undefined }), `chat:${c.id}`, c.task);
+    for (const s of tmux) if (s.path) applyOne(todoRoot(s.path), `tmux:${s.name}`, s.task);
+  };
+  // A fresh read lands between polls: act on it right away.
+  insights.onFresh = (key, a) => {
+    if (key.startsWith("chat:")) { const c = convo.live(key.slice(5)); if (c) applyOne(rootOfChat(c.record), key, a); }
+    else void listSessions().then((all) => { const s = all.find((x) => `tmux:${x.name}` === key); if (s?.path) applyOne(todoRoot(s.path), key, a); }).catch(() => {});
+  };
+  // A turn just ended: ask the model now rather than at the next refresh window.
+  convo.onTurnEnd = (chat) => { insights.get(`chat:${chat.id}`, transcript(chat.record.events, 12).join("\n"), true); };
+  const keeperTick = setInterval(() => { void gatherSessions().then(({ chats, tmux }) => keeperApply(chats, tmux)).catch(() => {}); }, cfg.keeperMs ?? 10_000);
+  keeperTick.unref();
+
+  /** Answer an open approval card from the board — the same decision the side panel's buttons make. */
+  app.post("/board/decide", guard, express.json({ limit: "4kb" }), (req, res) => {
+    const b = req.body as { chatId?: string; id?: string; decision?: string };
+    const chat = b.chatId ? convo.live(String(b.chatId)) : undefined;
+    if (!chat) { res.status(404).json({ error: "that chat is not live" }); return; }
+    if (b.decision !== "allow" && b.decision !== "deny" && b.decision !== "always") { res.status(400).json({ error: "decision: allow | always | deny" }); return; }
+    const ok = chat.session.decide(String(b.id ?? ""), b.decision);
+    if (!ok) { res.status(409).json({ error: "that card is no longer open" }); return; }
+    res.json({ ok: true });
+  });
+  app.get("/board", guard, async (_req, res) => {
+    try { res.json({ ...(await board()), allProjects: convo.projects().filter((p) => !p.general).map((p) => ({ id: p.id, name: p.name })) }); }
+    catch (e) { res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); }
+  });
+  /** ?dir=<abs> or ?project=<id|name>: the list, for the terminal-side hook and the status line. */
+  app.get("/todos", guard, (req, res) => {
+    try {
+      const root = todoWhere(String(req.query.project ?? req.query.dir ?? ""));
+      const all = req.query.all === "1";
+      const items = todos.read(root);
+      const dayAgo = Date.now() - 24 * 60 * 60_000;
+      // Answers to what sessions asked, for the terminal-side hook (a chat gets them in its prompt block).
+      const answered = items.filter((i) => i.for === "owner" && i.status === "done" && i.result && (i.doneAt ?? 0) > dayAgo);
+      res.json({ root, items: items.filter((i) => all || i.status === "queued" || i.status === "claimed"), answered });
+    } catch (e) { todoFail(res, e); }
+  });
+  app.post("/todos", guard, express.json({ limit: "16kb" }), (req, res) => {
+    try {
+      const b = req.body as { project?: string; dir?: string; root?: string; text?: string; for?: string; addedBy?: string };
+      const root = todoWhere(b.root ?? b.project ?? b.dir ?? "");
+      res.json(todos.add(root, { text: String(b.text ?? ""), for: b.for === "owner" ? "owner" : "claude", addedBy: b.addedBy ? String(b.addedBy) : "owner" }));
+    } catch (e) { todoFail(res, e); }
+  });
+  app.post("/todos/reorder", guard, express.json({ limit: "16kb" }), (req, res) => {
+    try {
+      const b = req.body as { root?: string; ids?: unknown };
+      if (!Array.isArray(b.ids)) throw new Error("ids: a list");
+      res.json({ items: todos.reorder(todoWhere(b.root ?? ""), b.ids.map(String)) });
+    } catch (e) { todoFail(res, e); }
+  });
+  app.patch("/todos/:id", guard, express.json({ limit: "16kb" }), async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const b = req.body as { root?: string; action?: string; result?: string; text?: string; by?: string };
+      const root = todoWhere(b.root ?? "");
+      const by = b.by ? String(b.by).slice(0, 80) : "owner";
+      switch (b.action) {
+        case "claim": res.json(todos.claim(root, id, by)); return;
+        case "done": res.json(todos.done(root, id, b.result, by)); return;
+        /* The owner's answer to a question a chat asked. Recorded on the item
+           either way; handed to the asking chat now if it is live and idle,
+           otherwise it rides along in that chat's next turn (queueBlock). */
+        case "answer": {
+          const item = todos.done(root, id, b.result, by);
+          let replied = false;
+          const line = `The owner answered your question “${item.text.slice(0, 300)}”: ${item.result ?? ""}`;
+          if (item.result && item.addedBy.startsWith("chat:")) {
+            const asker = convo.live(item.addedBy.slice(5));
+            if (asker && !asker.busy) await asker.prompt(line, async () => undefined).then(() => { replied = true; }, () => {});
+          } else if (item.result && item.addedBy.startsWith("tmux:") && SHELL && (await haveTmux())) {
+            // At its prompt: type the answer in now. Working: it reads it from the hook's block on its next prompt.
+            const name = item.addedBy.slice(5);
+            try {
+              if (await hasSession(name) && readPane(await capture(name, 80)).state === "idle") { await sendLine(name, line); replied = true; }
+            } catch (e) { warn(`[todos] answer to ${name} not typed: ${e instanceof Error ? e.message : String(e)}`); }
+          }
+          res.json({ ...item, replied }); return;
+        }
+        case "drop": res.json(todos.drop(root, id)); return;
+        case "release": res.json(todos.release(root, id)); return;
+        case "edit": res.json(todos.edit(root, id, String(b.text ?? ""))); return;
+        default: throw new Error("action: claim | done | answer | drop | release | edit");
+      }
+    } catch (e) { todoFail(res, e); }
+  });
+  /** send next: claim the item for a session and hand it over — a chat is prompted, a tmux session is typed into. Idle only; the claim is undone if the handover fails. */
+  app.post("/todos/:id/send", guard, express.json({ limit: "16kb" }), async (req, res) => {
+    const id = String(req.params.id);
+    const b = req.body as { root?: string; chatId?: string; tmux?: string };
+    let root: string;
+    try { root = todoWhere(b.root ?? ""); } catch (e) { todoFail(res, e); return; }
+    if (b.tmux !== undefined) {
+      const name = String(b.tmux);
+      if (!SHELL || !(await haveTmux()) || !(await hasSession(name))) { res.status(404).json({ error: "no such tmux session" }); return; }
+      // The pane must say idle: typed into a working session the item would queue behind the running turn, unseen.
+      let pane: ReturnType<typeof readPane>;
+      try { pane = readPane(await capture(name, 80)); } catch (e) { res.status(502).json({ error: `cannot read the pane: ${e instanceof Error ? e.message : String(e)}` }); return; }
+      if (pane.state !== "idle") { res.status(409).json({ error: pane.state === "working" ? "that session is working; wait for it to finish" : "that session is not at a Claude prompt" }); return; }
+      let item;
+      try { item = todos.claim(root, id, `tmux:${name}`); } catch (e) { todoFail(res, e); return; }
+      try {
+        await sendLine(name, `From the project board, item ${item.id.slice(0, 8)}: ${item.text} — Do it. You hold this item already (claimed as tmux:${name}). When it is finished, call the codeterminal MCP tool done_todo (project: ${root}, id: ${item.id.slice(0, 8)}) with a one-line result; if it needs a decision only the owner can take, add_todo with for=owner.`);
+        res.json({ item, tmux: name });
+      } catch (e) {
+        try { todos.release(root, id); } catch { /* the claim may already be gone */ }
+        res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
+      }
+      return;
+    }
+    const chat = b.chatId ? convo.get(String(b.chatId)) : null;
+    if (!chat) { res.status(404).json({ error: "no such chat" }); return; }
+    if (chat.busy) { res.status(409).json({ error: "that chat is busy; pick an idle one" }); return; }
+    let item;
+    try { item = todos.claim(root, id, `chat:${chat.id}`); } catch (e) { todoFail(res, e); return; }
+    try {
+      await chat.prompt(`From the project board, item ${item.id.slice(0, 8)}: ${item.text}\n\nDo it. You hold this item already; when it is finished call todos.done with a one-line result, and if it turns out to need a decision only the owner can take, use todos.ask.`, async () => undefined);
+      res.json({ item, chatId: chat.id });
+    } catch (e) {
+      try { todos.release(root, id); } catch { /* the claim may already be gone */ }
+      res.status(409).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  /* An item for the owner is the one thing on the board that should reach a
+     phone: one line per item, under the notifier's own limiter. The sessions'
+     own queue traffic stays silent. */
+  const ownerPings: number[] = [];
+  todos.onChange = (root, item, what) => {
+    if (what !== "added" || item.for !== "owner" || !notifier.targets.length) return;
+    const now = Date.now();
+    while (ownerPings.length && now - ownerPings[0] > 10 * 60_000) ownerPings.shift();
+    if (ownerPings.length >= 10) { warn(`[todos] not notifying "${item.text.slice(0, 60)}": 10 owner items in 10 minutes already`); return; }
+    ownerPings.push(now);
+    void notifier.send({ title: `${basename(root)} — for you`, message: item.text, url: `${publicBase}/board.html`, tags: ["question"] })
+      .catch((e: unknown) => warn(`[todos] notify failed: ${e instanceof Error ? e.message : String(e)}`));
+  };
+
   app.get("/schedules", guard, (_req, res) => { res.json({ schedules: schedules.list().map(scheduleView), prompts: prompts.all().map((p) => ({ id: p.id, title: p.title })), projects: convo.projects().map((p) => ({ id: p.id, name: p.name })) }); });
   app.get("/schedules/preview", guard, (req, res) => {
     try {
