@@ -214,8 +214,8 @@ export async function assessWithHaiku(text: string): Promise<Assessment | null> 
   const prompt =
     `Below is the tail of a coding-assistant conversation (a person and an assistant working in a project). Read it and answer with one JSON object and nothing else:\n` +
     `{"summary": one sentence of at most 25 words on what the thread is working on and its topics, present tense;\n` +
-    ` "title": the current task as a card title of at most 8 words, imperative or noun phrase, no trailing period;\n` +
-    ` "status": "working" if the assistant is mid-task, "done" if its last message reports the task finished or answered, "needs_you" if the assistant is asking the person a question or waiting for their decision, "idle" if there is no task in flight (greetings, small talk, an empty start);\n` +
+    ` "title": the task as the person would name it, at most 8 words, imperative or noun phrase, no trailing period. The task is the feature, bug, question or outcome the person wants — never the step being taken for it: committing, pushing, testing, restarting, rendering, writing docs are steps inside a task, not tasks. Keep the title the same across steps of one task;\n` +
+    ` "status": "working" if the assistant is mid-task (a step done but the task not), "done" only if its last message reports the whole task finished or the question answered, "needs_you" if the assistant is asking the person a question or waiting for their decision, "idle" if there is no task in flight (greetings, small talk, an empty start);\n` +
     ` "result": only when done, at most 20 words on the outcome;\n` +
     ` "question": only when needs_you, the question for the person in one sentence}\n\n${text}`;
   try {
