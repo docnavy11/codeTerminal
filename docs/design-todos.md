@@ -248,6 +248,21 @@ queue leaves the board.
     "tmux only" switch; remembered per device. Hiding (16) went away: the
     filter does that job.
 
+18. **Tests for what was only checked by hand** (owner asked, 2026-10-10,
+    after the reply-to-tmux bug and the hidden-task bug each reached them
+    first). Real-tmux tests with a stand-in pane, the hook scripts run for
+    real, the board page in Chromium, and an environment preload so the
+    suite means the same thing from any shell; see docs/development.md.
+    Each was shown to fail when the thing it guards is broken (the answer
+    path, the filter). The keeper's accuracy is measured by `npm run
+    eval:keeper`: 21 labelled tails, 3 runs each, 63/63 with the current
+    prompt on 2026-10-10. The harness was checked against the prompt from
+    before the step fix: it scored 61/63 and failed the case where only
+    "commit / push / merge" is visible (titled "Merge board reply fix into
+    main"), so it can tell the two apart. Limits: the labels and the tails
+    are the author's, mostly synthetic, one model, one day; the score says
+    the clear cases work, not how often a real thread is misread.
+
 ## Item shape
 
 ```json

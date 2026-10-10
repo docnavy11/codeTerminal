@@ -35,6 +35,48 @@ gate both work.
     npm run test:chromium# the server browser, driving a real Chromium (6)
     npm run test:e2e     # boots a real server and session; needs credentials
     npm run test:real    # the actual SDK; costs about $0.30 a run, opt-in
+    npm run eval:keeper  # scores the board keeper's Haiku read on labelled tails; real model calls, opt-in
+
+Every test process starts from `test/env.ts`, which clears `CODETERM_*` from
+the environment. A shell started from the service's own terminal carries its
+configuration (`CODETERM_ALLOW_BYPASS=1`, ports, tokens), and five tests used
+to fail there; the pre-push hook only passed once the variables were unset by
+hand. The browser suite's fixture server gets the same treatment in
+`test/browser/conftest.py`.
+
+**The board** has four layers of tests, because it spans a server, a browser
+and the terminal:
+
+- `test/todos.test.ts`, `test/insight.test.ts`, `test/board.test.ts`: the
+  store, the board assembly, the pane reader, the keeper's cache, and every
+  route, over HTTP against an in-process server with a scripted SDK and a
+  scripted assessor (no model call).
+- `test/tmux-board.test.ts`: the board's reach into real tmux. A real tmux
+  session runs `test/fixtures/fake-claude-pane.sh`, which draws what the real
+  CLI draws (spinner and timer while working, the input box between two
+  rules, the status line) and logs every line typed into it. Covers handing
+  an item to an idle session, refusing a working one or a plain shell, and
+  typing an owner's answer into the session that asked. Skipped without tmux.
+- `test/hooks.test.ts`: `deploy/hooks/todo-context.sh` and `todo-status.sh`
+  run for real against a test server, including the answers addressed to one
+  tmux session and not another. Skipped without bash, curl and jq. The spawn
+  is asynchronous on purpose: the server lives in the test process, and a
+  synchronous spawn froze it while the script's curl waited.
+- `test/browser/test_board.py`: the page itself in Chromium. `/board` and the
+  write routes are intercepted, so the page sees the same sessions on any
+  machine and every request it makes can be read back: layout, the multi-select
+  filter, a task added under `tmux only`, assigning by drop and by button,
+  answering a question, Allow/Deny, the theme switch.
+
+`npm run eval:keeper` is the one thing none of these can cover: whether Haiku
+reads real threads correctly. `test/eval/keeper.cases.ts` holds labelled
+tails (21 at the time of writing: progress report versus finished, questions
+for the owner including a closing "anything else?", small talk, steps
+mistaken for tasks, a new task after a finished one), `keeper.eval.ts` scores
+them over several runs and exits non-zero below `--min`. The labels are the
+author's judgement, so the score is a regression meter for the prompt, not
+ground truth. When the keeper gets a real thread wrong, add its tail as a
+case. Rerun it whenever the prompt in `src/insight.ts` changes.
 
 `npm run hooks` points git at `.githooks`, whose `pre-push` runs the same
 things before a push leaves the machine — typecheck and unit always, the

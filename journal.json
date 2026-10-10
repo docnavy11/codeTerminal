@@ -3,6 +3,12 @@
     {
       "date": "2026-10-10",
       "status": "done",
+      "topic": "Board: tests for the gaps found by use",
+      "result": "Added real-tmux tests (send next, refusal of working/shell panes, typed answers), the hook scripts run for real, a Chromium test of the board page (incl. the hidden-task regression), an env preload so the suite passes from the service's shell, and npm run eval:keeper (21 labelled tails; 63/63 now, 61/63 on the previous prompt). Keeper accuracy on real threads still unmeasured beyond this. Also fixed the flaky 'upgrades' tests (two assertions assumed which chat is newest; a delayed save from an earlier test made them fail 1 run in 5 under the full suite): 8/8 full runs green."
+    },
+    {
+      "date": "2026-10-10",
+      "status": "done",
       "topic": "Board: an answer must reach the session that asked",
       "result": "Owner found that replying to a question did not reach the tmux session: the answer was saved but the hook fetched only open items, and chats were prompted only when idle. Now an idle tmux asker gets the answer typed in, GET /todos carries the last 24 h of answered questions, and the hook prints the ones addressed to its own session first. Verified end to end with a throwaway tmux session (typed answer acted on in 2 s) and a test for the chat path."
     },

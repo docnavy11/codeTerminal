@@ -17,14 +17,15 @@
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "sync:vendor": "cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css node_modules/@xterm/addon-fit/lib/addon-fit.js node_modules/@xterm/addon-web-links/lib/addon-web-links.js node_modules/marked/lib/marked.umd.js node_modules/dompurify/dist/purify.min.js extension/vendor/",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "node --import tsx --import ./test/env.ts --test test/*.test.ts",
     "test:chromium": "node --import tsx --test test/*.chromium.ts",
     "check": "npm run typecheck && npm test",
     "test:e2e": "CODETERM_E2E=1 node --import tsx --test test/e2e.test.ts",
     "test:browser": "cd test/browser && python3 -m pytest -q -n 4 --dist loadgroup",
     "test:browser:serial": "cd test/browser && python3 -m pytest -q",
     "test:real": "CODETERM_REAL=1 CODETERM_MAX_BUDGET_USD=3 node --import tsx --test test/real.test.ts",
-    "coverage": "node --import tsx --test --experimental-test-coverage test/*.test.ts"
+    "coverage": "node --import tsx --test --experimental-test-coverage test/*.test.ts",
+    "eval:keeper": "node --import tsx --import ./test/env.ts test/eval/keeper.eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.280",

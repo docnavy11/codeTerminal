@@ -341,8 +341,12 @@ describe("upgrades", () => {
     const c = connect(s.port, "127.0.0.1", () => {
       c.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${headers.map((h) => h + "\r\n").join("")}\r\n`);
     });
-    let out = ""; c.on("data", (d) => { out += d.toString(); }); c.on("close", () => res(out)); c.on("error", () => res(out));
-    setTimeout(() => c.destroy(), 500);
+    // Resolve on the first reply, like upgradeTo() above. A fixed 500 ms before
+    // destroying the socket lost to a loaded full-suite run (it failed there and
+    // never alone, 14 runs out of 14 green in isolation); the long timeout is
+    // only for a server that never answers.
+    let out = ""; c.on("data", (d) => { out += d.toString(); c.destroy(); }); c.on("close", () => res(out)); c.on("error", () => res(out));
+    setTimeout(() => c.destroy(), 10_000);
   });
   test("an unknown route is 404, a cross-site upgrade is 403", async () => {
     assert.match(await rawUpgrade("/nope", []), /^HTTP\/1\.1 404/);
@@ -411,8 +415,15 @@ describe("upgrades", () => {
     assert.notEqual(second, first);
     const b = await s.socket(`/ws?chat=${first}`);
     assert.equal((await b.wait((m) => m.kind === "chats")).activeId, first);
+    // A plain attach lands on the newest chat — the first of the list the server sends. Not
+    // necessarily `second`: a chat from an earlier test saves itself up to 400 ms after its
+    // last event and is then the most recently active (this failed 1 run in 5 under the
+    // full suite until the assertion said what it means).
     const c = await s.socket("/ws");
-    assert.equal((await c.wait((m) => m.kind === "chats")).activeId, second);
+    const got = await c.wait((m) => m.kind === "chats");
+    const list = got.chats as { id: string }[];
+    assert.equal(got.activeId, list[0].id, "lands on the newest chat in the list");
+    assert.ok(list.some((x) => x.id === second) && list.some((x) => x.id === first));
     a.ws.close(); b.ws.close(); c.ws.close();
   });
   test("/ws attaches to a chat and carries a prompt to the SDK", async () => {
@@ -421,8 +432,12 @@ describe("upgrades", () => {
     assert.ok(chats.activeId);
     await c.wait((m) => m.kind === "mode");
     c.send({ type: "prompt", text: "over the wire", withTab: false });
-    await settle(8);
-    assert.match(s.sdk.last.received.at(-1)!.message.content as string, /over the wire/);
+    // The session of whichever chat this client landed on, found by what it received
+    // (the newest query is not necessarily that chat's), polled instead of a fixed number of ticks.
+    const got = () => s.sdk.queries.find((q) => q.received.some((m) => /over the wire/.test(JSON.stringify(m.message.content))));
+    const t0 = Date.now(); while (!got() && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(got(), "the prompt reached a session");
+    assert.match(got()!.received.at(-1)!.message.content as string, /over the wire/);
     c.ws.close(); await c.closed;
   });
   test("/pty starts a shell and streams its output as binary frames", async () => {

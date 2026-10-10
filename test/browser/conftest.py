@@ -29,7 +29,11 @@ class Server:
         self.log = open(os.path.join(self.root, "server.log"), "ab")
 
     def start(self, timeout=20):
-        env = dict(os.environ, ROOT=self.root, PORT=str(self.port), CT_EXIT_WITH_PARENT="1")
+        # Not the service's own configuration (CODETERM_ALLOW_BYPASS, ports, tokens):
+        # a shell started from the service's terminal carries it, and the fixture
+        # server must see the defaults wherever the suite runs.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("CODETERM_")}
+        env.update(ROOT=self.root, PORT=str(self.port), CT_EXIT_WITH_PARENT="1")
         # node directly, in its own process group: terminating an `npx` wrapper
         # leaves the real server alive and the port taken.
         self.proc = subprocess.Popen([shutil.which("node"), "--import", "tsx", "test/fixtures/fake-server.ts"], cwd=REPO, env=env,
