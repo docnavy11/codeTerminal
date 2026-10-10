@@ -86,7 +86,11 @@
   .sboxhd { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; padding: 0 2px; }
   .sboxhd .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
   .sbox.idle .sboxhd .dot { background: var(--ok); } .sbox.busy .sboxhd .dot, .sbox.working .sboxhd .dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); } .sbox.waiting .sboxhd .dot { background: var(--warn); }
-  .sboxhd .name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; min-width: 0; }
+  .sboxhd .proj, .hd.sess .proj { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; color: var(--fg); background: none; border: 0; padding: 0; min-width: 0; flex: 0 1 auto; }
+  .sboxhd .proj { cursor: pointer; } .sboxhd .proj:hover span { text-decoration: underline; text-underline-offset: 2px; }
+  .sboxhd .proj i, .hd.sess .proj i { width: 9px; height: 9px; border-radius: 3px; flex: none; display: inline-block; }
+  .sboxhd .proj span, .hd.sess .proj span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sboxhd .name { font-weight: 500; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; min-width: 0; }
   .sboxhd a.name:hover { text-decoration: underline; }
   .sboxhd .kind { font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; flex: none; }
   .sboxhd .meta { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; }
@@ -100,7 +104,7 @@
   .col.dcol > .hd.sess { gap: 7px; align-items: center; }
   .hd.sess .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
   .hd.sess .dot.idle { background: var(--ok); } .hd.sess .dot.busy, .hd.sess .dot.working { background: var(--accent); } .hd.sess .dot.waiting { background: var(--warn); }
-  .hd.sess .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .hd.sess .name { color: var(--dim); font-weight: 500; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .hd.sess .n { margin-left: auto; }
   /* cards */
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px 8px; display: grid; gap: 6px; box-shadow: var(--shadow); min-width: 0; }

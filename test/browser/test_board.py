@@ -111,6 +111,21 @@ def test_draws_the_queue_the_sessions_as_containers_and_a_done_board_per_session
     assert page.errors == []
 
 
+def test_boxes_keep_their_order_when_a_session_changes_state_and_lead_with_the_project(page, server):
+    board = Board(); open_board(page, server, board)
+    before = texts(page, ".col.progress .sboxhd")
+    order = texts(page, ".col.progress .sboxhd .name")
+    assert order == ["2e", "todo", "modchanger", "Wend puzzle"], order   # project (bestekortingen, codeTerminal, General), then name
+    assert [x.split("\n")[0] for x in texts(page, ".col.progress .sboxhd .proj")] == ["bestekortingen", "bestekortingen", "codeTerminal", "General"]
+    # The idle one goes busy, the busy one idle: same order after the next poll.
+    board.project("bestekortingen")["sessions"][0]["state"] = "working"
+    board.project("bestekortingen")["sessions"][1]["state"] = "working"
+    board.project("codeTerminal")["sessions"][0]["state"] = "idle"
+    page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    wait(page, "() => document.querySelectorAll('.col.progress .sbox.idle').length >= 2", what="states changed")
+    assert texts(page, ".col.progress .sboxhd .name") == order
+
+
 def test_filter_selects_several_sessions_and_projects_and_remembers(page, server):
     board = Board(); open_board(page, server, board)
     pill = lambda name: page.locator("#sessions .pill", has=page.locator(".name", has_text=name)).first

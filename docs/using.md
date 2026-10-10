@@ -785,7 +785,7 @@ with something going on. Three columns: **Queue**, **In progress**, **Needs
 you**. In progress holds every session as a container: a header with a
 state dot (green idle, blue busy, amber waiting for you), the name, project
 and model, and inside it the session's task as a card while it is busy or
-an empty slot while it is idle. Under the three columns a second board,
+an empty slot while it is idle. Boxes keep a fixed order, by project and then session name, so none jumps when its session changes state. Under the three columns a second board,
 **Done**, has one column per session with what that session finished, and
 a trailing column for items finished from the board without a session. A
 card is a task; its project is a small colored tag.

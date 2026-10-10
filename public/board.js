@@ -259,9 +259,11 @@ function sessionBox(s, p, now) {
   const box = el("div", `sbox ${stateClass(s)}`);
   const h = el("div", "sboxhd");
   h.append(el("span", "dot"));
+  // The project leads: it says what the session is for. The session's own name (todo, 2e) is the second line of the label.
+  const proj = el("button", `proj${sel.projects.has(p.name) ? " on" : ""}`); proj.title = `Show only ${p.name}`; const sw = el("i"); sw.style.background = tagColor(p.name); proj.append(sw, el("span", "", p.name)); proj.onclick = () => toggleIn(sel.projects, p.name); h.append(proj);
   if (s.kind === "chat") { const a = el("a", "name", nameOf(s)); a.href = `/?chat=${encodeURIComponent(s.id)}`; a.title = "Open the chat"; a.onclick = (e) => { e.preventDefault(); openChat(s.id); }; h.append(a); }
   else { h.append(el("span", "name", nameOf(s)), el("span", "kind", "tmux")); }
-  const meta = [p.name]; if (s.model) meta.push(s.model); meta.push(ago(s.since, now));
+  const meta = []; if (s.model) meta.push(s.model); meta.push(ago(s.since, now));
   h.append(el("span", "meta", meta.join(" · ")));
   box.append(h);
   const held = p.queue.filter((i) => i.status === "claimed" && i.claimedBy === keyOf(s));
@@ -294,9 +296,10 @@ function render(b) {
   sessionsByKey = new Map();
   for (const p of b.projects) for (const s of p.sessions) sessionsByKey.set(keyOf(s), s);
 
-  // The strip: every session (filter or not), busy first; the selected ones marked.
-  const rank = (s) => (s.state === "waiting" ? 0 : isBusy(s) ? 1 : s.state === "idle" ? 2 : 3);
-  const all = b.projects.flatMap((p) => p.sessions.map((s) => ({ s, p }))).sort((x, y) => rank(x.s) - rank(y.s) || y.s.since - x.s.since);
+  // The strip and the boxes in a fixed order — project, then session name — so a box never
+  // jumps when its session goes busy or idle (they used to sort by state and age).
+  const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base" });
+  const all = b.projects.flatMap((p) => p.sessions.map((s) => ({ s, p }))).sort((x, y) => byName(x.p.name, y.p.name) || byName(nameOf(x.s), nameOf(y.s)));
   const strip = document.createDocumentFragment();
   strip.append(el("span", "lbl", all.length ? "Sessions" : "No live session"));
   for (const { s, p } of all) strip.append(pill(s, p));
@@ -351,7 +354,8 @@ function render(b) {
   if (!n) dcols.append(el("div", "empty", "Nothing finished yet."));
   for (const { s, p } of shown) {
     const col = el("div", "col dcol");
-    const hd = el("div", "hd sess"); hd.append(el("span", `dot ${stateClass(s)}`), el("span", "name", nameOf(s)), el("span", "n mono", String((doneBy.get(keyOf(s)) || []).length))); hd.title = p.name; col.append(hd);
+    const hd = el("div", "hd sess"); const pj = el("span", "proj"); const sw = el("i"); sw.style.background = tagColor(p.name); pj.append(sw, el("span", "", p.name));
+    hd.append(el("span", `dot ${stateClass(s)}`), pj, el("span", "name", nameOf(s)), el("span", "n mono", String((doneBy.get(keyOf(s)) || []).length))); col.append(hd);
     const items = doneBy.get(keyOf(s)) || [];
     if (!items.length) col.append(el("div", "empty", "—"));
     for (const [i, pp] of items.slice(0, DONE_PER_SESSION)) col.append(doneCard(i, pp));
