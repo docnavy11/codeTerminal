@@ -36,6 +36,17 @@ export async function startTestServer(opts: { sdk?: FakeOpts; cfg?: Partial<Serv
     denyExtra: [join(root, "files", "secret")], home: join(root, "home"),
     // real: the actual SDK and Claude Code login on this machine (test/real.test.ts)
     ...(opts.real ? {} : { spawnQuery: sdk.spawnQuery }), titler: async () => null, systemd: false,
+    // The board keeper's model read: never a real model call under test. The
+    // last user line is the title; "Fixed"/"done" in the assistant's last words
+    // means done; a trailing question mark means the owner is being asked.
+    assessor: async (t) => {
+      const lines = t.split("\n");
+      const user = [...lines].reverse().find((l) => l.startsWith("user: "))?.slice(6) ?? "";
+      const last = [...lines].reverse().find((l) => l.startsWith("assistant: "))?.slice(11) ?? "";
+      const status = /\bfixed\b|\bdone\b/i.test(last) ? "done" : /\?\s*$/.test(last) ? "needs_you" : user ? "working" : "idle";
+      return { summary: `about: ${t.replace(/\s+/g, " ").slice(0, 30)}`, title: user.slice(0, 80), status,
+        ...(status === "done" ? { result: last.split(/[.!]/)[0].trim() } : {}), ...(status === "needs_you" ? { question: last.trim() } : {}) };
+    },
     log: (l) => logs.push(l), warn: (l) => warns.push(l),
     ...opts.cfg,
   };

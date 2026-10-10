@@ -2,6 +2,8 @@ import { query, type Query, type SDKMessage, type SDKUserMessage, type Permissio
 import { Pushable, deferred } from "./pushable.js";
 import { browserTools, terminalTools, watchTools, promptTools, fileTools, type SubmitDetail } from "./tools.js";
 import { composePrompt } from "./prompt.js";
+import { todoTools, TODO_TOOLS } from "./tools.js";
+import type { TodoStore } from "./todos.js";
 import { summariseResult } from "./results.js";
 import { previewDiff } from "./diff.js";
 import { levelCovers, type BrowserAllowlist, type Level } from "./browser-allow.js";
@@ -41,7 +43,7 @@ export const MAX_TOOL_CALLS = num(process.env.CODETERM_MAX_TOOL_CALLS, 400);
 /** Screenshots in one turn before the tool refuses and asks the model to report. */
 export const MAX_SCREENSHOTS = num(process.env.CODETERM_MAX_SCREENSHOTS, 15);
 /** The in-process MCP servers this process registers; the tool-server check alarms only about these. */
-export const OUR_SERVERS = new Set(["terminal", "browser", "watch", "prompts", "files"]);
+export const OUR_SERVERS = new Set(["terminal", "browser", "watch", "prompts", "files", "todos"]);
 
 /** Cost ceiling for one session (the SDK's maxBudgetUsd); unset = none. */
 export const MAX_BUDGET_USD = process.env.CODETERM_MAX_BUDGET_USD ? num(process.env.CODETERM_MAX_BUDGET_USD, 0) || undefined : undefined;
@@ -82,6 +84,8 @@ export type SessionDeps = {
   maxBudgetUsd?: number;
   /** The browsable root; files under it can be offered as downloads. */
   filesRoot?: string;
+  /** Project todos (docs/design-todos.md): the store and the project root this chat's cwd belongs to. */
+  todos?: { store: TodoStore; rootFor: (cwd: string) => string };
   /** The SDK entry point. Tests inject a scripted one; production leaves it unset. */
   spawnQuery?: typeof query;
   /** Names a chat from its first message. Also an SDK call, also injectable. */
@@ -128,6 +132,8 @@ type Pending = {
   resolve: (r: PermissionResult) => void;
   tool: string;
   suggestions: PermissionUpdate[];
+  /** One line for a list of open cards: "Bash: npm test", "submit on indeed.com". */
+  summary?: string;
   /** Set for a browser-site ask: which host, action and level; "always" adds the host to the standing list at that level. */
   browser?: { host: string; action: string; level: Level };
   submit?: SubmitDetail;
@@ -235,7 +241,7 @@ export class Session {
         // Without this an assistant message only arrives complete, so a long
         // turn shows nothing at all until the model finishes its first block.
         includePartialMessages: true,
-        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...(d.shell === false ? [] : TERMINAL_TOOLS), ...WATCH_TOOLS, ...PROMPT_TOOLS, ...FILE_TOOLS],
+        allowedTools: [...READ_ONLY, ...BROWSER_TOOLS, ...(d.shell === false ? [] : TERMINAL_TOOLS), ...WATCH_TOOLS, ...PROMPT_TOOLS, ...FILE_TOOLS, ...(d.todos ? TODO_TOOLS : [])],
         mcpServers: {
           ...(d.shell === false ? {} : { terminal: terminalTools(this.#deps.getShell, d.tmux) }),
           ...(d.bridge ? { browser: browserTools(d.bridge, d.prefer, () => this.#budget, d.browserAllow === undefined ? undefined : this.#browserPolicy, () => this.#workspace, d.filesRoot,
@@ -245,6 +251,7 @@ export class Session {
           ...(d.bridge && d.watches ? { watch: watchTools(d.bridge, d.watches, () => d.chatId, d.prefer, d.browserAllow === undefined ? undefined : this.#browserPolicy) } : {}),
           ...(d.prompts ? { prompts: promptTools(d.prompts) } : {}),
           ...(d.filesRoot ? { files: fileTools(d.filesRoot, this.#workspace, (e) => this.#emit(e)) } : {}),
+          ...(d.todos ? { todos: todoTools(d.todos.store, () => d.todos!.rootFor(this.#workspace), `chat:${d.chatId}`) } : {}),
         },
         permissionMode: this.#mode,
         ...(model ? { model } : {}),
@@ -370,7 +377,7 @@ export class Session {
     const id = randomUUID();
     const { promise, resolve } = deferred<PermissionResult>();
     const sugg = suggestions ?? [];
-    this.#pending.set(id, { resolve, tool, suggestions: sugg });
+    this.#pending.set(id, { resolve, tool, suggestions: sugg, summary: describeCard(tool, input) });
 
     signal.addEventListener("abort", () => {
       if (!this.#pending.delete(id)) return;
@@ -414,6 +421,23 @@ export class Session {
    * session moves from planning to building in that mode — sent to the CLI as
    * a setMode permission update and applied to the session directly.
    */
+  /**
+   * The open cards, for the board: a person can allow or deny an approval
+   * there without opening the chat (a question still needs the chat — its
+   * answer is free text or a choice, not a yes or no).
+   */
+  pendingCards(): { id: string; kind: "approval" | "question" | "submit" | "browser"; tool: string; summary: string }[] {
+    return [...this.#pending].map(([id, p]) => ({
+      id,
+      kind: p.question ? "question" : p.submit ? "submit" : p.browser ? "browser" : "approval",
+      tool: p.tool,
+      summary: p.question ? (p.question.questions[0]?.question ?? "a question")
+        : p.submit ? `submit on ${(p.submit as { host?: string }).host ?? "a site"}`
+        : p.browser ? `${p.browser.host} (${p.browser.action}, ${p.browser.level})`
+        : p.summary ?? p.tool,
+    }));
+  }
+
   decide(id: string, decision: "allow" | "always" | "deny", mode?: PermissionMode): boolean {
     const p = this.#pending.get(id);
     if (!p) return false;
@@ -525,13 +549,13 @@ export class Session {
    * model can tell it from what the user actually typed. It is page-derived,
    * therefore untrusted — hence the explicit note rather than a bare paste.
    */
-  send(text: string, context?: string, images: { media_type: string; data: string }[] = []): string {
+  send(text: string, context?: string, images: { media_type: string; data: string }[] = [], trusted?: string): string {
     const uuid = randomUUID();   // the id the CLI keeps for this message; rewinds name it
     this.#busy = true;
     this.#thinkingTokens = 0;
     this.#turnToolCalls = 0; this.#budget.screenshots = 0; this.#turnStopped = false;
     this.#pushStatus();
-    const prompt = composePrompt(text || (images.length ? "(see the attached image)" : ""), context);
+    const prompt = composePrompt(text || (images.length ? "(see the attached image)" : ""), context, undefined, trusted);
     // Images go first, as the API recommends; the words follow.
     const content = images.length
       ? [...images.map((i) => ({ type: "image" as const, source: { type: "base64" as const, media_type: i.media_type as "image/png", data: i.data } })), { type: "text" as const, text: prompt }]

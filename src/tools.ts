@@ -19,6 +19,7 @@ import type { WatchRegistry, WatchCondition } from "./watches.js";
 import type { PromptStore } from "./prompts.js";
 import { hostOfUrl, type Level } from "./browser-allow.js";
 import { extractPdfText, looksLikePdf } from "./pdf.js";
+import type { TodoStore, TodoItem } from "./todos.js";
 
 const text = (v: unknown) => ({
   content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }],
@@ -280,6 +281,47 @@ export function promptTools(prompts: PromptStore) {
           prompts.remove(match.id);
           return text(`Deleted "${match.title}".`);
         }),
+    ],
+  });
+}
+
+/** Auto-approved: the model's claim on an item is a note on a list, not an action on the machine. */
+export const TODO_TOOLS = ["mcp__todos__list", "mcp__todos__claim", "mcp__todos__done", "mcp__todos__add", "mcp__todos__ask"];
+
+/**
+ * Project todos for the chat itself (docs/design-todos.md): see the queue,
+ * take an item, finish it, leave one — and ask the owner something without
+ * stalling or guessing. `root` is the project root the chat's cwd resolves
+ * to; `by` is how this chat signs its claims ("chat:<id>").
+ */
+export function todoTools(store: TodoStore, root: () => string, by: string) {
+  const line = (i: TodoItem) =>
+    `${i.id.slice(0, 8)}  ${i.status}${i.claimedBy ? ` (${i.claimedBy})` : ""}  ${i.for === "owner" ? "for the owner: " : ""}${i.text}${i.result ? `\n    → ${i.result}` : ""}`;
+  return createSdkMcpServer({
+    name: "todos",
+    version: "1.0.0",
+    alwaysLoad: true,
+    tools: [
+      tool("list", "The project's todo list from the owner's board: what is queued for sessions here, what is claimed and by whom, and open questions for the owner.",
+        { all: z.boolean().optional().describe("Include finished items (default false)") },
+        async (a) => {
+          const items = store.read(root()).filter((i) => a.all || i.status === "queued" || i.status === "claimed");
+          return text(items.length ? items.map(line).join("\n") : "Nothing on the list for this project.");
+        }),
+      tool("claim", "Take a queued item from the project's list before working on it, so other sessions see it is yours. Fails if another session already holds it.",
+        { id: z.string().describe("The item's id, or its first 8 characters") },
+        async (a) => text(`Claimed.\n${line(store.claim(root(), a.id, by))}`)),
+      tool("done", "Finish an item you hold (or a queued one you did without claiming), with one line on the outcome.",
+        { id: z.string().describe("The item's id, or its first 8 characters"), result: z.string().max(500).describe("One line: what was done, where to look") },
+        async (a) => text(`Done.\n${line(store.done(root(), a.id, a.result, by))}`)),
+      tool("add", "Leave an item on the project's list for a later session (or this one): follow-up work you noticed but should not start now.",
+        { text: z.string().min(1).max(2000) },
+        async (a) => text(`Added.\n${line(store.add(root(), { text: a.text, addedBy: by }))}`)),
+      tool("ask",
+        "File a question or a todo for the owner on the board — a decision you should not take alone, or work only they can do (a DNS record, a payment, a password). " +
+        "Use it instead of stalling or guessing; carry on with what does not depend on the answer. The answer reaches you in a later turn.",
+        { text: z.string().min(1).max(2000).describe("The question or task, with enough context to answer it cold") },
+        async (a) => text(`Filed for the owner.\n${line(store.add(root(), { text: a.text, for: "owner", addedBy: by }))}`)),
     ],
   });
 }

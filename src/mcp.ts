@@ -27,6 +27,7 @@ import * as files from "./files.js";
 import { fill } from "./prompts.js";
 import type { Project } from "./projects.js";
 import { listSkills, readSkill, installSkill, removeSkill, MAX_FILES } from "./skills.js";
+import type { TodoStore, TodoFor } from "./todos.js";
 import { join } from "node:path";
 
 export type McpDeps = {
@@ -49,6 +50,8 @@ export type McpDeps = {
   claudeHome?: string;
   /** The server's notifier (Telegram / webhook), when any target is configured. */
   notify?: (n: { title: string; message: string; url?: string }) => Promise<{ sent: string[]; failed: { target: string; error: string }[] }>;
+  /** Project todos (docs/design-todos.md). rootFor turns a project id/name or a directory into the project root, or throws. */
+  todos?: { store: TodoStore; rootFor: (projectOrDir: string) => string };
 };
 
 /** notify: at most this many messages in NOTIFY_WINDOW_MS, from every caller together. */
@@ -337,6 +340,35 @@ export function buildMcpServer(d: McpDeps): McpServer {
       description: "List the scheduled prompts on this server: title, when, project, next and last run.",
       annotations: { readOnlyHint: true },
     }, async () => text(schedules()));
+  }
+
+  if (d.todos) {
+    const { store, rootFor } = d.todos;
+    const where = z.string().min(1).max(500).describe("Project id or name (list_projects), or an absolute directory in it");
+    const view = (root: string) => ({ root, items: store.read(root).map((i) => ({ id: i.id, text: i.text, for: i.for, status: i.status,
+      ...(i.claimedBy ? { claimedBy: i.claimedBy } : {}), ...(i.result ? { result: i.result } : {}), addedBy: i.addedBy, addedAt: new Date(i.addedAt).toISOString() })) });
+    const guard = <T,>(fn: () => T) => { try { return text(fn()); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); } };
+    server.registerTool("list_todos", {
+      description: "A project's todo list from the owner's board: queued work for sessions there, claimed items and by whom, questions for the owner. Finished items only with all=true.",
+      inputSchema: { project: where, all: z.boolean().optional() },
+      annotations: { readOnlyHint: true },
+    }, async ({ project, all }) => guard(() => { const v = view(rootFor(project)); return all ? v : { ...v, items: v.items.filter((i) => i.status === "queued" || i.status === "claimed") }; }));
+    server.registerTool("add_todo", {
+      description: "Leave an item on a project's list: for the sessions working there (default), or for the owner (for='owner': a question or a task only they can do). Sign it with `by`, e.g. tmux:<session> or laptop.",
+      inputSchema: { project: where, text: z.string().min(1).max(2000), for: z.enum(["claude", "owner"]).optional(), by: z.string().max(80).optional() },
+    }, async ({ project, text: t, for: f, by }) => guard(() => store.add(rootFor(project), { text: t, for: f as TodoFor | undefined, addedBy: by || "mcp" })));
+    server.registerTool("claim_todo", {
+      description: "Take a queued item before working on it, so the board and other sessions see it is yours. Fails if another session holds it.",
+      inputSchema: { project: where, id: z.string().describe("The item id or its first 8 characters"), by: z.string().min(1).max(80).describe("Who claims: tmux:<session>, laptop, …") },
+    }, async ({ project, id, by }) => guard(() => store.claim(rootFor(project), id, by)));
+    server.registerTool("done_todo", {
+      description: "Finish an item with one line on the outcome. For an item addressed to the owner this records the answer.",
+      inputSchema: { project: where, id: z.string(), result: z.string().max(500).optional(), by: z.string().max(80).optional() },
+    }, async ({ project, id, result, by }) => guard(() => store.done(rootFor(project), id, result, by)));
+    server.registerTool("drop_todo", {
+      description: "Drop an item from a project's list without doing it.",
+      inputSchema: { project: where, id: z.string() },
+    }, async ({ project, id }) => guard(() => store.drop(rootFor(project), id)));
   }
 
   if (d.tmux) {

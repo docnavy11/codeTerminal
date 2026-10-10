@@ -114,6 +114,23 @@ export async function hasSession(name: string): Promise<boolean> {
 }
 
 /**
+ * Type a line into a session and press Enter — how the board hands an item to
+ * a Claude Code session running in tmux. Measured 2026-10-09 on a throwaway
+ * session: `send-keys -l <text>` then `send-keys Enter` lands as one prompt
+ * and the reply came in two seconds. The text is collapsed to one line: a
+ * newline in the input box would send what came before it. Only for a pane
+ * the caller has read as idle; typed into a working session it would queue
+ * behind the running turn.
+ */
+export async function sendLine(name: string, text: string): Promise<void> {
+  if (!validName(name)) throw new Error("no such session");
+  const line = text.replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (!line) throw new Error("nothing to send");
+  await run("tmux", ["send-keys", "-t", `=${name}:`, "-l", line], { timeout: 5000 });
+  await run("tmux", ["send-keys", "-t", `=${name}:`, "Enter"], { timeout: 5000 });
+}
+
+/**
  * What a session is printing, for the agent — and unlike the live pane, this
  * works when nobody is attached at all, which is the point of asking a
  * background session what it is doing.

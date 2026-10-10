@@ -7,6 +7,7 @@ import { Store, titleFrom, type ChatRecord, type ChatSummary } from "./store.js"
 import { generateTitle } from "./titles.js";
 import { ChatSearch } from "./search.js";
 import { listProjects, resolveProject, orderByRecency, GENERAL_ID, type Project } from "./projects.js";
+import { queueBlock, type Steps } from "./todos.js";
 
 const MAX_EVENTS = 3000;
 
@@ -61,8 +62,20 @@ export class LiveChat {
   #closed = false;
   #onChange: () => void;
 
+  /**
+   * The model's own step list, from its last TodoWrite call — what the board
+   * shows under a busy chat. Seeded from the record so a chat admitted from
+   * disk shows where it left off.
+   */
+  #steps: Steps = null;
+  get steps(): Steps { return this.#steps; }
+  /** An approval card or a question is open: waiting on the person, not on Claude. */
+  get waiting(): boolean { return this.#session.status().state === "awaiting"; }
+
   #onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void;
   #onModels: (e: Extract<ClientEvent, { kind: "models" }>) => void;
+  /** Called at every turn_end — the board records finished work from it. */
+  onTurnEnd?: (chat: LiveChat) => void;
   constructor(rec: ChatRecord, store: Store, workspace: string,
               deps: Omit<SessionDeps, "chatId">, mode: PermissionMode, onChange: () => void,
               onReady: (e: Extract<ClientEvent, { kind: "ready" }>) => void = () => {},
@@ -73,6 +86,7 @@ export class LiveChat {
     this.#store = store;
     this.#workspace = workspace;
     this.#onChange = onChange;
+    for (const e of rec.events) if (e.kind === "tool" && e.name === "TodoWrite") this.#steps = stepsOf(e.input);
     this.#session = this.#spawn(deps, mode);
   }
 
@@ -109,7 +123,11 @@ export class LiveChat {
   #resumeGone = false;
 
   #send(text: string, context?: string, images: { media_type: string; data: string }[] = []): string {
-    const uuid = this.#session.send(text, context, images);
+    // The project queue rides along as owner-authored context (todos.ts).
+    // Computed per send, so a claim made elsewhere a moment ago is reflected.
+    const todos = this.#deps.todos;
+    const trusted = todos ? queueBlock(todos.store.read(todos.rootFor(this.cwd)), this.#rec.id, Date.now()) ?? undefined : undefined;
+    const uuid = this.#session.send(text, context, images, trusted);
     if (this.#inFlight === null) this.#inFlight = { text, context, images, uuid };
     return uuid;
   }
@@ -211,6 +229,7 @@ export class LiveChat {
     }
 
     if (e.kind === "ready") { this.#onReady(e); this.#inFlight = null; }
+    if (e.kind === "tool" && e.name === "TodoWrite") this.#steps = stepsOf(e.input);
     if (e.kind === "models") this.#onModels(e);
     // Measured against CLI 2.1.280 with a made-up resume id: an error result
     // "No conversation found with session ID: <id>", then the stream throws
@@ -225,6 +244,7 @@ export class LiveChat {
     // before the turn's result, so this does not cancel a /clear that worked.
     if (e.kind === "turn_end") this.#clearRequested = false;
     this.#rec.events.push(e);
+    if (e.kind === "turn_end") { try { this.onTurnEnd?.(this); } catch { /* the board's business, never the chat's */ } }
     if (this.#rec.events.length > MAX_EVENTS) {
       this.#rec.events.splice(0, this.#rec.events.length - MAX_EVENTS);
     }
@@ -467,6 +487,8 @@ export class Manager {
 
   /** Told when any chat's title, project or list-visible state changes. */
   onListChanged?: () => void;
+  /** Told when any live chat ends a turn (the board records the work). */
+  onTurnEnd?: (chat: LiveChat) => void;
   /** True once any session has reported `ready` this run — the login works. */
   readySeen = false;
   /** From the most recent session start: each in-process MCP server and its status; null before any. */
@@ -533,6 +555,8 @@ export class Manager {
 
   /** Live chats, so a watch can find the conversation that set it. */
   live(id: string): LiveChat | undefined { return this.#chats.get(id); }
+  /** Every chat in the pool, for the board: these are the ones with a state worth showing. */
+  liveChats(): LiveChat[] { return [...this.#chats.values()]; }
 
   /** Bring a chat into the pool, evicting an idle one if it is full. */
   get(id: string): LiveChat | null {
@@ -643,6 +667,7 @@ export class Manager {
     const chat = new LiveChat(rec, this.#store, this.#workspace, this.#deps, mode,
       () => this.onListChanged?.(), (ready) => { this.readySeen = true; this.mcpServers = ready.servers?.filter((s) => OUR_SERVERS.has(s.name)) ?? null; },
       (models) => { this.models = models; });
+    chat.onTurnEnd = (c) => this.onTurnEnd?.(c);
     this.#chats.set(rec.id, chat);
     return chat;
   }
@@ -677,6 +702,14 @@ export class Manager {
     for (const c of this.#chats.values()) c.close();
     this.#chats.clear();
   }
+}
+
+/** TodoWrite carries the whole list each time: todos[{content, status, activeForm}]. */
+function stepsOf(input: unknown): Steps {
+  const todos = (input as { todos?: unknown } | null)?.todos;
+  if (!Array.isArray(todos)) return null;
+  return todos.filter((t) => t && typeof t === "object" && typeof (t as { content?: unknown }).content === "string")
+    .map((t) => ({ content: String((t as { content: string }).content).slice(0, 200), status: String((t as { status?: unknown }).status ?? "pending") }));
 }
 
 /** Never used: nothing in it but what a session says about itself, and no schedule owns it. */

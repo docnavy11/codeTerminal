@@ -43,6 +43,10 @@ paste into the extension.
   click its icon, enter your server as `ws://127.0.0.1:8123/ext`, press Enter.
   The side panel opens from the same icon. Reload the extension after pulling.
 - **Mobile page:** `http://<host>:8123/m` — add it to the home screen.
+- **The board:** `http://<host>:8123/board.html` (also the right pane's **board**
+  tab) — every project with a live session or a queue: which sessions are busy
+  or idle, what is queued for them, and questions they left for you. See
+  `docs/using.md`, "The board".
 - **As a service** (Linux, systemd): `sudo deploy/install.sh` — see
   [Running as a service](docs/running.md#running-as-a-service).
 

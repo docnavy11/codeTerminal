@@ -9,11 +9,12 @@
 const termEl = document.getElementById("term"), filesEl = document.getElementById("files");
 const sessionsEl = document.getElementById("sessions");
 const managePaneEl = document.getElementById("managepane"), manageFrame = document.getElementById("manageframe");
+const boardPaneEl = document.getElementById("boardpane"), boardFrame = document.getElementById("boardframe");
 const note = document.getElementById("rightnote");
 const refreshBtn = document.getElementById("rrefresh");
 const railLabel = document.getElementById("rlabel");   // names the view the collapsed rail stands in for
 let filesRoot = "";
-let manageLoaded = false;
+let manageLoaded = false, boardLoaded = false;
 
 // Called by the shared client's chat|files tabs; the transcript stays put.
 PLATFORM.showFiles = (on) => PLATFORM.showView(on ? "files" : "shell");
@@ -26,12 +27,21 @@ let rightView = "shell";
    files view puts a root path there. term.js asks for a repaint when the
    session moves underneath it. */
 const repaintNote = () => {
-  note.textContent = rightView === "files" ? filesRoot : rightView === "manage" ? "" : TERMPANE.noteFor(rightView);
+  note.textContent = rightView === "files" ? filesRoot : rightView === "manage" || rightView === "board" ? "" : TERMPANE.noteFor(rightView);
 };
 PLATFORM.showView = (view) => {
   rightView = view;
   termEl.hidden = view !== "shell"; filesEl.hidden = view !== "files"; sessionsEl.hidden = view !== "sessions";
   managePaneEl.hidden = view !== "manage";
+  boardPaneEl.hidden = view !== "board";
+  // The board (board.html) is framed the same way: sessions and todos across
+  // projects, polling on its own, with nothing for this pane to duplicate.
+  if (view === "board" && !boardLoaded) {
+    boardLoaded = true;
+    // Hand it this page's theme: the attribute the shared client set here, so the frame never disagrees with its host.
+    const theme = document.documentElement.getAttribute("data-theme") || "";
+    boardFrame.src = `/board.html?embed=1${theme ? `&theme=${encodeURIComponent(theme)}` : ""}`;
+  }
   // Loaded once, on first visit — a tab nobody opens costs nothing, and the
   // page keeps its own state (scroll, open tab) for the rest of the session.
   // embed=1 tells manage.html it is framed here, not standalone: its own
@@ -40,7 +50,7 @@ PLATFORM.showView = (view) => {
   if (view === "manage" && !manageLoaded) { manageLoaded = true; manageFrame.src = "/manage.html?embed=1"; }
   repaintNote();
   TERMPANE.showView(view);
-  if (railLabel) railLabel.textContent = view === "files" ? "files" : view === "sessions" ? "sessions" : view === "manage" ? "manage" : "terminal";
+  if (railLabel) railLabel.textContent = view === "files" ? "files" : view === "sessions" ? "sessions" : view === "manage" ? "manage" : view === "board" ? "board" : "terminal";
   // ↻ redraws the terminal, so it is only offered while the terminal is up.
   if (refreshBtn) refreshBtn.hidden = view !== "shell";
 };
