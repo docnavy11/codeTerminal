@@ -158,6 +158,8 @@ const running = await boot({
   serverBrowser: { profileDir: join(ROOT, "server-browser-profile"), extensionDir: join(import.meta.dirname, "..", "..", "extension") },
   maxUpload: 1024 * 1024, maxZip: 4 * 1024 * 1024, extraOrigins: [], forceLocal: true, denyExtra: [], home: join(ROOT, "home"),
   spawnQuery: sdk.spawnQuery, titler: async () => null,
+  // No keeper reads under the browser suite: a real Haiku call per turn end would cost money and time here.
+  assessor: async () => null,
   // stdout carries only READY; everything else goes to stderr (the harness's log file)
   log: (l) => console.error(l), warn: (l) => console.error(l),
 });

@@ -244,7 +244,8 @@ export class LiveChat {
     // before the turn's result, so this does not cancel a /clear that worked.
     if (e.kind === "turn_end") this.#clearRequested = false;
     this.#rec.events.push(e);
-    if (e.kind === "turn_end") { try { this.onTurnEnd?.(this); } catch { /* the board's business, never the chat's */ } }
+    // After the clients have it: the keeper's work (a model call's spawn) must never sit between a turn's end and the client seeing it.
+    if (e.kind === "turn_end") setImmediate(() => { try { this.onTurnEnd?.(this); } catch { /* the board's business, never the chat's */ } });
     if (this.#rec.events.length > MAX_EVENTS) {
       this.#rec.events.splice(0, this.#rec.events.length - MAX_EVENTS);
     }
