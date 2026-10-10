@@ -1,7 +1,9 @@
 import express from "express";
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, appendFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { pipeline, type Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
@@ -11,7 +13,8 @@ import { Manager } from "./conversation.js";
 import { BrowserBridge } from "./browser.js";
 import * as files from "./files.js";
 import { pruneScreenshots } from "./screenshots.js";
-import { MAX_PASTE_BYTES, PASTE_TYPES, savePastedImage } from "./pasted.js";
+import { MAX_PASTE_BYTES, PASTE_TYPES, savePastedImage, pasteExtension } from "./pasted.js";
+import { BoardSettings } from "./board-settings.js";
 import { UsageLog } from "./usage.js";
 import { WatchRegistry } from "./watches.js";
 import { PromptStore, hostOf, fill } from "./prompts.js";
@@ -23,7 +26,7 @@ import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
 import { TelegramListener } from "./telegram-listener.js";
 import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture, sendLine, hasSession } from "./tmux.js";
-import { TodoStore, buildBoard, projectRootOf, type TodoFor } from "./todos.js";
+import { TodoStore, buildBoard, projectRootOf, blockersOf, type TodoFor, type Board } from "./todos.js";
 import { Insights, readPane, lastAssistantText, lastUserText, type Assessor, type Assessment } from "./insight.js";
 import { transcript } from "./mcp.js";
 import { ZipFile } from "yazl";
@@ -270,6 +273,10 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const todos = new TodoStore({ warn });
   const todoRoot = (cwd: string) => projectRootOf(cwd, cfg.projectsRoot);
   const insights = new Insights(cfg.assessor, Date.now, join(WORKSPACE, ".insights.json"));
+  const settings = new BoardSettings(join(WORKSPACE, ".board.json"));
+  insights.paused = settings.keeperPaused;
+  const attachDir = join(WORKSPACE, ".todo-attachments");
+  const misreadsPath = join(WORKSPACE, "keeper-misreads.jsonl");
 
   const convo = new Manager(
     WORKSPACE,
@@ -830,7 +837,8 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
    * entries go to the model (cached, insight.ts).
    */
   const gatherSessions = async () => {
-    const sessions = SHELL && (await haveTmux()) ? await listSessions().catch(() => []) : [];
+    let tmuxOk = false;
+    const sessions = SHELL && (await haveTmux()) ? await listSessions().then((l) => { tmuxOk = true; return l; }).catch(() => []) : [];
     const tmux = await Promise.all(sessions.map(async (s) => {
       let pane: ReturnType<typeof readPane> | undefined;
       if (s.command === "claude") { try { pane = readPane(await capture(s.name, 80)); } catch { pane = undefined; } }
@@ -848,13 +856,50 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
         summary: a?.summary ?? null, task: a, model: c.model };
     });
     insights.keep([...chats.map((c) => `chat:${c.id}`), ...tmux.map((s) => `tmux:${s.name}`)]);
-    return { chats, tmux };
+    return { chats, tmux, tmuxOk };
   };
   const rootOfChat = (rec: { project?: string }) => (rec.project ? todoRoot(resolveProject(convo.projects(), rec.project).path) : resolve(WORKSPACE));
-  const board = async () => {
-    const { chats, tmux } = await gatherSessions();
+  /** The board, with the keeper's moves applied first. `tmuxOk` is false when tmux could not be listed (so "gone" means nothing). */
+  const board = async (): Promise<{ board: Board; tmuxOk: boolean }> => {
+    const { chats, tmux, tmuxOk } = await gatherSessions();
     keeperApply(chats, tmux);
-    return buildBoard({ now: Date.now(), projectsRoot: cfg.projectsRoot, projects: convo.projects(), chats, tmux, todos });
+    return { board: buildBoard({ now: Date.now(), projectsRoot: cfg.projectsRoot, projects: convo.projects(), chats, tmux, todos }), tmuxOk };
+  };
+
+  /* Links on a done card: the chat that did it (when it still exists) and the
+     commit its result names (when git in that project knows it). */
+  const gitCache = new Map<string, string | null>();
+  const git = (root: string, args: string[]): string | null => {
+    const k = `${root}\0${args.join(" ")}`;
+    if (gitCache.has(k)) return gitCache.get(k)!;
+    let out: string | null = null;
+    try { out = execFileSync("git", ["-C", root, ...args], { encoding: "utf8", timeout: 1500, stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { out = null; }
+    gitCache.set(k, out); if (gitCache.size > 500) gitCache.delete(gitCache.keys().next().value!);
+    return out;
+  };
+  const remoteBase = (root: string): string | null => {
+    const u = git(root, ["remote", "get-url", "origin"]); if (!u) return null;
+    const m = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(u); return m ? `https://github.com/${m[1]}` : null;
+  };
+  const linksFor = (root: string, item: { text: string; result?: string; claimedBy?: string }, chatIds: Set<string>) => {
+    const out: { chatId?: string; commit?: { hash: string; url?: string } } = {};
+    if (item.claimedBy?.startsWith("chat:") && chatIds.has(item.claimedBy.slice(5))) out.chatId = item.claimedBy.slice(5);
+    for (const m of `${item.result ?? ""} ${item.text}`.matchAll(/\b([0-9a-f]{7,12})\b/g)) {
+      const h = m[1]; if (!/[0-9]/.test(h) || !/[a-f]/.test(h)) continue;
+      const full = git(root, ["rev-parse", "--verify", "--quiet", `${h}^{commit}`]); if (!full) continue;
+      const base = remoteBase(root); out.commit = { hash: h, ...(base ? { url: `${base}/commit/${full}` } : {}) }; break;
+    }
+    return out.chatId || out.commit ? out : undefined;
+  };
+  const boardView = async () => {
+    const { board: b } = await board();
+    const chatIds = new Set(convo.list().map((c) => c.id));
+    return {
+      ...b,
+      keeper: { paused: settings.keeperPaused, ...insights.stats() },
+      projects: b.projects.map((p) => ({ ...p, auto: settings.auto(p.root),
+        queue: p.queue.map((i) => (i.status === "done" ? { ...i, links: linksFor(p.root, i, chatIds) } : i)) })),
+    };
   };
 
   /* The keeper (docs/design-todos.md §15). Haiku reads each thread's tail
@@ -874,9 +919,14 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   const applyOne = (root: string, key: string, a: Assessment | null | undefined) => {
     if (!a || !a.title) return;
     try {
-      if (todos.open(root).some((i) => i.claimedBy === key)) return;
-      if (a.status === "done" && !alreadyRecorded(root, key, a.title)) todos.record(root, { text: a.title, result: a.result, by: key });
-      else if (a.status === "needs_you" && a.question && !alreadyAsked(root, key, a.question)) todos.add(root, { text: a.question, for: "owner", addedBy: key });
+      const held = todos.open(root).filter((i) => i.claimedBy === key && i.for === "claude");
+      // A question for the owner is a question whether or not the session holds an item.
+      if (a.status === "needs_you" && a.question && !alreadyAsked(root, key, a.question)) { todos.add(root, { text: a.question, for: "owner", addedBy: key }); return; }
+      if (a.status !== "done") return;
+      // The session says the whole task is finished: that closes the item it holds (it should have
+      // called done itself; this is the net under it). ↩ reopens one the keeper closed wrongly.
+      if (held.length) { todos.done(root, held[0].id, a.result, key); return; }
+      if (!alreadyRecorded(root, key, a.title) && !settings.isSuppressed(key, a.title)) todos.record(root, { text: a.title, result: a.result, by: key });
     } catch (e) { warn(`[todos] keeper: ${e instanceof Error ? e.message : String(e)}`); }
   };
   const keeperApply = (chats: { id: string; project: string | null; task?: Assessment | null }[], tmux: { name: string; path: string; task?: Assessment | null }[]) => {
@@ -890,8 +940,54 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   };
   // A turn just ended: ask the model now rather than at the next refresh window.
   convo.onTurnEnd = (chat) => { insights.get(`chat:${chat.id}`, transcript(chat.record.events, 12).join("\n"), true); };
-  const keeperTick = setInterval(() => { void gatherSessions().then(({ chats, tmux }) => keeperApply(chats, tmux)).catch(() => {}); }, cfg.keeperMs ?? 10_000);
+  /* Claims whose holder is gone go back to the queue: a tmux session that
+     exited, a chat that was deleted. (An idle holder is only marked stale on
+     the board; never released by itself.) tmuxOk guards against tmux being
+     unreachable for a moment, which would make every session look gone. */
+  const releaseOrphans = (b: Board, tmuxOk: boolean) => {
+    for (const p of b.projects) for (const i of p.queue) {
+      if (i.status !== "claimed" || i.stale !== "gone" || !i.claimedBy) continue;
+      if (i.claimedBy.startsWith("tmux:") && !tmuxOk) continue;
+      if (i.claimedBy.startsWith("chat:") && convo.list().some((c) => c.id === i.claimedBy!.slice(5))) continue;   // an evicted chat still exists: stale at most
+      try { todos.release(p.root, i.id); log(`[todos] released "${i.text.slice(0, 50)}": ${i.claimedBy} is gone`); } catch { /* already moved */ }
+    }
+  };
+  /* Auto-dispatch (opt-in per project): an idle session takes the next ready
+     item without a press. Guards, because two sessions in one working tree
+     have clobbered each other: only when nothing in the project is busy,
+     waiting or already holding an item; one hand-over per project per
+     AUTO_COOLDOWN_MS; a blocked item is never next. */
+  const AUTO_COOLDOWN_MS = 90_000;
+  const autoLast = new Map<string, number>();
+  const autoDispatch = async (b: Board) => {
+    for (const p of b.projects) {
+      if (!settings.auto(p.root)) continue;
+      if (Date.now() - (autoLast.get(p.root) ?? 0) < AUTO_COOLDOWN_MS) continue;
+      if (p.sessions.some((s) => s.state === "busy" || s.state === "working" || s.state === "waiting")) continue;
+      if (p.queue.some((i) => i.status === "claimed" && !i.stale)) continue;
+      const next = p.queue.find((i) => i.status === "queued" && !i.waitingOn);
+      const who = p.sessions.filter((s) => s.state === "idle").sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "chat" ? -1 : 1))[0];
+      if (!next || !who) continue;
+      autoLast.set(p.root, Date.now());
+      const r = await handOver(p.root, next.id, who.kind === "chat" ? { chatId: who.id } : { tmux: who.name });
+      log(`[todos] auto-dispatch in ${p.name}: "${next.text.slice(0, 50)}" → ${who.kind === "chat" ? who.title : who.name}: ${r.status}${r.status === 200 ? "" : ` ${String(r.body.error ?? "")}`}`);
+    }
+  };
+  let keeperBusy = false;
+  const keeperTick = setInterval(() => {
+    if (keeperBusy) return;
+    keeperBusy = true;
+    void board().then(async ({ board: b, tmuxOk }) => { releaseOrphans(b, tmuxOk); await autoDispatch(b); })
+      .catch((e) => warn(`[todos] tick: ${e instanceof Error ? e.message : String(e)}`)).finally(() => { keeperBusy = false; });
+  }, cfg.keeperMs ?? 10_000);
   keeperTick.unref();
+  // A deleted chat releases what it held.
+  const prevRemoved = convo.onChatRemoved;
+  convo.onChatRemoved = (id) => {
+    prevRemoved?.(id);
+    for (const p of convo.projects()) { const r = todoRoot(p.path); if (todos.has(r)) { try { todos.releaseBy(r, `chat:${id}`); } catch { /* not a directory any more */ } } }
+    const w = resolve(WORKSPACE); if (todos.has(w)) { try { todos.releaseBy(w, `chat:${id}`); } catch { /* idem */ } }
+  };
 
   /** Answer an open approval card from the board — the same decision the side panel's buttons make. */
   app.post("/board/decide", guard, express.json({ limit: "4kb" }), (req, res) => {
@@ -904,7 +1000,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     res.json({ ok: true });
   });
   app.get("/board", guard, async (_req, res) => {
-    try { res.json({ ...(await board()), allProjects: convo.projects().filter((p) => !p.general).map((p) => ({ id: p.id, name: p.name })) }); }
+    try { res.json({ ...(await boardView()), allProjects: convo.projects().filter((p) => !p.general).map((p) => ({ id: p.id, name: p.name })) }); }
     catch (e) { res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); }
   });
   /** ?dir=<abs> or ?project=<id|name>: the list, for the terminal-side hook and the status line. */
@@ -921,9 +1017,75 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   });
   app.post("/todos", guard, express.json({ limit: "16kb" }), (req, res) => {
     try {
-      const b = req.body as { project?: string; dir?: string; root?: string; text?: string; for?: string; addedBy?: string };
+      const b = req.body as { project?: string; dir?: string; root?: string; text?: string; for?: string; addedBy?: string; notes?: string; images?: string[]; blockedBy?: string[] };
       const root = todoWhere(b.root ?? b.project ?? b.dir ?? "");
-      res.json(todos.add(root, { text: String(b.text ?? ""), for: b.for === "owner" ? "owner" : "claude", addedBy: b.addedBy ? String(b.addedBy) : "owner" }));
+      res.json(todos.add(root, { text: String(b.text ?? ""), for: b.for === "owner" ? "owner" : "claude", addedBy: b.addedBy ? String(b.addedBy) : "owner",
+        notes: b.notes === undefined ? undefined : String(b.notes), images: Array.isArray(b.images) ? b.images.map(String) : undefined, blockedBy: Array.isArray(b.blockedBy) ? b.blockedBy.map(String) : undefined }));
+    } catch (e) { todoFail(res, e); }
+  });
+  /** An image for a task, kept (unlike a paste, which is pruned): in the workspace, readable by the session that takes the task. */
+  app.post("/todos/attach", guard, express.raw({ type: PASTE_TYPES, limit: MAX_PASTE_BYTES }), (req, res) => {
+    try {
+      const body = req.body as Buffer | undefined;
+      if (!Buffer.isBuffer(body) || !body.length) throw new Error("expected image bytes");
+      const ext = pasteExtension(String(req.headers["content-type"] ?? ""));
+      if (!ext) throw new Error(`not an image this takes (${PASTE_TYPES.join(", ")})`);
+      mkdirSync(attachDir, { recursive: true, mode: 0o700 });
+      const path = join(attachDir, `task-${Date.now()}-${randomUUID().slice(0, 6)}.${ext}`);
+      writeFileSync(path, body, { mode: 0o600 });
+      res.json({ path, bytes: body.length });
+    } catch (e) { todoFail(res, e); }
+  });
+  /** A task's attached image, for the board's thumbnails: only files in the attachment directory. */
+  app.get("/todos/attachment", guard, (req, res) => {
+    const p = resolve(String(req.query.path ?? ""));
+    if (!p.startsWith(resolve(attachDir) + "/") || !existsSync(p)) { res.status(404).json({ error: "no such attachment" }); return; }
+    res.sendFile(p);
+  });
+  /** Finished work across the file and the archive pruning appends to: ?project=|dir=, optional q, limit. */
+  app.get("/todos/history", guard, (req, res) => {
+    try {
+      const root = todoWhere(String(req.query.project ?? req.query.dir ?? ""));
+      res.json({ root, items: todos.history(root, String(req.query.q ?? ""), Math.min(500, Number(req.query.limit) || 100)) });
+    } catch (e) { todoFail(res, e); }
+  });
+  /** The keeper's pause switch and its reads today. */
+  app.get("/board/keeper", guard, (_req, res) => { res.json({ paused: settings.keeperPaused, ...insights.stats() }); });
+  app.post("/board/keeper", guard, express.json({ limit: "1kb" }), (req, res) => {
+    const paused = (req.body as { paused?: unknown })?.paused === true;
+    settings.setPaused(paused); insights.paused = paused;
+    res.json({ paused, ...insights.stats() });
+  });
+  /** Auto-dispatch for one project: on or off. */
+  app.post("/board/auto", guard, express.json({ limit: "1kb" }), (req, res) => {
+    try {
+      const b = req.body as { root?: string; on?: unknown };
+      const root = todoWhere(b.root ?? ""); settings.setAuto(root, b.on === true);
+      res.json({ root, on: settings.auto(root) });
+    } catch (e) { todoFail(res, e); }
+  });
+  /**
+   * The owner says the keeper got a card wrong: "not_done" removes a task that was not one (and
+   * keeps the keeper from recording that title again), "title" renames it. Either way the thread
+   * the keeper read is saved to keeper-misreads.jsonl, which `npm run eval:keeper -- --reported`
+   * scores as new cases.
+   */
+  app.post("/board/misread", guard, express.json({ limit: "4kb" }), (req, res) => {
+    try {
+      const b = req.body as { root?: string; id?: string; wanted?: string; title?: string };
+      const root = todoWhere(b.root ?? "");
+      const item = todos.read(root).find((i) => i.id === b.id || (String(b.id ?? "").length >= 8 && i.id.startsWith(String(b.id))));
+      if (!item || item.status !== "done") throw new Error("no such finished card");
+      const key = item.claimedBy;
+      if (!key || item.addedBy !== key || !/^(chat|tmux):/.test(key)) throw new Error("only a card the keeper recorded can be reported");
+      const title = String(b.title ?? "").trim();
+      if (b.wanted === "title" && !title) throw new Error("say what the title should be");
+      appendFileSync(misreadsPath, JSON.stringify({ at: Date.now(), key, tail: insights.tail(key) ?? "",
+        said: { title: item.text, status: "done", ...(item.result ? { result: item.result } : {}) },
+        wanted: b.wanted === "title" ? { status: "done", title } : { status: "working" } }) + "\n");
+      settings.suppress(key, item.text);
+      if (b.wanted === "title") todos.edit(root, item.id, title); else todos.remove(root, item.id);
+      res.json({ ok: true });
     } catch (e) { todoFail(res, e); }
   });
   app.post("/todos/reorder", guard, express.json({ limit: "16kb" }), (req, res) => {
@@ -936,7 +1098,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
   app.patch("/todos/:id", guard, express.json({ limit: "16kb" }), async (req, res) => {
     try {
       const id = String(req.params.id);
-      const b = req.body as { root?: string; action?: string; result?: string; text?: string; by?: string };
+      const b = req.body as { root?: string; action?: string; result?: string; text?: string; by?: string; notes?: string; images?: string[]; blockedBy?: string[] };
       const root = todoWhere(b.root ?? "");
       const by = b.by ? String(b.by).slice(0, 80) : "owner";
       switch (b.action) {
@@ -964,47 +1126,62 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
         case "drop": res.json(todos.drop(root, id)); return;
         case "release": res.json(todos.release(root, id)); return;
         case "edit": res.json(todos.edit(root, id, String(b.text ?? ""))); return;
-        default: throw new Error("action: claim | done | answer | drop | release | edit");
+        case "reopen": res.json(todos.reopen(root, id)); return;
+        case "annotate": res.json(todos.annotate(root, id, {
+          ...(b.notes !== undefined ? { notes: String(b.notes) } : {}), ...(Array.isArray(b.images) ? { images: b.images.map(String) } : {}), ...(Array.isArray(b.blockedBy) ? { blockedBy: b.blockedBy.map(String) } : {}) })); return;
+        default: throw new Error("action: claim | done | answer | drop | release | edit | reopen | annotate");
       }
     } catch (e) { todoFail(res, e); }
   });
-  /** send next: claim the item for a session and hand it over — a chat is prompted, a tmux session is typed into. Idle only; the claim is undone if the handover fails. */
+  /** What a session is told when it is handed an item: the text, the notes, the images, and how to close it. */
+  const itemBrief = (item: { id: string; text: string; notes?: string; images?: string[] }) =>
+    `${item.text}${item.notes ? ` — notes: ${item.notes.replace(/\s+/g, " ").slice(0, 1500)}` : ""}${item.images?.length ? ` — images (Read them): ${item.images.join(", ")}` : ""}`;
+  /**
+   * Claim an item for a session and hand it over — a chat is prompted, a tmux
+   * session is typed into. Idle only; the claim is undone if the handover
+   * fails; a blocked item is refused. Shared by the send route and
+   * auto-dispatch.
+   */
+  const handOver = async (root: string, id: string, target: { chatId?: string; tmux?: string }): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const claimFail = (e: unknown) => { const m = e instanceof Error ? e.message : String(e); return { status: m.startsWith("blocked") ? 409 : 400, body: { error: m } }; };
+    if (target.tmux !== undefined) {
+      const name = String(target.tmux);
+      if (!SHELL || !(await haveTmux()) || !(await hasSession(name))) return { status: 404, body: { error: "no such tmux session" } };
+      // The pane must say idle: typed into a working session the item would queue behind the running turn, unseen.
+      let pane: ReturnType<typeof readPane>;
+      try { pane = readPane(await capture(name, 80)); } catch (e) { return { status: 502, body: { error: `cannot read the pane: ${e instanceof Error ? e.message : String(e)}` } }; }
+      if (pane.state !== "idle") return { status: 409, body: { error: pane.state === "working" ? "that session is working; wait for it to finish" : "that session is not at a Claude prompt" } };
+      let item;
+      try { item = todos.claim(root, id, `tmux:${name}`); } catch (e) { return claimFail(e); }
+      try {
+        await sendLine(name, `From the project board, item ${item.id.slice(0, 8)}: ${itemBrief(item)} — Do it. You hold this item already (claimed as tmux:${name}). When it is finished, call the codeterminal MCP tool done_todo (project: ${root}, id: ${item.id.slice(0, 8)}) with a one-line result; if you cannot finish it, release_todo; if it needs a decision only the owner can take, add_todo with for=owner.`);
+        return { status: 200, body: { item, tmux: name } };
+      } catch (e) {
+        try { todos.release(root, id); } catch { /* the claim may already be gone */ }
+        return { status: 502, body: { error: e instanceof Error ? e.message : String(e) } };
+      }
+    }
+    const chat = target.chatId ? convo.get(String(target.chatId)) : null;
+    if (!chat) return { status: 404, body: { error: "no such chat" } };
+    if (chat.busy) return { status: 409, body: { error: "that chat is busy; pick an idle one" } };
+    let item;
+    try { item = todos.claim(root, id, `chat:${chat.id}`); } catch (e) { return claimFail(e); }
+    try {
+      await chat.prompt(`From the project board, item ${item.id.slice(0, 8)}: ${itemBrief(item)}\n\nDo it. You hold this item already; when it is finished call todos.done with a one-line result, if you cannot finish it call todos.release, and if it turns out to need a decision only the owner can take, use todos.ask.`, async () => undefined);
+      return { status: 200, body: { item, chatId: chat.id } };
+    } catch (e) {
+      try { todos.release(root, id); } catch { /* the claim may already be gone */ }
+      return { status: 409, body: { error: e instanceof Error ? e.message : String(e) } };
+    }
+  };
   app.post("/todos/:id/send", guard, express.json({ limit: "16kb" }), async (req, res) => {
-    const id = String(req.params.id);
     const b = req.body as { root?: string; chatId?: string; tmux?: string };
     let root: string;
     try { root = todoWhere(b.root ?? ""); } catch (e) { todoFail(res, e); return; }
-    if (b.tmux !== undefined) {
-      const name = String(b.tmux);
-      if (!SHELL || !(await haveTmux()) || !(await hasSession(name))) { res.status(404).json({ error: "no such tmux session" }); return; }
-      // The pane must say idle: typed into a working session the item would queue behind the running turn, unseen.
-      let pane: ReturnType<typeof readPane>;
-      try { pane = readPane(await capture(name, 80)); } catch (e) { res.status(502).json({ error: `cannot read the pane: ${e instanceof Error ? e.message : String(e)}` }); return; }
-      if (pane.state !== "idle") { res.status(409).json({ error: pane.state === "working" ? "that session is working; wait for it to finish" : "that session is not at a Claude prompt" }); return; }
-      let item;
-      try { item = todos.claim(root, id, `tmux:${name}`); } catch (e) { todoFail(res, e); return; }
-      try {
-        await sendLine(name, `From the project board, item ${item.id.slice(0, 8)}: ${item.text} — Do it. You hold this item already (claimed as tmux:${name}). When it is finished, call the codeterminal MCP tool done_todo (project: ${root}, id: ${item.id.slice(0, 8)}) with a one-line result; if it needs a decision only the owner can take, add_todo with for=owner.`);
-        res.json({ item, tmux: name });
-      } catch (e) {
-        try { todos.release(root, id); } catch { /* the claim may already be gone */ }
-        res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
-      }
-      return;
-    }
-    const chat = b.chatId ? convo.get(String(b.chatId)) : null;
-    if (!chat) { res.status(404).json({ error: "no such chat" }); return; }
-    if (chat.busy) { res.status(409).json({ error: "that chat is busy; pick an idle one" }); return; }
-    let item;
-    try { item = todos.claim(root, id, `chat:${chat.id}`); } catch (e) { todoFail(res, e); return; }
-    try {
-      await chat.prompt(`From the project board, item ${item.id.slice(0, 8)}: ${item.text}\n\nDo it. You hold this item already; when it is finished call todos.done with a one-line result, and if it turns out to need a decision only the owner can take, use todos.ask.`, async () => undefined);
-      res.json({ item, chatId: chat.id });
-    } catch (e) {
-      try { todos.release(root, id); } catch { /* the claim may already be gone */ }
-      res.status(409).json({ error: e instanceof Error ? e.message : String(e) });
-    }
+    const r = await handOver(root, String(req.params.id), b.tmux !== undefined ? { tmux: b.tmux } : { chatId: b.chatId });
+    res.status(r.status).json(r.body);
   });
+
   /* An item for the owner is the one thing on the board that should reach a
      phone: one line per item, under the notifier's own limiter. The sessions'
      own queue traffic stays silent. */

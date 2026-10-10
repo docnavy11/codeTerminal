@@ -109,3 +109,25 @@ describe("sendLine", { skip: !tmux }, () => {
     await assert.rejects(() => sendLine("bad name; rm", "x"), /no such session/);
   });
 });
+
+describe("orphaned claims with a real tmux", { skip: !tmux }, () => {
+  test("a claim held by a tmux session that is gone goes back to the queue; one held by a live session stays", async () => {
+    const t = await startTestServer({ cfg: { keeperMs: 60 } });
+    const live = fakeClaude("idle", join(t.root, "ws")); sessions.push(live);
+    try {
+      const root = join(t.root, "ws");
+      const claim = async (text: string, by: string) => {
+        const it = (await t.post("/todos", { dir: root, text })).body as { id: string };
+        await t.json(`/todos/${it.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, action: "claim", by }) });
+        return it.id;
+      };
+      await new Promise((r) => setTimeout(r, 400));
+      const gone = await claim("held by an exited session", "tmux:ct-test-exited"), kept = await claim("held by a live session", `tmux:${live.name}`);
+      const status = async (id: string) => ((await t.json(`/todos?dir=${encodeURIComponent(root)}&all=1`)).body!.items as { id: string; status: string }[]).find((i) => i.id === id)!.status;
+      await until(() => false, "never", 1).catch(() => {});
+      const t0 = Date.now(); while (Date.now() - t0 < 5000 && (await status(gone)) !== "queued") await new Promise((r) => setTimeout(r, 40));
+      assert.equal(await status(gone), "queued", "released: its session is gone");
+      assert.equal(await status(kept), "claimed", "its session is alive: kept");
+    } finally { await t.stop(); }
+  });
+});

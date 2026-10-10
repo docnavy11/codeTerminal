@@ -855,6 +855,67 @@ for a session holding a board item, which it closes itself. The keeper's
 read is a judgement, not a measurement: a report of progress is *working*,
 a report of completion is *done*.
 
+**Notes, images and blockers.** A queued card's **▸ details** opens a panel:
+notes for whoever takes it (more than one line of context), images (**Attach
+image**, or paste one into the notes), and **Waits for**, a list of the
+project's other open tasks. A task that waits shows ⏸ and what it waits for,
+is dimmed, and cannot be claimed or assigned until what it waits for is done
+or dropped; *Assign next* and auto-dispatch skip it. A cycle is refused. You
+can also paste an image into the add box: it is uploaded and travels with the
+new task. Images live in `workspace/.todo-attachments/` (kept, unlike the
+terminal's pasted images, which are pruned) and the session that takes the
+task is given their paths to `Read`; its notes are in the hand-over too.
+Sessions can set notes and blockers themselves (`todos.add` with `notes` and
+`after`, `add_todo` likewise).
+
+**Stale and orphaned claims.** A claim whose session has been idle for fifteen
+minutes shows ⚠ in its box with **Release**. A claim whose session is not on the
+board at all (it exited, or the chat was deleted) shows in a dashed box at the
+bottom of In progress, *Held by a session that is not running*, also with
+**Release** — it used to be invisible. Two cases release by themselves: a tmux
+session that no longer exists (only when tmux could be listed, so a tmux
+hiccup does not free everything) and a deleted chat. A stale claim on a living
+session is only marked, never released for you. Terminal sessions also get a
+`Stop` hook, `deploy/hooks/todo-stop.sh`: a session that ends its turn while
+holding an item is sent back once to call `done_todo`, `release_todo` or
+`add_todo for=owner`. It lets the stop through when it already blocked once
+(no loops), outside tmux, with nothing held, and whenever the server is
+unreachable. A chat is covered by the keeper instead: when it reads the
+thread as finished, the item the chat holds is closed with that result (↩
+on the done card reopens one it closed wrongly), and a question it asks is
+filed even while it holds an item.
+
+**Correcting the keeper.** Every done card has ↩, back to the queue. A card
+the keeper recorded (signed by a session as both adder and doer) also has
+**not a task**, which removes it and keeps the keeper from recording that title
+again, and **wrong title**, which renames it. Either saves the thread the
+keeper read to `workspace/keeper-misreads.jsonl`; `npm run eval:keeper --
+--reported` scores those as extra cases, so every correction becomes a
+regression test for the prompt.
+
+**Done links.** A done card links to the chat that did it when that chat
+still exists, and to the commit its result names when git in that project
+knows the hash (to GitHub when the remote is a GitHub one).
+
+**History.** The Done columns show the last six per session. The masthead's
+**history** searches everything finished in a project: pruned items (older than
+two weeks or past thirty) are archived to `todo-archive.jsonl` in the project
+root, not deleted, and the search reads both. ↩ there reopens an item.
+
+**Auto-dispatch.** Off by default. Under the queue, one chip per project;
+turned on, an idle session in that project takes the next ready task by
+itself. Guards, because two sessions in one working tree have clobbered each
+other: only while nothing in the project is busy, waiting, or already holding
+an item; one hand-over per project every 90 seconds; a blocked task is never
+next; chats are preferred to terminals. It cannot see whether you are typing
+into an idle tmux session, so a hand-over could arrive in the middle of a
+sentence: turn it on for projects whose terminals you do not type into.
+
+**The keeper's cost.** The masthead shows `keeper · N reads today` (model
+calls started today, UTC; tokens are not measured) and **pause**, which stops
+new reads at once. Cards already made stay, and a paused keeper records
+nothing new. Both survive a restart.
+
 **What the sessions know.** Every prompt to a chat carries the project's
 queue as owner-authored context after your text: what the chat holds, what
 is queued, and answers to what it asked. A chat has tools of its own —
@@ -867,9 +928,9 @@ sessions.
 
 **Terminal sessions.** A Claude Code session in tmux or on the laptop takes
 part through the server's MCP endpoint (`/mcp`: `list_todos`, `add_todo`,
-`claim_todo`, `done_todo`, `drop_todo`) and two small scripts in
+`claim_todo`, `done_todo`, `release_todo`, `drop_todo`) and two small scripts in
 `deploy/hooks/`: `todo-context.sh`, a `UserPromptSubmit` hook that appends
-the project's queue to every prompt, and `todo-status.sh`, which prints
+the project's queue to every prompt, `todo-stop.sh` (a `Stop` hook, see above), and `todo-status.sh`, which prints
 `todo 3 queued · 1 held` for a status line. Both read the cwd from the hook's
 JSON, call `GET /todos?dir=…`, and print nothing when there is nothing to
 say or the server is unreachable. The hook also reads its own tmux session

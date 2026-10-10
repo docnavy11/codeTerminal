@@ -261,3 +261,216 @@ describe("the board and a live chat", () => {
     c.ws.close();
   });
 });
+
+/* ---------------- the second round, over HTTP ---------------- */
+import { readFile as readF, stat as statF } from "node:fs/promises";
+
+const wsOf = () => join(s.root, "ws");
+const listItems = async (dir = wsOf()) => (await s.json(`/todos?dir=${encodeURIComponent(dir)}&all=1`)).body!.items as { id: string; text: string; status: string; for: string; result?: string; claimedBy?: string; addedBy: string; notes?: string; images?: string[]; blockedBy?: string[] }[];
+const byText = async (t: string) => (await listItems()).find((i) => i.text === t);
+async function newChat() {
+  const c = await s.socket("/ws");
+  const first = String((await c.wait((m) => m.kind === "chats")).activeId);
+  c.send({ type: "new" });
+  const chatId = String((await c.wait((m) => m.kind === "chats" && m.activeId !== first)).activeId);
+  return { c, chatId };
+}
+const received = (re: RegExp) => s.sdk.queries.find((q) => q.received.some((m) => re.test(JSON.stringify(m.message.content))));
+const waitUntil = async (pred: () => boolean | Promise<boolean>, what: string, ms = 5000) => { const t0 = Date.now(); while (!(await pred())) { if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`); await new Promise((r) => setTimeout(r, 25)); } };
+
+describe("notes, attachments, blockers, history", () => {
+  test("an attached image is kept in the workspace; non-images are refused", async () => {
+    const png = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+    const r = await s.req("/todos/attach", { method: "POST", headers: { "content-type": "image/png" }, body: png });
+    assert.equal(r.status, 200);
+    const { path, bytes } = (await r.json()) as { path: string; bytes: number };
+    assert.equal(bytes, png.length); assert.match(path, /\.todo-attachments\/task-\d+-[0-9a-f]{6}\.png$/);
+    assert.deepEqual(await readF(path), png); assert.equal((await statF(path)).mode & 0o777, 0o600);
+    assert.equal((await s.req("/todos/attach", { method: "POST", headers: { "content-type": "text/plain" }, body: "hello" })).status, 400);
+    assert.equal((await s.req("/todos/attach", { method: "POST", headers: { "content-type": "image/png" }, body: Buffer.alloc(0) })).status, 400);
+  });
+
+  test("a blocked item is refused by send and claim (409/400), and goes through once its blocker is done", async () => {
+    const { c, chatId } = await newChat();
+    const root = wsOf();
+    const a = (await s.post("/todos", { dir: root, text: "blocker A" })).body as { id: string };
+    const b = (await s.post("/todos", { dir: root, text: "blocked B", blockedBy: [a.id], notes: "line one\nline two" })).body as { id: string };
+    const refused = await s.post(`/todos/${b.id}/send`, { root, chatId });
+    assert.equal(refused.status, 409); assert.match(String(refused.body!.error), /blocked: waiting on "blocker A"/);
+    assert.equal((await byText("blocked B"))!.status, "queued");
+    const board = (await s.json("/board")).body!.projects as { root: string; queue: { text: string; waitingOn?: { text: string }[] }[] }[];
+    assert.deepEqual(board.find((p) => p.root === root)!.queue.find((i) => i.text === "blocked B")!.waitingOn!.map((w) => w.text), ["blocker A"]);
+    assert.equal((await patch(a.id, { root, action: "done", result: "ok" })).status, 200);
+    // The chat is idle: B now goes, with its notes in the brief.
+    const sent = await s.post(`/todos/${b.id}/send`, { root, chatId });
+    assert.equal(sent.status, 200, JSON.stringify(sent.body));
+    await waitUntil(() => !!received(/blocked B — notes: line one line two/), "the brief with the notes");
+    c.ws.close();
+  });
+
+  test("annotate sets notes, images and blockers over PATCH; the brief carries the images; refuses a cycle", async () => {
+    const { c, chatId } = await newChat();
+    const root = wsOf();
+    const x = (await s.post("/todos", { dir: root, text: "task X" })).body as { id: string };
+    const y = (await s.post("/todos", { dir: root, text: "task Y" })).body as { id: string };
+    const ann = await patch(x.id, { root, action: "annotate", notes: "use the tokens", images: ["/w/.todo-attachments/shot.png"], blockedBy: [y.id] });
+    assert.equal(ann.status, 200); assert.equal(ann.body!.notes, "use the tokens"); assert.deepEqual(ann.body!.blockedBy, [y.id]);
+    assert.equal((await patch(y.id, { root, action: "annotate", blockedBy: [x.id] })).status, 400, "a cycle is refused");
+    await patch(x.id, { root, action: "annotate", blockedBy: [] });
+    assert.equal((await s.post(`/todos/${x.id}/send`, { root, chatId })).status, 200);
+    await waitUntil(() => !!received(/task X — notes: use the tokens — images \(Read them\): \/w\/\.todo-attachments\/shot\.png/), "notes and image path in the brief");
+    c.ws.close();
+  });
+
+  test("history searches finished work, reopen puts one back, and both survive a pruned archive", async () => {
+    const root = wsOf();
+    const h = (await s.post("/todos", { dir: root, text: "history probe task" })).body as { id: string };
+    await patch(h.id, { root, action: "done", result: "unique-result-phrase" });
+    const hit = (await s.json(`/todos/history?dir=${encodeURIComponent(root)}&q=UNIQUE-RESULT`)).body!.items as { id: string }[];
+    assert.deepEqual(hit.map((i) => i.id), [h.id]);
+    assert.deepEqual(((await s.json(`/todos/history?dir=${encodeURIComponent(root)}&q=zzzz-no-match`)).body!.items as unknown[]), []);
+    const re = await patch(h.id, { root, action: "reopen" });
+    assert.equal(re.status, 200); assert.equal(re.body!.status, "queued"); assert.equal(re.body!.result, undefined);
+    assert.equal((await patch(h.id, { root, action: "reopen" })).status, 400, "not finished any more");
+  });
+});
+
+describe("the keeper and held items, misreports, pause", () => {
+  test("a held item is closed when the session reports the whole task done, with its result; a question is asked even while holding", async () => {
+    const { c, chatId } = await newChat(); const root = wsOf();
+    const it = (await s.post("/todos", { dir: root, text: "held and finished task" })).body as { id: string };
+    assert.equal((await s.post(`/todos/${it.id}/send`, { root, chatId })).status, 200);
+    await waitUntil(() => !!received(/held and finished task/), "the brief");
+    const q = received(/held and finished task/)!;
+    q.text("Fixed it. All three suites are green."); q.result();
+    await waitUntil(async () => (await byText("held and finished task"))?.status === "done", "the keeper to close the held item");
+    const done = (await byText("held and finished task"))!;
+    assert.equal(done.result, "Fixed it"); assert.equal(done.claimedBy, `chat:${chatId}`);
+    // A second item, held; the session asks the owner something instead of finishing.
+    const it2 = (await s.post("/todos", { dir: root, text: "held and asking task" })).body as { id: string };
+    assert.equal((await s.post(`/todos/${it2.id}/send`, { root, chatId })).status, 200);
+    await waitUntil(() => !!received(/held and asking task/), "the second brief");
+    const q2 = received(/held and asking task/)!;
+    q2.text("Which colour should the badge be?"); q2.result();
+    await waitUntil(async () => (await listItems()).some((i) => i.for === "owner" && i.text === "Which colour should the badge be?" && i.addedBy === `chat:${chatId}`), "the question for the owner");
+    assert.equal((await byText("held and asking task"))!.status, "claimed", "asking does not close the item it holds");
+    c.ws.close();
+  });
+
+  test("a card the keeper recorded can be reported: not a task (removed, never recorded again) or wrong title (renamed); either saves the thread", async () => {
+    const { c, chatId } = await newChat(); const root = wsOf();
+    c.send({ type: "prompt", text: "tell me a joke about ports" });
+    await waitUntil(() => !!received(/joke about ports/), "the prompt");
+    const q = received(/joke about ports/)!; q.text("Done. Why did the port stay open? It had nothing to close."); q.result();
+    await waitUntil(async () => (await byText("tell me a joke about ports")) !== undefined, "the keeper's record");
+    const rec = (await byText("tell me a joke about ports"))!;
+    assert.equal(rec.status, "done");
+    assert.equal((await s.post("/board/misread", { root, id: rec.id, wanted: "title" })).status, 400, "a title is needed");
+    const owner = (await s.post("/todos", { dir: root, text: "my own task" })).body as { id: string };
+    await patch(owner.id, { root, action: "done", result: "x" });
+    assert.equal((await s.post("/board/misread", { root, id: owner.id, wanted: "not_done" })).status, 400, "only the keeper's cards");
+    assert.equal((await s.post("/board/misread", { root, id: "nope", wanted: "not_done" })).status, 400);
+    const r = await s.post("/board/misread", { root, id: rec.id, wanted: "not_done" });
+    assert.equal(r.status, 200);
+    assert.equal(await byText("tell me a joke about ports"), undefined, "removed");
+    await s.json("/board"); await s.json("/board");
+    assert.equal(await byText("tell me a joke about ports"), undefined, "and not recorded again");
+    const lines = (await readF(join(wsOf(), "keeper-misreads.jsonl"), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+    const last = lines.at(-1);
+    assert.equal(last.key, `chat:${chatId}`); assert.equal(last.said.title, "tell me a joke about ports"); assert.deepEqual(last.wanted, { status: "working" });
+    assert.match(last.tail, /joke about ports/);
+    // Wrong title: a second card, renamed.
+    c.send({ type: "prompt", text: "rename the staging bucket please" });
+    await waitUntil(() => !!received(/rename the staging bucket/), "the second prompt");
+    const q2 = received(/rename the staging bucket/)!; q2.text("Done. Renamed it to staging-eu."); q2.result();
+    await waitUntil(async () => (await byText("rename the staging bucket please")) !== undefined, "the second record");
+    const rec2 = (await byText("rename the staging bucket please"))!;
+    assert.equal((await s.post("/board/misread", { root, id: rec2.id, wanted: "title", title: "Rename the staging bucket" })).status, 200);
+    assert.equal((await listItems()).find((i) => i.id === rec2.id)!.text, "Rename the staging bucket");
+    assert.deepEqual((await readF(join(wsOf(), "keeper-misreads.jsonl"), "utf8")).trim().split("\n").map((l) => JSON.parse(l)).at(-1).wanted, { status: "done", title: "Rename the staging bucket" });
+    c.ws.close();
+  });
+
+  test("pause stops new reads (cached cards stay), the counter counts reads, and the board says both", async () => {
+    const { c } = await newChat();
+    const k0 = (await s.json("/board")).body!.keeper as { paused: boolean; calls: number; date: string };
+    assert.equal(k0.paused, false); assert.match(k0.date, /^\d{4}-\d\d-\d\d$/);
+    assert.equal((await s.post("/board/keeper", { paused: true })).body!.paused, true);
+    const calls = (await s.json("/board/keeper")).body!.calls as number;
+    c.send({ type: "prompt", text: "a prompt while the keeper is paused" });
+    await waitUntil(() => !!received(/while the keeper is paused/), "the prompt");
+    const q = received(/while the keeper is paused/)!; q.text("Working on it."); q.result();
+    await new Promise((r) => setTimeout(r, 300)); await s.json("/board");
+    assert.equal((await s.json("/board/keeper")).body!.calls, calls, "no read while paused");
+    assert.equal(((await s.json("/board")).body!.keeper as { paused: boolean }).paused, true);
+    assert.equal((await s.post("/board/keeper", { paused: false })).body!.paused, false);
+    c.send({ type: "prompt", text: "a prompt after the keeper resumed" });
+    await waitUntil(() => !!received(/after the keeper resumed/), "the second prompt");
+    const q2 = received(/after the keeper resumed/)!; q2.text("Working on that."); q2.result();
+    await waitUntil(async () => ((await s.json("/board/keeper")).body!.calls as number) > calls, "a read after resuming");
+    c.ws.close();
+  });
+});
+
+describe("auto-dispatch and orphaned claims", () => {
+  let a: TestServer;
+  before(async () => { a = await startTestServer({ cfg: { shell: false, keeperMs: 60 } }); });
+  after(async () => { await a.stop(); });
+  const aItems = async () => (await a.json(`/todos?dir=${encodeURIComponent(join(a.root, "ws"))}&all=1`)).body!.items as { id: string; text: string; status: string; claimedBy?: string }[];
+  const aReceived = (re: RegExp) => a.sdk.queries.find((q) => q.received.some((m) => re.test(JSON.stringify(m.message.content))));
+
+  test("off by default; on, an idle session takes the next ready item, one at a time, never a blocked one", async () => {
+    const root = join(a.root, "ws");
+    const c = await a.socket("/ws"); await c.wait((m) => m.kind === "chats");
+    const first = (await a.post("/todos", { dir: root, text: "auto first" })).body as { id: string };
+    await a.post("/todos", { dir: root, text: "auto second", blockedBy: [first.id] });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal((await aItems()).find((i) => i.text === "auto first")!.status, "queued", "nothing moves unless the project opted in");
+    assert.equal((await a.post("/board/auto", { root, on: true })).body!.on, true);
+    assert.equal(((await a.json("/board")).body!.projects as { root: string; auto: boolean }[]).find((p) => p.root === root)!.auto, true);
+    await waitUntil(async () => (await aItems()).find((i) => i.text === "auto first")!.status === "claimed", "auto-dispatch");
+    assert.match((await aItems()).find((i) => i.text === "auto first")!.claimedBy!, /^chat:/);
+    await waitUntil(() => !!aReceived(/auto first/), "the brief to reach the session");
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal((await aItems()).find((i) => i.text === "auto second")!.status, "queued", "blocked, and the session is busy: not dispatched");
+    c.ws.close();
+  });
+
+  test("a tmux claim is not released when tmux cannot be listed; a deleted chat releases what it held", async () => {
+    const root = join(a.root, "ws");
+    const g = (await a.post("/todos", { dir: root, text: "held by a ghost" })).body as { id: string };
+    await a.json(`/todos/${g.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, action: "claim", by: "tmux:ghost" }) });
+    const c = await a.socket("/ws"); const first = String((await c.wait((m) => m.kind === "chats")).activeId);
+    c.send({ type: "new" }); const chatId = String((await c.wait((m) => m.kind === "chats" && m.activeId !== first)).activeId);
+    const h = (await a.post("/todos", { dir: root, text: "held by a chat" })).body as { id: string };
+    await a.json(`/todos/${h.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, action: "claim", by: `chat:${chatId}` }) });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal((await aItems()).find((i) => i.text === "held by a ghost")!.status, "claimed", "shell off: tmux is not listable, so 'gone' means nothing");
+    assert.equal((await aItems()).find((i) => i.text === "held by a chat")!.status, "claimed", "a live chat's claim stays");
+    c.ws.close();
+    assert.equal((await a.json(`/chats/${chatId}`, { method: "DELETE" })).status, 200);
+    await waitUntil(async () => (await aItems()).find((i) => i.text === "held by a chat")!.status === "queued", "the deleted chat's claim to be released");
+  });
+});
+
+describe("links on done cards", () => {
+  test("a commit the result names becomes a link (to the remote when there is one); a hash git does not know is not; a live chat that did it is linked", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { writeFile: wf } = await import("node:fs/promises");
+    const repo = join(s.root, "projects", "p1");
+    const g = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", repo, ...a], { encoding: "utf8" }).trim();
+    g("init", "-q"); await wf(join(repo, "f.txt"), "x"); g("add", "."); g("commit", "-q", "-m", "first");
+    g("remote", "add", "origin", "git@github.com:acme/widgets.git");
+    const hash = g("rev-parse", "--short=9", "HEAD"), full = g("rev-parse", "HEAD");
+    const { chatId, c } = await newChat();
+    const real = (await s.post("/todos", { project: "p1", text: "ship the widget" })).body as { id: string };
+    await s.json(`/todos/${real.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: repo, action: "done", result: `committed as ${hash} on main`, by: `chat:${chatId}` }) });
+    const fake = (await s.post("/todos", { project: "p1", text: "mention a made-up hash" })).body as { id: string };
+    await s.json(`/todos/${fake.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: repo, action: "done", result: "fixed in deadbeef1 maybe", by: "owner" }) });
+    const p = ((await s.json("/board")).body!.projects as { root: string; queue: { id: string; links?: { chatId?: string; commit?: { hash: string; url?: string } } }[] }[]).find((x) => x.root === repo)!;
+    const l = p.queue.find((i) => i.id === real.id)!.links!;
+    assert.equal(l.chatId, chatId); assert.deepEqual(l.commit, { hash, url: `https://github.com/acme/widgets/commit/${full}` });
+    assert.equal(p.queue.find((i) => i.id === fake.id)!.links, undefined, "an unknown hash is not a link");
+    c.ws.close();
+  });
+});

@@ -14,6 +14,7 @@ import { fakeClaude, haveTools } from "./fakes/tmux.js";
 const tools = haveTools("bash", "curl", "jq");
 const tmux = haveTools("tmux");
 const CONTEXT = join(import.meta.dirname, "..", "deploy", "hooks", "todo-context.sh");
+const STOP = join(import.meta.dirname, "..", "deploy", "hooks", "todo-stop.sh");
 const STATUS = join(import.meta.dirname, "..", "deploy", "hooks", "todo-status.sh");
 
 let s: TestServer, ws: string;
@@ -96,5 +97,35 @@ describe("todo-status.sh", { skip: !tools }, () => {
     assert.equal(down.status, 0); assert.equal(down.stdout, "");
     const empty = await run(STATUS, "", {}, [join(s.root, "projects", "p2")]);
     assert.equal(empty.status, 0); assert.equal(empty.stdout.trim(), "");
+  });
+});
+
+describe("todo-stop.sh", { skip: !tools || !tmux }, () => {
+  const stop = (env: Record<string, string>, input: Record<string, unknown> = {}) => run(STOP, JSON.stringify({ cwd: ws, ...input }), env);
+
+  test("a session that holds an item is sent back once: done, release or ask, with the id; a session holding nothing is let go", async () => {
+    const f = fakeClaude("idle", ws); sessions.push(f);
+    await new Promise((r) => setTimeout(r, 300));
+    const none = await stop({ TMUX_PANE: f.pane() });
+    assert.equal(none.status, 0); assert.equal(none.stdout, "", "nothing held: no block");
+    const it = await add("Port the settings page"); await patch(it.id, { root: ws, action: "claim", by: `tmux:${f.name}` });
+    const r = await stop({ TMUX_PANE: f.pane() });
+    assert.equal(r.status, 0);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.decision, "block");
+    assert.match(out.reason, new RegExp(`- \\[${it.id.slice(0, 8)}\\] Port the settings page`));
+    assert.match(out.reason, /done_todo/); assert.match(out.reason, /release_todo/); assert.match(out.reason, /add_todo with for=owner/);
+    // Someone else's item does not trap this session.
+    const other = fakeClaude("idle", ws); sessions.push(other); await new Promise((r) => setTimeout(r, 300));
+    assert.equal((await stop({ TMUX_PANE: other.pane() })).stdout, "");
+  });
+
+  test("never a loop, never a trap: stop_hook_active, outside tmux, an unreachable server all let the stop through", async () => {
+    const f = fakeClaude("idle", ws); sessions.push(f); await new Promise((r) => setTimeout(r, 300));
+    const it = await add("Held again"); await patch(it.id, { root: ws, action: "claim", by: `tmux:${f.name}` });
+    assert.equal((await stop({ TMUX_PANE: f.pane() }, { stop_hook_active: true })).stdout, "", "it already blocked once this turn");
+    assert.equal((await stop({ TMUX_PANE: "" })).stdout, "", "outside tmux");
+    assert.equal((await stop({ TMUX_PANE: f.pane(), CODETERM_URL: "http://127.0.0.1:1" })).stdout, "", "server down");
+    assert.equal((await run(STOP, "{}", { TMUX_PANE: f.pane() })).stdout, "", "no cwd");
   });
 });

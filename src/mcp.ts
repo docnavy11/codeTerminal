@@ -355,8 +355,17 @@ export function buildMcpServer(d: McpDeps): McpServer {
     }, async ({ project, all }) => guard(() => { const v = view(rootFor(project)); return all ? v : { ...v, items: v.items.filter((i) => i.status === "queued" || i.status === "claimed") }; }));
     server.registerTool("add_todo", {
       description: "Leave an item on a project's list: for the sessions working there (default), or for the owner (for='owner': a question or a task only they can do). Sign it with `by`, e.g. tmux:<session> or laptop.",
-      inputSchema: { project: where, text: z.string().min(1).max(2000), for: z.enum(["claude", "owner"]).optional(), by: z.string().max(80).optional() },
-    }, async ({ project, text: t, for: f, by }) => guard(() => store.add(rootFor(project), { text: t, for: f as TodoFor | undefined, addedBy: by || "mcp" })));
+      inputSchema: { project: where, text: z.string().min(1).max(2000), for: z.enum(["claude", "owner"]).optional(), by: z.string().max(80).optional(),
+        notes: z.string().max(8000).optional().describe("More than one line of context"), after: z.array(z.string()).max(10).optional().describe("Ids (or first 8 characters) of items this one must wait for") },
+    }, async ({ project, text: t, for: f, by, notes, after }) => guard(() => {
+      const root = rootFor(project); const all = store.read(root);
+      const blockedBy = (after ?? []).map((x) => all.find((i) => i.id === x || (x.length >= 8 && i.id.startsWith(x)))?.id).filter((x): x is string => !!x);
+      return store.add(root, { text: t, for: f as TodoFor | undefined, addedBy: by || "mcp", notes, blockedBy });
+    }));
+    server.registerTool("release_todo", {
+      description: "Put an item you hold back in the queue because you cannot finish it. The board shows it as queued again.",
+      inputSchema: { project: where, id: z.string() },
+    }, async ({ project, id }) => guard(() => store.release(rootFor(project), id)));
     server.registerTool("claim_todo", {
       description: "Take a queued item before working on it, so the board and other sessions see it is yours. Fails if another session holds it.",
       inputSchema: { project: where, id: z.string().describe("The item id or its first 8 characters"), by: z.string().min(1).max(80).describe("Who claims: tmux:<session>, laptop, …") },

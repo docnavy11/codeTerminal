@@ -32,13 +32,15 @@ class Board:
     """A mutable payload, served at /board; the write routes record what the page sent."""
     def __init__(self):
         self.sent = []
+        self.keeper = {"paused": False, "calls": 3, "date": "2026-10-10"}
+        self.history = []
         self.projects = [
             {"id": "bestekortingen", "name": "bestekortingen", "root": ROOT_BK,
              "sessions": [tmux("todo"), tmux("2e", "working", summary="Making the shop choice a popup on first visit",
                                               task={"title": "Make shop choice a popup", "status": "working"}, activity="Frosting… 2m 3s")],
              "queue": [item("a1f3c9d2-0000-0000-0000-000000000000", "Koopwijzer badge on airfryer tiles"),
                        item("d0d0d0d0-0000-0000-0000-000000000000", "Fix the deploy check", "done", claimedBy="tmux:todo", result="Deploy check pushed", doneAt=NOW - 600_000)],
-             "asks": [], "counts": {"queued": 1, "claimed": 0, "forYou": 0}},
+             "asks": [], "auto": False, "counts": {"queued": 1, "claimed": 0, "forYou": 0}},
             {"id": "codeTerminal", "name": "codeTerminal", "root": ROOT_CT,
              "sessions": [tmux("modchanger", "working", path=ROOT_CT, task={"title": "Board: sessions", "status": "working"})],
              "queue": [], "asks": [], "counts": {"queued": 0, "claimed": 0, "forYou": 0}},
@@ -47,7 +49,7 @@ class Board:
         ]
 
     def payload(self):
-        return {"at": int(time.time() * 1000), "forYou": [], "projects": self.projects,
+        return {"at": int(time.time() * 1000), "forYou": [], "projects": self.projects, "keeper": self.keeper,
                 "allProjects": [{"id": p["id"], "name": p["name"]} for p in self.projects if p["id"] != "general"]}
 
     def project(self, name):
@@ -80,6 +82,24 @@ def open_board(page, server, board):
     page.route("**/todos/*", on_todos)
     page.route("**/todos/*/send", record)
     page.route("**/board/decide", record)
+    page.route("**/board/keeper", record)
+    page.route("**/board/auto", record)
+    page.route("**/board/misread", record)
+
+    def on_attach(route):
+        board.sent.append(("POST", "/todos/attach", {"type": route.request.headers.get("content-type")}))
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({"path": "/w/.todo-attachments/task-1-abc123.png", "bytes": 8}))
+
+    def on_history(route):
+        board.sent.append(("GET", route.request.url.replace(server.base, ""), {}))
+        q = (route.request.url.split("q=")[1] if "q=" in route.request.url else "").lower()
+        items = [i for i in board.history if q in (i["text"] + " " + i.get("result", "")).lower()]
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({"root": "x", "items": items}))
+
+    page.route("**/todos/attach", on_attach)
+    page.route("**/todos/history**", on_history)
+    page.route("**/todos/attachment**", lambda r: r.fulfill(status=200, content_type="image/png", body=bytes.fromhex("89504e470d0a1a0a")))
+    board.page = page
     page.goto(server.base + "/board.html")
     page.wait_for_selector(".board .col.queue", timeout=SHORT)
 
@@ -242,3 +262,155 @@ def test_theme_button_cycles_and_is_shared_with_the_app(page, server):
     for _ in range(3):
         btn.click(); seen.append((root(), page.evaluate("() => localStorage.getItem('ct.theme')")))
     assert seen == [("dark", "dark"), ("light", "light"), (None, "auto")]
+
+
+def wait_sent(board, pred, what, timeout=5):
+    """Poll what the page sent. Waits through Playwright (page.wait_for_timeout), not time.sleep:
+    in the sync API a route handler only runs while a Playwright call is in flight."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        hit = [x for x in board.sent if pred(x)]
+        if hit: return hit
+        board.page.wait_for_timeout(50)
+    raise AssertionError(f"timed out waiting for {what}; sent: {board.sent}")
+
+
+def test_a_blocked_card_says_what_it_waits_for_and_assign_next_skips_it(page, server):
+    board = Board()
+    q = board.project("bestekortingen")["queue"]
+    q.insert(0, item("b1b1b1b1-0000-0000-0000-000000000000", "Announce the redesign", waitingOn=[{"id": "a1f3c9d2-0000-0000-0000-000000000000", "text": "Koopwijzer badge on airfryer tiles"}]))
+    open_board(page, server, board)
+    blocked = page.locator(".col.queue .card.q", has_text="Announce the redesign")
+    assert "waits for “Koopwijzer badge on airfryer tiles”" in blocked.inner_text()
+    sbox(page, "todo").locator("button", has_text="Assign next").click()
+    sent = wait_sent(board, lambda x: x[1].endswith("/send"), "a send")
+    assert sent[-1][1] == "/todos/a1f3c9d2-0000-0000-0000-000000000000/send", "the free task goes, not the blocked one"
+
+
+def test_details_panel_saves_notes_images_and_blockers(page, server):
+    board = Board(); open_board(page, server, board)
+    card = page.locator(".col.queue .card.q", has_text="Koopwijzer badge")
+    card.locator("button", has_text="details").click()
+    panel = page.locator(".col.queue .card.q .panel")
+    panel.wait_for(timeout=SHORT)
+    panel.locator("textarea").fill("Use the existing tag component.\nKeep it small.")
+    # Attach an image through the file input; it is uploaded and kept as a path.
+    panel.locator("input[type=file]").set_input_files({"name": "shot.png", "mimeType": "image/png", "buffer": bytes.fromhex("89504e470d0a1a0a")})
+    wait_sent(board, lambda x: x[1] == "/todos/attach" and x[2]["type"] == "image/png", "the upload")
+    wait(page, "() => document.querySelectorAll('.col.queue .panel .thumb').length === 1", what="the thumbnail")
+    page.locator(".col.queue .panel button", has_text="Save").click()
+    patched = wait_sent(board, lambda x: x[2].get("action") == "annotate", "annotate")[-1]
+    assert patched[1] == "/todos/a1f3c9d2-0000-0000-0000-000000000000"
+    assert patched[2]["notes"] == "Use the existing tag component.\nKeep it small."
+    assert patched[2]["images"] == ["/w/.todo-attachments/task-1-abc123.png"] and patched[2]["blockedBy"] == []
+
+
+def test_details_panel_offers_the_other_open_tasks_as_blockers(page, server):
+    board = Board()
+    board.project("bestekortingen")["queue"].append(item("c2c2c2c2-0000-0000-0000-000000000000", "Ship the guide"))
+    open_board(page, server, board)
+    page.locator(".col.queue .card.q", has_text="Ship the guide").locator("button", has_text="details").click()
+    panel = page.locator(".col.queue .panel")
+    assert "Koopwijzer badge on airfryer tiles" in panel.locator(".waits").inner_text()
+    assert "Ship the guide" not in panel.locator(".waits").inner_text(), "not itself"
+    panel.locator(".waits label", has_text="Koopwijzer").locator("input").check()
+    panel.locator("button", has_text="Save").click()
+    sent = wait_sent(board, lambda x: x[2].get("action") == "annotate", "annotate")[-1]
+    assert sent[2]["blockedBy"] == ["a1f3c9d2-0000-0000-0000-000000000000"]
+
+
+def test_a_claim_whose_session_is_gone_is_still_visible_and_releasable(page, server):
+    board = Board()
+    board.project("bestekortingen")["queue"].append(item("d3d3d3d3-0000-0000-0000-000000000000", "Held by an exited session", "claimed", claimedBy="tmux:ghost", claimedAt=NOW - 3_600_000, stale="gone"))
+    open_board(page, server, board)
+    held = page.locator(".col.progress .obox .card.orphan", has_text="Held by an exited session")
+    assert held.count() == 1 and "its session is not running" in held.inner_text() and "held by ghost" in held.inner_text()
+    assert len(texts(page, ".col.progress .sbox")) == 4, "the orphan is not mistaken for a session box"
+    held.locator("button", has_text="Release").click()
+    assert wait_sent(board, lambda x: x[2].get("action") == "release", "release")[-1][1] == "/todos/d3d3d3d3-0000-0000-0000-000000000000"
+
+
+def test_a_stale_claim_on_a_live_idle_session_is_flagged_in_its_box(page, server):
+    board = Board()
+    board.project("bestekortingen")["queue"].append(item("d4d4d4d4-0000-0000-0000-000000000000", "Held and forgotten", "claimed", claimedBy="tmux:todo", claimedAt=NOW - 3_600_000, stale="idle"))
+    open_board(page, server, board)
+    held = sbox(page, "todo").locator(".card.held", has_text="Held and forgotten")
+    assert "its session has been idle a while" in held.inner_text()
+    held.locator("button", has_text="Release").click()
+    assert wait_sent(board, lambda x: x[2].get("action") == "release", "release")[-1][1] == "/todos/d4d4d4d4-0000-0000-0000-000000000000"
+
+
+def test_done_cards_link_to_the_chat_and_commit_and_can_be_reopened_or_reported(page, server):
+    board = Board()
+    bk = board.project("bestekortingen")
+    bk["queue"].append(item("e4e4e4e4-0000-0000-0000-000000000000", "Ship the widget", "done", claimedBy="tmux:todo", addedBy="tmux:todo", result="committed as abc1234 on main", doneAt=NOW - 60_000,
+                            links={"chatId": "c1", "commit": {"hash": "abc1234", "url": "https://github.com/acme/widgets/commit/abc1234def"}}))
+    open_board(page, server, board)
+    card = page.locator(".doneboard .card.done", has_text="Ship the widget")
+    assert card.locator("a", has_text="abc1234").get_attribute("href") == "https://github.com/acme/widgets/commit/abc1234def"
+    assert card.locator("a", has_text="open chat").count() == 1
+    card.locator("button[title='Back to the queue']").click()
+    assert wait_sent(board, lambda x: x[2].get("action") == "reopen", "reopen")[-1][1] == "/todos/e4e4e4e4-0000-0000-0000-000000000000"
+    # Reports: only on a card a session signed as both adder and doer. Tooltips say what they do.
+    card.locator("button", has_text="not a task").click()
+    mis = wait_sent(board, lambda x: x[1] == "/board/misread", "misread")[-1][2]
+    assert mis == {"root": ROOT_BK, "id": "e4e4e4e4-0000-0000-0000-000000000000", "wanted": "not_done"}
+    card.locator("button", has_text="wrong title").click()
+    editing = page.locator(".doneboard .card.done", has_text="committed as abc1234")   # the title is an input now: find the card by its result
+    editing.locator("input").fill("Ship the widget page"); editing.locator("input").press("Enter")
+    mis2 = wait_sent(board, lambda x: x[1] == "/board/misread" and x[2].get("wanted") == "title", "title misread")[-1][2]
+    assert mis2["title"] == "Ship the widget page"
+    # A card the owner finished by hand has no report buttons.
+    own = page.locator(".doneboard .card.done", has_text="Fix the deploy check")
+    assert own.locator("button", has_text="not a task").count() == 0
+
+
+def test_history_searches_finished_work_and_reopens_from_it(page, server):
+    board = Board()
+    board.history = [{"id": "f5f5f5f5-0000-0000-0000-000000000000", "text": "Fix the footer on mobile", "result": "sticky below 700px", "doneAt": NOW - 40 * 86400_000, "addedAt": NOW - 41 * 86400_000},
+                     {"id": "f6f6f6f6-0000-0000-0000-000000000000", "text": "Dark theme", "result": "tokens and a toggle", "doneAt": NOW - 3 * 86400_000, "addedAt": NOW - 4 * 86400_000}]
+    open_board(page, server, board)
+    page.locator("#histbtn").click()
+    page.wait_for_selector("#history .hrow", timeout=SHORT)
+    assert len(texts(page, "#history .hrow")) == 2
+    page.locator("#history input").fill("footer")
+    wait(page, "() => document.querySelectorAll('#history .hrow').length === 1", what="filtered")
+    assert "sticky below 700px" in page.locator("#history .hrow").inner_text()
+    assert any(x[0] == "GET" and "q=footer" in x[1] for x in board.sent)
+    page.locator("#history .hrow button").click()
+    assert wait_sent(board, lambda x: x[2].get("action") == "reopen", "reopen")[-1][1] == "/todos/f5f5f5f5-0000-0000-0000-000000000000"
+    page.locator("#history input").fill("nothing like this")
+    wait(page, "() => document.querySelector('#history .histlist').textContent.includes('Nothing matches')", what="empty state")
+
+
+def test_keeper_counter_and_pause_switch(page, server):
+    board = Board(); open_board(page, server, board)
+    assert "keeper · 3 reads today" in page.locator("#keeper").inner_text()
+    page.locator("#keeper button", has_text="pause").click()
+    assert wait_sent(board, lambda x: x[1] == "/board/keeper", "pause")[-1][2] == {"paused": True}
+    board.keeper = {"paused": True, "calls": 3, "date": "2026-10-10"}
+    page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    wait(page, "() => document.querySelector('#keeper').textContent.includes('paused')", what="paused shown")
+    assert page.locator("#keeper button").inner_text() == "resume"
+
+
+def test_auto_dispatch_toggle_per_project(page, server):
+    board = Board(); open_board(page, server, board)
+    chips = texts(page, ".autorow .autochip")
+    assert chips == ["○ bestekortingen", "○ codeTerminal", "○ General"], chips
+    page.locator(".autorow .autochip", has_text="bestekortingen").click()
+    assert wait_sent(board, lambda x: x[1] == "/board/auto", "toggle")[-1][2] == {"root": ROOT_BK, "on": True}
+    assert "only while nothing there is busy" in page.locator(".autorow .autochip").first.get_attribute("title")
+
+
+def test_pasting_an_image_into_the_add_box_attaches_it_to_the_new_task(page, server):
+    board = Board(); open_board(page, server, board)
+    page.select_option("#gproject", "codeTerminal"); page.fill("#gtext", "Restyle the header like this")
+    page.evaluate("""() => { const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array([137,80,78,71,13,10,26,10])], 'p.png', {type: 'image/png'}));
+        document.querySelector('#gtext').dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); }""")
+    wait_sent(board, lambda x: x[1] == "/todos/attach", "the upload")
+    wait(page, "() => document.querySelectorAll('#gimgs .thumb').length === 1", what="the pending thumbnail")
+    page.click("#gadd")
+    add = wait_sent(board, lambda x: x[0] == "POST" and x[1] == "/todos", "the add")[-1][2]
+    assert add["text"] == "Restyle the header like this" and add["images"] == ["/w/.todo-attachments/task-1-abc123.png"]
+    wait(page, "() => document.querySelectorAll('#gimgs .thumb').length === 0", what="pending cleared")

@@ -142,7 +142,7 @@ export type Assessment = {
 };
 export type Assessor = (text: string) => Promise<Assessment | null>;
 
-type Entry = { hash: string; at: number; value: Assessment | null; pending: boolean };
+type Entry = { hash: string; at: number; value: Assessment | null; pending: boolean; tail?: string };
 
 /**
  * Assessments by key ("chat:<id>", "tmux:<name>"). `get` answers from the
@@ -157,6 +157,15 @@ export class Insights {
   #now: () => number;
   #path: string | null;
   #saveTimer: NodeJS.Timeout | null = null;
+  /** While true no new model call starts; what is cached is still shown (the board's pause switch). */
+  paused = false;
+  #stats = { date: "", calls: 0 };
+  /** Model reads started today (UTC) — the keeper's running cost, in calls; tokens are not measured. */
+  stats(): { date: string; calls: number } { const d = new Date(this.#now()).toISOString().slice(0, 10); return d === this.#stats.date ? { ...this.#stats } : { date: d, calls: 0 }; }
+  /** The text last handed to the model for this session, for reporting a misread. */
+  tail(key: string): string | undefined { return this.#cache.get(key)?.tail; }
+  /** What the keeper last made of this session, without starting a read. */
+  peek(key: string): Assessment | null { return this.#cache.get(key)?.value ?? null; }
   /** Told when a fresh assessment lands, so the keeper can act on it without waiting for a poll. */
   onFresh?: (key: string, a: Assessment) => void;
   constructor(assess: Assessor = assessWithHaiku, now: () => number = Date.now, path: string | null = null) {
@@ -164,7 +173,9 @@ export class Insights {
     if (path && existsSync(path)) {
       try {
         const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, { hash: string; at: number; value?: Assessment | null; summary?: string | null }>;
-        for (const [k, v] of Object.entries(raw)) if (v && typeof v.hash === "string") {
+        const st = (raw as Record<string, unknown>).__stats as { date?: string; calls?: number } | undefined;
+        if (st && typeof st.date === "string") this.#stats = { date: st.date, calls: Number(st.calls) || 0 };
+        for (const [k, v] of Object.entries(raw)) if (k !== "__stats" && v && typeof v.hash === "string") {
           // Older files held a summary line alone; it is still worth showing until the next refresh.
           const value = v.value ?? (v.summary ? { summary: v.summary, title: "", status: "working" as const } : null);
           this.#cache.set(k, { hash: v.hash, at: Number(v.at) || 0, value, pending: false });
@@ -178,8 +189,9 @@ export class Insights {
     this.#saveTimer = setTimeout(() => {
       this.#saveTimer = null;
       try {
-        const out: Record<string, { hash: string; at: number; value: Assessment | null }> = {};
+        const out: Record<string, unknown> = {};
         for (const [k, e] of this.#cache) out[k] = { hash: e.hash, at: e.at, value: e.value };
+        out.__stats = this.#stats;
         writeFileSync(`${this.#path}.tmp`, JSON.stringify(out));
         renameSync(`${this.#path}.tmp`, this.#path!);
       } catch { /* losing a cache is not worth a log line per poll */ }
@@ -194,8 +206,10 @@ export class Insights {
     const e = this.#cache.get(key);
     const now = this.#now();
     if (e && (e.hash === hash || e.pending || (!force && now - e.at < MIN_REFRESH_MS))) return e.value;
-    const next: Entry = { hash, at: now, value: e?.value ?? null, pending: true };
+    if (this.paused) return e?.value ?? null;
+    const next: Entry = { hash, at: now, value: e?.value ?? null, pending: true, tail: t.slice(-3000) };
     this.#cache.set(key, next);
+    const day = this.stats(); this.#stats = { date: day.date, calls: day.calls + 1 };
     void this.#assess(t.slice(-INPUT_CAP)).then((a) => { if (a) { next.value = a; this.onFresh?.(key, a); } }, () => {}).finally(() => { next.pending = false; next.at = this.#now(); this.#save(); });
     return next.value;
   }

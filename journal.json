@@ -3,6 +3,12 @@
     {
       "date": "2026-10-10",
       "status": "done",
+      "topic": "Board: orphaned claims, keeper corrections and cost, richer tasks, history, blockers, auto-dispatch",
+      "result": "Built the owner's picks (items 1-6, 9, 10 of ten): Stop hook, release on exit/delete, stale marks and a visible orphan box; not-a-task / wrong-title feeding eval:keeper --reported; keeper pause and read counter; notes, images, done links, history with an archive; blocked-by; opt-in per-project auto-dispatch with guards. Tests: store, board, routes, real tmux, hooks incl. Stop, MCP tools (previously untested), browser. Owner-chosen but left out: side panel view, idle-with-queue alert. Known limits in docs/design-todos.md §19."
+    },
+    {
+      "date": "2026-10-10",
+      "status": "done",
       "topic": "Board: tests for the gaps found by use",
       "result": "Added real-tmux tests (send next, refusal of working/shell panes, typed answers), the hook scripts run for real, a Chromium test of the board page (incl. the hidden-task regression), an env preload so the suite passes from the service's shell, and npm run eval:keeper (21 labelled tails; 63/63 now, 61/63 on the previous prompt). Keeper accuracy on real threads still unmeasured beyond this. Also fixed the flaky 'upgrades' tests (two assertions assumed which chat is newest; a delayed save from an earlier test made them fail 1 run in 5 under the full suite): 8/8 full runs green."
     },

@@ -55,6 +55,33 @@
   button.pill { cursor: pointer; text-align: left; }
   .mast .right { margin-left: auto; display: flex; gap: 10px; align-items: center; font-size: 12px; }
   .chips { display: inline-flex; gap: 6px; }
+  .keeper { color: var(--dim); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+  .gimgs:empty { display: none; }
+  .thumbs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .thumb { position: relative; display: inline-block; }
+  .thumb img { height: 54px; max-width: 120px; border-radius: 6px; border: 1px solid var(--line); object-fit: cover; display: block; }
+  .thumb button { position: absolute; top: -6px; right: -6px; background: var(--card); border: 1px solid var(--line); border-radius: 50%; width: 18px; height: 18px; padding: 0; line-height: 1; font-size: 10px; }
+  .card.blocked { opacity: .72; }
+  .card .waiting { font-size: 11.5px; color: var(--warn); }
+  .card .notes { font-size: 12px; color: var(--dim); white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .stale { font-size: 12px; color: var(--warn); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card .links2 { display: flex; gap: 10px; font-size: 11.5px; flex-wrap: wrap; }
+  .card .panel { display: grid; gap: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+  .card .panel textarea { width: 100%; font: inherit; font-size: 12.5px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; resize: vertical; }
+  .card .panel .waits { display: grid; gap: 3px; font-size: 12px; }
+  .card .panel .waits label { display: flex; gap: 6px; align-items: baseline; cursor: pointer; }
+  .card .panel .waits input { width: auto; }
+  .card .panel .lbl { color: var(--dim); font-size: 11px; text-transform: none; }
+  .card .panel .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .autorow { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; padding: 4px 2px; font-size: 11.5px; color: var(--dim); }
+  .autochip { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--dim); }
+  .autochip.on { color: var(--fg); border-color: var(--accent); }
+  .history[hidden] { display: none; }
+  .history { background: var(--panel); border-radius: 12px; padding: 10px; display: grid; gap: 8px; }
+  .histbar { display: flex; gap: 8px; } .histbar input { flex: 1; min-width: 0; }
+  .histlist { display: grid; gap: 4px; max-height: 340px; overflow-y: auto; }
+  .hrow { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 8px; padding: 5px 6px; border-radius: 6px; align-items: start; font-size: 12.5px; }
+  .hrow:hover { background: var(--card); } .hrow .when { color: var(--dim); font-size: 11.5px; } .hrow .sub { color: var(--dim); font-size: 11.5px; }
   .sessions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .sessions .lbl { color: var(--dim); font-size: 12px; margin-right: 2px; }
   .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px 4px 8px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px; color: inherit; max-width: 100%; cursor: pointer; text-align: left; }
@@ -94,7 +121,9 @@
   .sboxhd a.name:hover { text-decoration: underline; }
   .sboxhd .kind { font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; flex: none; }
   .sboxhd .meta { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; }
-  .sbox .card { box-shadow: none; }
+  .sbox .card, .obox .card { box-shadow: none; }
+  .obox { border: 1px dashed color-mix(in srgb, var(--warn) 55%, var(--line)); border-radius: 10px; padding: 8px; display: grid; gap: 8px; }
+  .obox .sboxhd .name { color: var(--warn); font-weight: 600; font-size: 12px; }
   .slot { border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px; color: var(--faint); font-size: 12.5px; display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; min-height: 44px; }
   .slot.droppable { border-color: var(--accent); color: var(--dim); }
   .slot.over { background: var(--sel); }
@@ -150,6 +179,8 @@
     <span class="msg" id="msg"></span>
     <span class="needsyou mono" id="needs"></span>
     <span class="chips" id="chips"></span>
+    <span class="keeper mono" id="keeper"></span>
+    <button id="histbtn" class="ghost" title="Search finished work, including what was archived">history</button>
     <span class="right"><button id="themebtn" class="ghost" title="Switch theme (shared with the app)">theme</button><span class="links"><a id="back" href="/">← terminal</a> <a href="/manage.html">manage</a></span></span>
   </div>
   <div class="sessions" id="sessions"></div>
@@ -158,6 +189,8 @@
     <input id="gtext" placeholder="Add a task to the queue…" spellcheck="false">
     <button id="gadd" class="primary">Add</button>
   </div>
+  <div class="gimgs" id="gimgs"></div>
+  <div class="history" id="history" hidden></div>
   <div class="board" id="board"></div>
 </div>
 <div class="toast" id="toast"></div>

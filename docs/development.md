@@ -51,12 +51,16 @@ and the terminal:
   store, the board assembly, the pane reader, the keeper's cache, and every
   route, over HTTP against an in-process server with a scripted SDK and a
   scripted assessor (no model call).
+- `test/todo-tools.test.ts`: both tool servers a session reaches the list
+  through — the in-process `todos` server a chat gets and the `/mcp` endpoint —
+  driven by a real MCP client, error paths included.
 - `test/tmux-board.test.ts`: the board's reach into real tmux. A real tmux
   session runs `test/fixtures/fake-claude-pane.sh`, which draws what the real
   CLI draws (spinner and timer while working, the input box between two
   rules, the status line) and logs every line typed into it. Covers handing
   an item to an idle session, refusing a working one or a plain shell, and
-  typing an owner's answer into the session that asked. Skipped without tmux.
+  typing an owner's answer into the session that asked, and releasing a claim
+  whose tmux session is gone. Skipped without tmux.
 - `test/hooks.test.ts`: `deploy/hooks/todo-context.sh` and `todo-status.sh`
   run for real against a test server, including the answers addressed to one
   tmux session and not another. Skipped without bash, curl and jq. The spawn
@@ -76,7 +80,10 @@ mistaken for tasks, a new task after a finished one), `keeper.eval.ts` scores
 them over several runs and exits non-zero below `--min`. The labels are the
 author's judgement, so the score is a regression meter for the prompt, not
 ground truth. When the keeper gets a real thread wrong, add its tail as a
-case. Rerun it whenever the prompt in `src/insight.ts` changes.
+case. `npm run eval:keeper -- --reported` also scores the corrections made
+on the board ("not a task", "wrong title" save the thread to
+`workspace/keeper-misreads.jsonl`). Rerun it whenever the prompt in
+`src/insight.ts` changes.
 
 `npm run hooks` points git at `.githooks`, whose `pre-push` runs the same
 things before a push leaves the machine — typecheck and unit always, the

@@ -228,3 +228,134 @@ describe("queueBlock", () => {
     assert.doesNotMatch(block, /old q|not mine|theirs/);
   });
 });
+
+/* ---------------- the second round: blockers, notes, reopen, release, archive, stale, settings ---------------- */
+import { blockersOf, STALE_IDLE_MS, ARCHIVE_FILE } from "../src/todos.js";
+import { BoardSettings } from "../src/board-settings.js";
+import { Insights } from "../src/insight.js";
+
+describe("blocked-by", () => {
+  test("a blocked item cannot be claimed until its blocker is done or dropped; cycles and self-waits are refused", async () => {
+    const s = await scratch();
+    try {
+      const st = new TodoStore(); const root = join(s.projects, "repo");
+      const a = st.add(root, { text: "design the schema" });
+      const b = st.add(root, { text: "write the migration", blockedBy: [a.id, "no-such-id"] });
+      assert.deepEqual(st.read(root).find((i) => i.id === b.id)!.blockedBy, [a.id], "an unknown blocker is ignored");
+      assert.throws(() => st.claim(root, b.id, "chat:x"), /blocked: waiting on "design the schema"/);
+      assert.throws(() => st.annotate(root, a.id, { blockedBy: [a.id] }), /cannot wait on itself/);
+      assert.throws(() => st.annotate(root, a.id, { blockedBy: [b.id] }), /wait on each other/);
+      st.claim(root, a.id, "chat:y"); st.done(root, a.id, "schema agreed");
+      assert.equal(st.claim(root, b.id, "chat:x").status, "claimed", "unblocked once the blocker is done");
+      // A dropped blocker unblocks too; removing one clears the reference.
+      const c = st.add(root, { text: "ship it" }), d = st.add(root, { text: "announce", blockedBy: [c.id] });
+      st.drop(root, c.id); assert.equal(blockersOf(st.read(root), st.read(root).find((i) => i.id === d.id)!).length, 0);
+      const e = st.add(root, { text: "e" }), f = st.add(root, { text: "f", blockedBy: [e.id] });
+      st.remove(root, e.id); assert.equal(st.read(root).find((i) => i.id === f.id)!.blockedBy, undefined);
+    } finally { await s.done(); }
+  });
+});
+
+describe("notes, images, reopen, release by holder", () => {
+  test("annotate sets and clears notes and images; reopen puts a finished item back; releaseBy frees everything a holder had", async () => {
+    const s = await scratch();
+    try {
+      const st = new TodoStore(); const root = join(s.projects, "repo");
+      const a = st.add(root, { text: "restyle the header", notes: "  keep the logo  ", images: ["/tmp/a.png"] });
+      assert.equal(a.notes, "keep the logo"); assert.deepEqual(a.images, ["/tmp/a.png"]);
+      const b = st.annotate(root, a.id, { notes: "", images: ["/tmp/b.png", "/tmp/c.png"] });
+      assert.equal(b.notes, undefined); assert.deepEqual(b.images, ["/tmp/b.png", "/tmp/c.png"]);
+      st.claim(root, a.id, "tmux:s1"); const two = st.add(root, { text: "second" }); st.claim(root, two.id, "tmux:s1"); const other = st.add(root, { text: "other" }); st.claim(root, other.id, "tmux:s2");
+      assert.equal(st.releaseBy(root, "tmux:s1").length, 2);
+      assert.deepEqual(st.read(root).map((i) => `${i.text}:${i.status}`), ["restyle the header:queued", "second:queued", "other:claimed"]);
+      st.done(root, a.id, "restyled");
+      const re = st.reopen(root, a.id);
+      assert.equal(re.status, "queued"); assert.equal(re.result, undefined); assert.equal(re.claimedBy, undefined);
+      assert.throws(() => st.reopen(root, a.id), /not finished/);
+    } finally { await s.done(); }
+  });
+});
+
+describe("the archive and the history", () => {
+  test("pruned items are archived, not lost; history searches the file and the archive, newest first", async () => {
+    const s = await scratch();
+    try {
+      let now = 1_000_000; const st = new TodoStore({ now: () => now }); const root = join(s.projects, "repo");
+      const old = st.add(root, { text: "fix the footer" }); st.claim(root, old.id, "chat:a"); st.done(root, old.id, "sticky below 700px");
+      now += PRUNE_AFTER_MS + 10_000;
+      const fresh = st.add(root, { text: "dark theme" }); st.claim(root, fresh.id, "chat:b"); st.done(root, fresh.id, "tokens and a toggle");
+      assert.ok(!st.read(root).some((i) => i.id === old.id), "pruned from the live file");
+      assert.ok(existsSync(join(root, ARCHIVE_FILE)));
+      assert.deepEqual(st.history(root).map((i) => i.text), ["dark theme", "fix the footer"]);
+      assert.deepEqual(st.history(root, "FOOTER").map((i) => i.text), ["fix the footer"]);
+      assert.deepEqual(st.history(root, "sticky").map((i) => i.id), [old.id], "the result is searched too");
+      assert.deepEqual(st.history(root, "nothing like this"), []);
+    } finally { await s.done(); }
+  });
+});
+
+describe("the board marks stale claims and what a blocked item waits on", () => {
+  test("gone holder, idle holder past the limit, active holder; waitingOn names the blocker", async () => {
+    const s = await scratch();
+    try {
+      const now = 50_000_000; const st = new TodoStore({ now: () => now }); const repo = join(s.projects, "repo");
+      const a = st.add(repo, { text: "held by a ghost" }), b = st.add(repo, { text: "held by an idle one" }), c = st.add(repo, { text: "held by a busy one" });
+      st.claim(repo, a.id, "tmux:ghost"); st.claim(repo, b.id, "chat:idle1"); st.claim(repo, c.id, "chat:busy1");
+      const w = st.add(repo, { text: "waits", blockedBy: [a.id] });
+      const board = buildBoard({ now, projectsRoot: s.projects, projects: [{ id: "repo", name: "repo", path: repo }], tmux: [], todos: st,
+        chats: [{ id: "idle1", title: "idle", cwd: repo, project: "repo", busy: false, waiting: false, lastTouched: now - STALE_IDLE_MS - 1, steps: null },
+                { id: "busy1", title: "busy", cwd: repo, project: "repo", busy: true, waiting: false, lastTouched: now - STALE_IDLE_MS - 1, steps: null }] });
+      const q = board.projects[0].queue; const by = (id: string) => q.find((i) => i.id === id)!;
+      assert.equal(by(a.id).stale, "gone"); assert.equal(by(b.id).stale, "idle"); assert.equal(by(c.id).stale, undefined);
+      assert.deepEqual(by(w.id).waitingOn, [{ id: a.id, text: "held by a ghost" }]);
+    } finally { await s.done(); }
+  });
+});
+
+describe("queueBlock with notes, images and blockers", () => {
+  test("notes and images follow the item; a blocked item is listed apart and not offered", () => {
+    const it = (id: string, text: string, extra: Partial<TodoItem> = {}): TodoItem => ({ id, text, for: "claude", status: "queued", addedAt: 1, addedBy: "owner", ...extra });
+    const items = [it("aaaaaaaa-1", "restyle header", { notes: "keep the logo\nand the nav", images: ["/w/.todo-attachments/x.png"] }),
+                   it("bbbbbbbb-1", "ship it", { blockedBy: ["aaaaaaaa-1"] })];
+    const block = queueBlock(items, "me", 5)!;
+    assert.match(block, /Queued for this project[^\n]*\n- \[aaaaaaaa\] restyle header\n  notes: keep the logo and the nav\n  images \(Read them\): \/w\/\.todo-attachments\/x\.png/);
+    assert.match(block, /Waiting on other items[^\n]*\n- \[bbbbbbbb\] ship it — after: \[aaaaaaaa\]/);
+    assert.doesNotMatch(block.split("Waiting on")[0], /ship it/);
+  });
+});
+
+describe("BoardSettings and the keeper's pause and counter", () => {
+  test("settings persist; suppression is per session and title", async () => {
+    const s = await scratch();
+    try {
+      const f = join(s.root, ".board.json");
+      const a = new BoardSettings(f); a.setPaused(true); a.setAuto("/p/x", true); a.suppress("chat:1", "Not a task");
+      const b = new BoardSettings(f);
+      assert.equal(b.keeperPaused, true); assert.equal(b.auto("/p/x"), true); assert.equal(b.auto("/p/y"), false);
+      assert.equal(b.isSuppressed("chat:1", "Not a task"), true); assert.equal(b.isSuppressed("chat:2", "Not a task"), false);
+      b.setAuto("/p/x", false); assert.equal(new BoardSettings(f).auto("/p/x"), false);
+      await writeFile(f, "{ torn"); assert.equal(new BoardSettings(f).keeperPaused, false, "a bad file is the defaults");
+    } finally { await s.done(); }
+  });
+
+  test("paused: no new model call, the cached value still shows; calls are counted per day and survive a restart; tail and peek", async () => {
+    const s = await scratch();
+    try {
+      let now = Date.parse("2026-10-10T10:00:00Z"); let calls = 0;
+      const f = join(s.root, "ins.json");
+      const ins = new Insights(async (t) => { calls++; return { summary: `s${calls}`, title: "t", status: "working" }; }, () => now, f);
+      ins.get("k", "first text"); await new Promise((r) => setImmediate(r));
+      assert.equal(ins.peek("k")?.summary, "s1"); assert.equal(ins.tail("k"), "first text");
+      assert.deepEqual(ins.stats(), { date: "2026-10-10", calls: 1 });
+      ins.paused = true; now += 200_000;
+      assert.equal(ins.get("k", "changed text", true)?.summary, "s1", "paused: the old value, no call"); assert.equal(calls, 1);
+      ins.paused = false;
+      ins.get("k", "changed text", true); await new Promise((r) => setImmediate(r)); assert.equal(calls, 2);
+      assert.equal(ins.stats().calls, 2);
+      now += 24 * 3600_000; assert.deepEqual(ins.stats(), { date: "2026-10-11", calls: 0 }, "a new day starts at zero");
+      await new Promise((r) => setTimeout(r, 650));
+      const again = new Insights(async () => null, () => Date.parse("2026-10-10T12:00:00Z"), f);
+      assert.equal(again.stats().calls, 2, "the count is persisted");
+    } finally { await s.done(); }
+  });
+});

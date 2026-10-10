@@ -9,7 +9,7 @@
  * a claim is a compare-and-set that cannot be taken twice. The file is for
  * this box: gitignored globally, never committed.
  */
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { quarantine } from "./store.js";
@@ -32,7 +32,23 @@ export type TodoItem = {
   doneAt?: number;
   /** One line: what was done, or the owner's answer. */
   result?: string;
+  /** More than one line: context for whoever takes it. */
+  notes?: string;
+  /** Absolute paths of attached images (a session can Read them). */
+  images?: string[];
+  /** Ids of items that must be done (or dropped) first; a blocked item cannot be claimed or assigned. */
+  blockedBy?: string[];
 };
+
+export const MAX_NOTES = 8000;
+export const MAX_IMAGES = 6;
+export const ARCHIVE_FILE = "todo-archive.jsonl";
+
+/** The open items still standing in front of this one. */
+export function blockersOf(items: TodoItem[], item: TodoItem): TodoItem[] {
+  if (!item.blockedBy?.length) return [];
+  return items.filter((i) => item.blockedBy!.includes(i.id) && i.status !== "done" && i.status !== "dropped");
+}
 
 export type TodoFile = { items: TodoItem[] };
 
@@ -106,12 +122,17 @@ export class TodoStore {
   /** Open items: queued and claimed, in order. */
   open(root: string): TodoItem[] { return this.read(root).filter((i) => i.status === "queued" || i.status === "claimed"); }
 
-  add(root: string, input: { text: string; for?: TodoFor; addedBy?: string }): TodoItem {
+  add(root: string, input: { text: string; for?: TodoFor; addedBy?: string; notes?: string; images?: string[]; blockedBy?: string[] }): TodoItem {
     const text = (input.text ?? "").trim().slice(0, MAX_TEXT);
     if (!text) throw new Error("a todo needs text");
+    const notes = (input.notes ?? "").trim().slice(0, MAX_NOTES);
+    const images = (input.images ?? []).filter((x) => typeof x === "string" && x).slice(0, MAX_IMAGES);
+    const known = new Set(this.read(root).map((i) => i.id));
+    const blockedBy = (input.blockedBy ?? []).filter((x) => known.has(x));
     const item: TodoItem = {
       id: randomUUID(), text, for: input.for === "owner" ? "owner" : "claude",
       status: "queued", addedAt: this.#now(), addedBy: (input.addedBy ?? "owner").slice(0, 80),
+      ...(notes ? { notes } : {}), ...(images.length ? { images } : {}), ...(blockedBy.length ? { blockedBy } : {}),
     };
     this.#write(root, (items) => {
       // Owner items go to the top (newest first); work for the sessions queues at the end.
@@ -121,9 +142,85 @@ export class TodoStore {
     return item;
   }
 
+  /** Notes, images and blockers on an item. A blocker must exist in this project, and not be the item itself or lead back to it. */
+  annotate(root: string, id: string, patch: { notes?: string; images?: string[]; blockedBy?: string[] }): TodoItem {
+    const items = this.read(root);
+    const me = items.find((i) => i.id === id || (id.length >= 8 && i.id.startsWith(id)));
+    if (!me) throw new Error(`no todo ${id} in ${basename(root)}`);
+    let blockedBy: string[] | undefined;
+    if (patch.blockedBy) {
+      blockedBy = [...new Set(patch.blockedBy.map((b) => items.find((i) => i.id === b || (b.length >= 8 && i.id.startsWith(b)))?.id).filter((x): x is string => !!x))];
+      if (blockedBy.includes(me.id)) throw new Error("an item cannot wait on itself");
+      // No cycles: nothing may (through its own blockers) wait on this item.
+      const seen = new Set<string>(); const stack = [...blockedBy];
+      while (stack.length) { const k = stack.pop()!; if (k === me.id) throw new Error("that would make two items wait on each other"); if (seen.has(k)) continue; seen.add(k); stack.push(...(items.find((i) => i.id === k)?.blockedBy ?? [])); }
+    }
+    return this.#edit(root, me.id, (i) => {
+      const next: TodoItem = { ...i };
+      if (patch.notes !== undefined) { const n = patch.notes.trim().slice(0, MAX_NOTES); if (n) next.notes = n; else delete next.notes; }
+      if (patch.images !== undefined) { const im = patch.images.filter((x) => typeof x === "string" && x).slice(0, MAX_IMAGES); if (im.length) next.images = im; else delete next.images; }
+      if (blockedBy !== undefined) { if (blockedBy.length) next.blockedBy = blockedBy; else delete next.blockedBy; }
+      return next;
+    });
+  }
+
+  /** A finished item back in the queue: the keeper was wrong, or the work came undone. */
+  reopen(root: string, id: string): TodoItem {
+    return this.#edit(root, id, (i) => {
+      if (i.status !== "done" && i.status !== "dropped") throw new Error(`that item is ${i.status}, not finished`);
+      const { claimedBy: _b, claimedAt: _a, doneAt: _d, result: _r, ...rest } = i;
+      return { ...rest, status: "queued" };
+    });
+  }
+
+  /** Take a finished item out of the file for good (a record the keeper made that was not a task). */
+  remove(root: string, id: string): TodoItem {
+    let gone: TodoItem | null = null;
+    this.#write(root, (items) => {
+      const at = items.findIndex((i) => i.id === id || (id.length >= 8 && i.id.startsWith(id)));
+      if (at < 0) throw new Error(`no todo ${id} in ${basename(root)}`);
+      gone = items[at];
+      return items.filter((_, k) => k !== at).map((i) => {
+        if (!i.blockedBy?.includes(gone!.id)) return i;
+        const left = i.blockedBy.filter((b) => b !== gone!.id);
+        const { blockedBy: _x, ...rest } = i;
+        return left.length ? { ...rest, blockedBy: left } : rest;
+      });
+    });
+    this.onChange?.(root, gone!, "changed");
+    return gone!;
+  }
+
+  /** Release everything `by` holds (its session is gone). Returns what went back to the queue. */
+  releaseBy(root: string, by: string): TodoItem[] {
+    const out: TodoItem[] = [];
+    this.#write(root, (items) => items.map((i) => {
+      if (i.status !== "claimed" || i.claimedBy !== by) return i;
+      const { claimedBy: _b, claimedAt: _a, ...rest } = i; const back: TodoItem = { ...rest, status: "queued" }; out.push(back); return back;
+    }));
+    return out;
+  }
+
+  /** Finished work, newest first, from the file and the archive pruning appends to. */
+  history(root: string, q = "", limit = 100): TodoItem[] {
+    const dir = resolve(root);
+    const archived: TodoItem[] = [];
+    try {
+      const f = join(dir, ARCHIVE_FILE);
+      if (existsSync(f)) for (const line of readFileSync(f, "utf8").split("\n")) { if (!line.trim()) continue; try { const i = JSON.parse(line); if (valid(i)) archived.push(i); } catch { /* a torn line */ } }
+    } catch { /* unreadable archive: current items only */ }
+    const seen = new Set<string>();
+    const all = [...this.read(dir).filter((i) => i.status === "done" || i.status === "dropped"), ...archived].filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
+    const needle = q.trim().toLowerCase();
+    return all.filter((i) => !needle || `${i.text} ${i.result ?? ""} ${i.notes ?? ""} ${i.claimedBy ?? ""}`.toLowerCase().includes(needle))
+      .sort((a, b) => (b.doneAt ?? b.addedAt) - (a.doneAt ?? a.addedAt)).slice(0, limit);
+  }
+
   /** Take an item for `by`. Only a queued item for claude can be claimed, and only once. */
   claim(root: string, id: string, by: string): TodoItem {
-    return this.#edit(root, id, (i) => {
+    return this.#edit(root, id, (i, all) => {
+      const waiting = blockersOf(all, i);
+      if (waiting.length) throw new Error(`blocked: waiting on "${waiting[0].text.slice(0, 60)}"${waiting.length > 1 ? ` and ${waiting.length - 1} more` : ""}`);
       if (i.for !== "claude") throw new Error("that item is for the owner; it cannot be claimed");
       if (i.status === "claimed") throw new Error(`already claimed by ${i.claimedBy ?? "someone"}`);
       if (i.status !== "queued") throw new Error(`that item is ${i.status}`);
@@ -194,12 +291,12 @@ export class TodoStore {
     return out;
   }
 
-  #edit(root: string, id: string, fn: (i: TodoItem) => TodoItem): TodoItem {
+  #edit(root: string, id: string, fn: (i: TodoItem, all: TodoItem[]) => TodoItem): TodoItem {
     let changed: TodoItem | null = null;
     this.#write(root, (items) => {
       const at = items.findIndex((i) => i.id === id || (id.length >= 8 && i.id.startsWith(id)));
       if (at < 0) throw new Error(`no todo ${id} in ${basename(root)}`);
-      changed = fn(items[at]);
+      changed = fn(items[at], items);
       return items.map((i, k) => (k === at ? changed! : i));
     });
     this.onChange?.(root, changed!, "changed");
@@ -212,7 +309,15 @@ export class TodoStore {
     try { if (!statSync(dir).isDirectory()) throw new Error("not a directory"); }
     catch { throw new Error(`${dir} is not a directory`); }
     const p = this.path(dir);
-    const next = prune(fn(this.read(dir)), this.#now());
+    const before = fn(this.read(dir));
+    const next = prune(before, this.#now());
+    // What pruning drops is archived, not lost: the history search reads it back.
+    const kept = new Set(next.map((i) => i.id));
+    const dropped = before.filter((i) => !kept.has(i.id));
+    if (dropped.length) {
+      try { appendFileSync(join(dir, ARCHIVE_FILE), dropped.map((i) => JSON.stringify(i)).join("\n") + "\n"); }
+      catch { /* an unwritable archive must not block the write */ }
+    }
     writeFileSync(`${p}.tmp`, JSON.stringify({ items: next }, null, 2) + "\n");
     renameSync(`${p}.tmp`, p);
   }
@@ -274,11 +379,14 @@ export type BoardProject = {
   name: string;
   root: string;
   sessions: SessionRow[];
-  queue: TodoItem[];
+  queue: (TodoItem & { waitingOn?: { id: string; text: string }[]; stale?: "gone" | "idle" })[];
   /** Open items for the owner in this project: the "needs you" column. */
   asks: TodoItem[];
   counts: { queued: number; claimed: number; forYou: number };
 };
+
+/** How long a held item's session may sit idle before the claim reads as stale. */
+export const STALE_IDLE_MS = 15 * 60_000;
 
 export type Board = {
   at: number;
@@ -348,7 +456,15 @@ export function buildBoard(input: BoardInput): Board {
     if (!input.todos.has(root)) continue;
     const items = input.todos.read(root);
     const p = project(root);
-    p.queue = items.filter((i) => i.for === "claude");
+    p.queue = items.filter((i) => i.for === "claude").map((i) => {
+      if (i.status === "queued") { const w = blockersOf(items, i); return w.length ? { ...i, waitingOn: w.map((x) => ({ id: x.id, text: x.text })) } : i; }
+      if (i.status === "claimed") {
+        const holder = i.claimedBy ? [...byRoot.values()].flatMap((q) => q.sessions).find((s) => (s.kind === "chat" ? `chat:${s.id}` : `tmux:${s.name}`) === i.claimedBy) : undefined;
+        const stale = !holder ? "gone" : holder.state === "idle" && now - holder.since > STALE_IDLE_MS ? "idle" : undefined;
+        return stale ? { ...i, stale } : i;
+      }
+      return i;
+    });
     for (const i of items) {
       if (i.for === "owner" && i.status !== "done" && i.status !== "dropped") { forYou.push({ ...i, project: p.name, root }); p.asks.push(i); }
     }
@@ -386,14 +502,21 @@ function rank(s: SessionRow): number {
  */
 export function queueBlock(items: TodoItem[], chatId: string, now: number, max = 12): string | null {
   const me = `chat:${chatId}`;
-  const queued = items.filter((i) => i.for === "claude" && i.status === "queued").slice(0, max);
+  const ready = (i: TodoItem) => blockersOf(items, i).length === 0;
+  const queued = items.filter((i) => i.for === "claude" && i.status === "queued" && ready(i)).slice(0, max);
+  const blocked = items.filter((i) => i.for === "claude" && i.status === "queued" && !ready(i)).slice(0, 5);
   const mine = items.filter((i) => i.for === "claude" && i.status === "claimed" && i.claimedBy === me);
   const answered = items.filter((i) => i.for === "owner" && i.status === "done" && i.addedBy === me && i.result && now - (i.doneAt ?? 0) < 24 * 60 * 60_000);
-  if (!queued.length && !mine.length && !answered.length) return null;
+  if (!queued.length && !mine.length && !answered.length && !blocked.length) return null;
   const short = (id: string) => id.slice(0, 8);
   const lines: string[] = [];
-  if (mine.length) { lines.push("You hold:"); for (const i of mine) lines.push(`- [${short(i.id)}] ${i.text}`); }
-  if (queued.length) { lines.push("Queued for this project (take one with todos.claim when asked, or when you finish what you hold):"); for (const i of queued) lines.push(`- [${short(i.id)}] ${i.text}`); }
+  const detail = (i: TodoItem) => [
+    ...(i.notes ? [`  notes: ${i.notes.replace(/\s+/g, " ").slice(0, 400)}${i.notes.length > 400 ? "…" : ""}`] : []),
+    ...(i.images?.length ? [`  images (Read them): ${i.images.join(", ")}`] : []),
+  ];
+  if (mine.length) { lines.push("You hold:"); for (const i of mine) lines.push(`- [${short(i.id)}] ${i.text}`, ...detail(i)); }
+  if (queued.length) { lines.push("Queued for this project (take one with todos.claim when asked, or when you finish what you hold):"); for (const i of queued) lines.push(`- [${short(i.id)}] ${i.text}`, ...detail(i)); }
+  if (blocked.length) { lines.push("Waiting on other items (not yours to take yet):"); for (const i of blocked) lines.push(`- [${short(i.id)}] ${i.text} — after: ${blockersOf(items, i).map((b) => `[${short(b.id)}]`).join(" ")}`); }
   if (answered.length) { lines.push("The owner answered what you asked:"); for (const i of answered) lines.push(`- Q: ${i.text}\n  A: ${i.result}`); }
   return lines.join("\n");
 }

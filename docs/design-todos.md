@@ -263,6 +263,28 @@ queue leaves the board.
     are the author's, mostly synthetic, one model, one day; the score says
     the clear cases work, not how often a real thread is misread.
 
+19. **Eight additions, 2026-10-10** (owner chose them from a list of ten; the
+    side-panel view and the idle-with-queue phone alert were left out).
+    *Orphaned claims*: a Stop hook for tmux sessions; the keeper closes an item
+    a chat holds when it reads the whole task as done; tmux exit and chat
+    deletion release; stale marks (idle 15 min) and a visible box for claims
+    whose holder is gone, which the first version of the page did not have.
+    *Keeper corrections*: not-a-task and wrong-title save the thread for
+    `eval:keeper --reported`. *Cost*: pause and a call counter; persisted.
+    *Richer tasks*: notes, images (kept in the workspace), served back for
+    thumbnails. *Done links*: chat and commit. *History*: pruning archives to
+    `todo-archive.jsonl`; search reads it. *Blocked-by*: ids on the item,
+    refused cycles, enforced on claim, assign and dispatch (a dropped
+    blocker unblocks; removing one clears the reference). *Auto-dispatch*:
+    per project, off by default, with the guards in docs/using.md.
+    Known limits: auto-dispatch cannot see a half-typed line in a tmux
+    session; "idle" for stale is time since the session last moved, not proof
+    the work is abandoned; commit detection is a hash regex confirmed with
+    `git rev-parse`, so a result that names a hash from another repo is not
+    linked; the keeper closing a held item is a model judgement (↩ undoes
+    it); opening a card's details panel pauses the page's polling until it
+    is closed.
+
 ## Item shape
 
 ```json

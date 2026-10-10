@@ -286,7 +286,7 @@ export function promptTools(prompts: PromptStore) {
 }
 
 /** Auto-approved: the model's claim on an item is a note on a list, not an action on the machine. */
-export const TODO_TOOLS = ["mcp__todos__list", "mcp__todos__claim", "mcp__todos__done", "mcp__todos__add", "mcp__todos__ask"];
+export const TODO_TOOLS = ["mcp__todos__list", "mcp__todos__claim", "mcp__todos__done", "mcp__todos__add", "mcp__todos__ask", "mcp__todos__release"];
 
 /**
  * Project todos for the chat itself (docs/design-todos.md): see the queue,
@@ -314,9 +314,16 @@ export function todoTools(store: TodoStore, root: () => string, by: string) {
       tool("done", "Finish an item you hold (or a queued one you did without claiming), with one line on the outcome.",
         { id: z.string().describe("The item's id, or its first 8 characters"), result: z.string().max(500).describe("One line: what was done, where to look") },
         async (a) => text(`Done.\n${line(store.done(root(), a.id, a.result, by))}`)),
-      tool("add", "Leave an item on the project's list for a later session (or this one): follow-up work you noticed but should not start now.",
-        { text: z.string().min(1).max(2000) },
-        async (a) => text(`Added.\n${line(store.add(root(), { text: a.text, addedBy: by }))}`)),
+      tool("add", "Leave an item on the project's list for a later session (or this one): follow-up work you noticed but should not start now. Put detail in notes; name items it must wait for in after (ids or their first 8 characters).",
+        { text: z.string().min(1).max(2000), notes: z.string().max(8000).optional(), after: z.array(z.string()).max(10).optional() },
+        async (a) => {
+          const r = root(); const all = store.read(r);
+          const blockedBy = (a.after ?? []).map((x) => all.find((i) => i.id === x || (x.length >= 8 && i.id.startsWith(x)))?.id).filter((x): x is string => !!x);
+          return text(`Added.\n${line(store.add(r, { text: a.text, addedBy: by, notes: a.notes, blockedBy }))}`);
+        }),
+      tool("release", "Put an item you hold back in the queue — you cannot finish it, or it turned out to belong to someone else. Say why in your reply.",
+        { id: z.string().describe("The item's id, or its first 8 characters") },
+        async (a) => text(`Released.\n${line(store.release(root(), a.id))}`)),
       tool("ask",
         "File a question or a todo for the owner on the board — a decision you should not take alone, or work only they can do (a DNS record, a payment, a password). " +
         "Use it instead of stalling or guessing; carry on with what does not depend on the answer. The answer reaches you in a later turn.",
