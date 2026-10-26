@@ -34,6 +34,9 @@ class Server:
         # server must see the defaults wherever the suite runs.
         env = {k: v for k, v in os.environ.items() if not k.startswith("CODETERM_")}
         env.update(ROOT=self.root, PORT=str(self.port), CT_EXIT_WITH_PARENT="1")
+        # Its own tmux server: every shell pane is a tmux session now, and the
+        # suite's must not land among the machine's real ones (the board lists those).
+        env.pop("TMUX", None); env["TMUX_TMPDIR"] = self.root
         # node directly, in its own process group: terminating an `npx` wrapper
         # leaves the real server alive and the port taken.
         self.proc = subprocess.Popen([shutil.which("node"), "--import", "tsx", "test/fixtures/fake-server.ts"], cwd=REPO, env=env,
@@ -51,8 +54,15 @@ class Server:
         self.log.flush()
         raise RuntimeError("fixture server did not start; log tail:\n" + open(self.log.name, "rb").read()[-2000:].decode(errors="replace"))
 
-    def stop(self):
+    @property
+    def tmux_env(self):
+        """For a test's own tmux calls: this server's private tmux, not the machine's."""
+        return {**os.environ, "TMUX_TMPDIR": self.root}
+
+    def stop(self, keep_tmux=False):
         if not self.proc: return
+        # A restart keeps tmux, as the service's restart does: surviving it is what sessions are for.
+        if not keep_tmux: subprocess.run(["tmux", "kill-server"], env=self.tmux_env, capture_output=True)
         import signal
         os.killpg(self.proc.pid, signal.SIGTERM)
         try: self.proc.wait(5)
@@ -70,7 +80,7 @@ class Server:
                 s.close(); return
 
     def restart(self):
-        self.stop(); self.start()
+        self.stop(keep_tmux=True); self.start()
 
 
 @pytest.fixture(scope="session")

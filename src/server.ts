@@ -25,7 +25,7 @@ import { ScheduleStore, Scheduler, parseWhen, nextRun, validTimeZone, describe a
 import { makeRunner, pruneRuns } from "./schedule-run.js";
 import { Notifier, notifyConfigFromEnv, type NotifyConfig } from "./notify.js";
 import { TelegramListener } from "./telegram-listener.js";
-import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture, sendLine, hasSession } from "./tmux.js";
+import { tmuxAvailable, listSessions, createSession, renameSession, killSession, capture, sendLine, hasSession, reapIdleShells } from "./tmux.js";
 import { TodoStore, buildBoard, projectRootOf, blockersOf, type TodoFor, type Board } from "./todos.js";
 import { Insights, readPane, lastAssistantText, lastUserText, type Assessor, type Assessment } from "./insight.js";
 import { transcript } from "./mcp.js";
@@ -467,6 +467,16 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     if (await haveTmux()) { next(); return; }
     res.status(404).json({ error: SHELL ? "tmux is not installed on the server" : "the shell is off (CODETERM_SHELL=0)" });
   };
+  /* Every pane is an `sh-` session now, so the ones left at a bare prompt with
+     nobody attached would pile up. Two hours idle is long past a laptop lid
+     closed over lunch; anything still running in the pane keeps it. */
+  const SHELL_IDLE_MS = 2 * 3600_000;
+  const reaper = setInterval(() => {
+    void haveTmux().then((ok) => ok ? reapIdleShells(SHELL_IDLE_MS) : [])
+      .then((gone) => { if (gone.length) log(`[tmux] reaped idle shell session(s): ${gone.join(", ")}`); })
+      .catch(() => {});
+  }, 10 * 60_000);
+  reaper.unref();
   const tmuxFail = (res: express.Response, e: unknown) =>
     res.status(400).json({ error: e instanceof Error ? e.message.replace(/^Command failed.*?\n/s, "").trim() || e.message : String(e) });
 
@@ -1327,7 +1337,7 @@ export async function boot(cfg: ServerConfig): Promise<Running> {
     if (stopping) return stopping;
     stopping = new Promise<void>((done) => {
       log(`[${signal}] shutting down`);
-      clearInterval(sweeper);
+      clearInterval(sweeper); clearInterval(reaper);
       scheduler.stop();
       void telegramListener?.stop().catch((e) => warn(`shutdown: telegram listener ${String(e)}`));
       try { convo.shutdown(); } catch (e) { warn(`shutdown: chats ${String(e)}`); }

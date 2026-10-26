@@ -24,6 +24,14 @@
   /* A server started with CODETERM_SHELL=0 has no /pty route. Without asking
      first the host would dial it and retry every 3 s forever. */
   let shellOn = true;
+  /* The server has tmux. Then every pane is a tmux session: a plain shell dies
+     with its socket, and a claude running in it went with it on every dropped
+     connection (2026-10-26, a conversation ended the second the extension
+     disconnected). Plain shells are left for servers without tmux. */
+  let sessionsOn = false;
+  /* `sh-` plus six hex: the server reaps these when they sit idle with no client
+     (tmux.ts reapIdleShells); a session you name yourself is never reaped. */
+  const autoName = () => "sh-" + Array.from(crypto.getRandomValues(new Uint8Array(3)), (b) => b.toString(16).padStart(2, "0")).join("");
   let homeDir = "";
   let selectShell = () => {};
   /* The host owns its note line — only it knows that its files view shows a
@@ -106,6 +114,10 @@
     ptyWs.binaryType = "arraybuffer";
     ptyWs.onopen = () => {
       ptySeen = Date.now();
+      if (!attachedTo && sessionsOn) {
+        attachedTo = autoName(); rememberSession(attachedTo); attachedPath = ""; repaintNote();
+        setTimeout(refreshAttachedPath, 1500);   // the session exists once the server has started it
+      }
       if (ptyWasDown) {
         ptyWasDown = false;
         term.write(attachedTo
@@ -492,9 +504,10 @@
       };
       $("snew").onkeydown = (e) => { if (e.key === "Enter") $("screate").click(); };
       if (noteEl) {
-        // A click on the note while attached is the way back to a plain shell.
+        // A click on the note while attached leaves the session for a fresh one
+        // (a plain shell where there is no tmux).
         noteEl.onclick = () => { if (attachedTo) detach(); };
-        noteEl.title = "click to leave the session and go back to a plain shell";
+        noteEl.title = "click to leave this session (it keeps running) for a fresh one";
       }
 
       /* Ask what this server has before dialling: with CODETERM_SHELL=0 there
@@ -508,6 +521,7 @@
           shellOn = c.shell !== false;
           homeDir = c.home ?? "";
           // A reload comes back to the session this host was on, not a fresh shell.
+          sessionsOn = !!c.sessions && shellOn;
           if (!c.sessions) { attachedTo = null; rememberSession(null); }
           if (attachedTo) { repaintNote(); refreshAttachedPath(); }
           opts.onConfig?.({ shell: shellOn, sessions: !!c.sessions && shellOn });

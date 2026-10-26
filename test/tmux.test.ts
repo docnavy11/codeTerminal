@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tmuxAvailable, listSessions, createSession, renameSession, killSession, hasSession, capture, validName } from "../src/tmux.js";
+import { tmuxAvailable, listSessions, createSession, renameSession, killSession, hasSession, capture, validName, idleShells, type TmuxSession } from "../src/tmux.js";
 
 const run = promisify(execFile);
 const HAVE = await tmuxAvailable();
@@ -23,6 +23,25 @@ describe("session names", () => {
   test("what tmux may be handed on a command line", () => {
     for (const ok of ["a", "dev", "Build_2", "web.api", "a-b", "x".repeat(64)]) assert.ok(validName(ok), ok);
     for (const bad of ["", "-rf", ".hidden", "a b", "a;b", "a$(id)", "a:b", "../x", "x".repeat(65)]) assert.ok(!validName(bad), bad);
+  });
+});
+
+describe("reaping the panes' automatic sessions", () => {
+  const NOW = 10 * 3600_000, IDLE = 2 * 3600_000;
+  const s = (name: string, over: Partial<TmuxSession> = {}): TmuxSession =>
+    ({ name, path: "/x", windows: 1, attached: 0, createdAt: 0, activityAt: NOW - IDLE - 1, command: "bash", ...over });
+
+  test("an sh- session at a bare prompt, unattached and idle past the limit, goes", () => {
+    assert.deepEqual(idleShells([s("sh-a1b2c3"), s("sh-0f0f0f", { command: "zsh" })], NOW, IDLE), ["sh-a1b2c3", "sh-0f0f0f"]);
+  });
+  test("what is kept: anything running, anyone attached, recent activity, a name of your own", () => {
+    assert.deepEqual(idleShells([
+      s("sh-aaaaaa", { command: "claude" }),
+      s("sh-bbbbbb", { command: "node" }),
+      s("sh-cccccc", { attached: 1 }),
+      s("sh-dddddd", { activityAt: NOW - 60_000 }),
+      s("build"), s("todo"), s("sh-build"), s("sh-ABCDEF"), s("wt_1234"),
+    ], NOW, IDLE), []);
   });
 });
 

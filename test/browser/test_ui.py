@@ -34,9 +34,15 @@ def test_reconnect_does_not_duplicate_the_transcript(page, server):
 def test_pty_pane_reconnects_after_a_restart(page, server):
     open_ui(page, server)
     wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", what="pty open")
+    name = page.evaluate("() => sessionStorage.getItem('ct.session')")
     server.restart()
     wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", 20, "pty reopen")
-    wait(page, "() => (document.querySelector('#term .xterm-rows')?.textContent || '').includes('reconnected')", 10, "reconnected banner")
+    # The pane is a tmux session where the server has tmux, and comes back to it rather than to a new shell.
+    if name:
+        assert page.evaluate("() => sessionStorage.getItem('ct.session')") == name
+        wait(page, f"() => document.getElementById('rightnote').textContent.startsWith('tmux: {name}')", 10, "back on the same session")
+    else:
+        wait(page, "() => (document.querySelector('#term .xterm-rows')?.textContent || '').includes('reconnected')", 10, "reconnected banner")
 
 
 def test_prompt_typed_while_offline_is_queued_then_sent(page, server):
@@ -1420,7 +1426,7 @@ def test_header_shows_the_attached_session_directory(page, server):
              what="the header followed the session to /tmp")
         assert page.errors == []
     finally:
-        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True, env=server.tmux_env)
 
 
 def test_renaming_the_attached_session_keeps_the_attachment(page, server):
@@ -1458,7 +1464,29 @@ def test_renaming_the_attached_session_keeps_the_attachment(page, server):
         assert page.errors == []
     finally:
         for n in (renamed, name):
-            subprocess.run(["tmux", "kill-session", "-t", "=" + n], capture_output=True)
+            subprocess.run(["tmux", "kill-session", "-t", "=" + n], capture_output=True, env=server.tmux_env)
+
+
+def test_a_fresh_pane_is_its_own_tmux_session_and_survives_a_restart(page, server):
+    """The bug: a pane was a plain shell, killed with its socket, and a claude
+    started in it died on every dropped connection. With tmux on the server a
+    pane you never pointed anywhere is an automatic `sh-` session instead."""
+    import subprocess
+    if subprocess.run(["tmux", "-V"], capture_output=True).returncode != 0:
+        import pytest; pytest.skip("no tmux on this machine")
+    open_ui(page, server)
+    wait(page, "() => /^tmux: sh-[0-9a-f]{6}/.test(document.getElementById('rightnote').textContent)", what="the pane names its session")
+    name = page.evaluate("() => sessionStorage.getItem('ct.session')")
+    assert page.get_attribute("#rightnote", "data-kind") == "tmux"
+    page.click("#term"); page.keyboard.type("X=$((6*7)); echo AUTO-$X\n")
+    wait(page, "() => document.querySelector('#term').innerText.includes('AUTO-42')", what="the shell ran it")
+    server.restart()
+    wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
+    page.click("#term"); page.keyboard.type("echo SAME-$X\n")
+    wait(page, "() => document.querySelector('#term').innerText.includes('SAME-42')", 30,
+         "the same shell, variable and all, after the server restarted")
+    assert page.evaluate("() => sessionStorage.getItem('ct.session')") == name
+    assert page.errors == []
 
 
 def test_sessions_tab_attaches_and_survives_a_restart(page, server):
@@ -1488,7 +1516,7 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         wait(page, "() => document.querySelector('#term').innerText.includes('MARKER-42')", 30,
              "the session and its scrollback came back after the restart")
         assert page.text_content("#rightnote").startswith(f"tmux: {name}")
-        # it is listed as attached, and killing it returns the pane to a plain shell
+        # it is listed as attached, and killing it moves the pane to a fresh automatic session
         page.click('.pane-hd .tab[data-view="sessions"]')
         wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
         wait_stable(page, "#slist .s")
@@ -1499,10 +1527,11 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         wait_stable(page, "#slist .s")
         page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('sure?')")
         wait(page, f"() => ![...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="gone from the list")
-        wait(page, "() => document.getElementById('rightnote').textContent.startsWith('plain shell') && document.getElementById('rightnote').dataset.kind === 'plain'", what="back to a plain shell")
+        wait(page, "() => /^tmux: sh-[0-9a-f]{6}/.test(document.getElementById('rightnote').textContent) && document.getElementById('rightnote').dataset.kind === 'tmux'",
+             what="a fresh automatic session, never a plain shell")
         assert page.errors == []
     finally:
-        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True, env=server.tmux_env)
 
 
 def test_refresh_redraws_the_terminal_without_losing_the_session(page, server):
@@ -1533,14 +1562,14 @@ def test_refresh_redraws_the_terminal_without_losing_the_session(page, server):
         # which lands a moment after the new one is up — so poll rather than
         # read once and catch the overlap.
         count = lambda: len(subprocess.run(["tmux", "list-clients", "-t", "=" + name],
-                                           capture_output=True, text=True).stdout.strip().splitlines())
+                                           capture_output=True, text=True, env=server.tmux_env).stdout.strip().splitlines())
         deadline = time.time() + 10
         while count() != 1 and time.time() < deadline:
             time.sleep(0.2)
         assert count() == 1
         assert page.errors == []
     finally:
-        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True, env=server.tmux_env)
 
 
 def test_refresh_button_is_only_offered_for_the_terminal(page, server):
@@ -1657,7 +1686,7 @@ def test_side_panel_has_a_shell_and_the_session_chooser(ext_pages, server):
         assert pg.errors == [] if hasattr(pg, "errors") else True
     finally:
         pg.close()
-        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True, env=server.tmux_env)
 
 
 def test_a_link_to_a_chat_beats_a_collapsed_transcript(page, server):
@@ -1696,6 +1725,13 @@ def test_a_program_copying_via_osc52_reaches_the_clipboard_only_right_after_a_ge
     or a key in the pane — never from output arriving on its own."""
     open_ui(page, server)
     wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", what="pty open")
+    # The pane is a tmux session, and tmux passes a program's OSC 52 out only
+    # with set-clipboard on (this machine's default is "external"). The gate
+    # under test is the pane's, so open tmux's.
+    import subprocess, time
+    deadline = time.time() + 10
+    while subprocess.run(["tmux", "set", "-s", "set-clipboard", "on"], capture_output=True, env=server.tmux_env).returncode != 0 and time.time() < deadline:
+        time.sleep(0.2)
     _stub_clipboard(page)
     page.click("#term")
     page.keyboard.type("printf '\\033]52;c;%s\\a' \"$(printf copied-by-osc52 | base64)\"\n")
@@ -1719,7 +1755,7 @@ def test_a_plain_drag_in_tmux_copies_the_selection(page, server):
         page.click('.pane-hd .tab[data-view="sessions"]')
         page.fill("#snew", name); page.click("#screate")
         page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
-        subprocess.run(["tmux", "set", "-t", "=" + name, "mouse", "on"], capture_output=True)
+        subprocess.run(["tmux", "set", "-t", "=" + name, "mouse", "on"], capture_output=True, env=server.tmux_env)
         page.click("#term"); page.keyboard.type("clear; echo DRAGME-$((6*7))-END\n")
         wait(page, "() => document.querySelector('#term').innerText.includes('DRAGME-42-END')", what="marker printed")
         _stub_clipboard(page)
@@ -1734,4 +1770,4 @@ def test_a_plain_drag_in_tmux_copies_the_selection(page, server):
         page.mouse.up()
         wait(page, "() => window.__copied.some((t) => t.includes('DRAGME-42'))", 10, "tmux's selection reached the clipboard")
     finally:
-        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
+        subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True, env=server.tmux_env)

@@ -2,12 +2,13 @@
  * The sessions tab: tmux sessions on this machine, listed, attached, renamed,
  * killed.
  *
- * Why this exists next to the plain shell rather than replacing it. The shell
- * pane is a throwaway — open it, type, close it, gone — and making every
- * shell a tmux session would have bought persistence for the surface that
- * needs it least, at the price of tmux's resize rules and its prefix key in
- * everybody's way. Persistence you ask for is a different thing: you go to the
- * sessions tab *because* you want something to outlive the tab.
+ * Every terminal pane is a tmux session when tmux is here (term.js names one
+ * `sh-xxxxxx` when you have not picked one). It used to be a plain shell, on
+ * the idea that a pane is a throwaway; but people start claude in it, and a
+ * plain shell dies with its socket — a conversation ended the very second the
+ * extension's connection dropped (2026-10-26). The price is tmux's resize
+ * rules and its prefix key. The cost of a pane nobody returns to is kept down
+ * by reapIdleShells.
  *
  * These are the machine's sessions, not ours. tty (the other project on this
  * box) creates `wt_<uuid>` sessions on the same socket, and they show up here
@@ -106,6 +107,28 @@ export async function renameSession(from: string, to: string): Promise<void> {
 export async function killSession(name: string): Promise<void> {
   if (!validName(name)) throw new Error("no such session");
   await run("tmux", ["kill-session", "-t", `=${name}`], { timeout: 5000 });
+}
+
+/** The names term.js gives a pane you did not name. Only these are ever reaped. */
+export const AUTO_SESSION = /^sh-[0-9a-f]{6}$/;
+const SHELLS = new Set(["bash", "zsh", "sh", "dash", "fish"]);
+
+/**
+ * The automatic sessions nobody will come back to: no client attached, nothing
+ * but the shell's own prompt in the pane, and no activity for `idleMs`. A pane
+ * running claude, vim or a build is kept however long it sits, and so is any
+ * session with a name of your own.
+ */
+export function idleShells(sessions: TmuxSession[], now: number, idleMs: number): string[] {
+  return sessions
+    .filter((s) => AUTO_SESSION.test(s.name) && s.attached === 0 && SHELLS.has(s.command) && now - s.activityAt > idleMs)
+    .map((s) => s.name);
+}
+
+export async function reapIdleShells(idleMs: number, now = Date.now()): Promise<string[]> {
+  const gone = idleShells(await listSessions(), now, idleMs);
+  for (const name of gone) { try { await killSession(name); } catch { /* went on its own */ } }
+  return gone;
 }
 
 export async function hasSession(name: string): Promise<boolean> {

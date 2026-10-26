@@ -2,10 +2,9 @@
   "entries": [
     {
       "date": "2026-10-26",
-      "status": "open",
-      "who": "owner",
+      "status": "done",
       "topic": "Claude sessions lost in terminal panes",
-      "result": "A pane not attached to tmux is a plain shell killed with its socket (src/attach.ts close); conversation 3f6f5f83 ended at 15:27:48, the same second the extension disconnected. The shell note now says 'plain shell, not tmux' in red vs 'tmux: <name>' in green. Open: owner to decide whether every pane should go into tmux automatically."
+      "result": "A pane not attached to tmux was a plain shell killed with its socket (src/attach.ts close); conversation 3f6f5f83 ended at 15:27:48, the same second the extension disconnected. Now every pane is a tmux session (term.js names it sh-xxxxxx), the note says tmux (green) or plain (red, only without tmux), and the server reaps sh- sessions idle 2h at a bare prompt with no client. Tests: unit 732/732, browser 98/98 serial, the suite on its own tmux server. Changed: a program's own OSC 52 copy in a pane needs tmux set-clipboard on (machine has external)."
     },
     {
       "date": "2026-10-10",
