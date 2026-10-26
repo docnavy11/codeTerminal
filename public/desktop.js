@@ -28,6 +28,7 @@ let rightView = "shell";
    session moves underneath it. */
 const repaintNote = () => {
   note.textContent = rightView === "files" ? filesRoot : rightView === "manage" || rightView === "board" ? "" : TERMPANE.noteFor(rightView);
+  if (rightView === "shell") note.dataset.kind = TERMPANE.shellKind(); else delete note.dataset.kind;
 };
 PLATFORM.showView = (view) => {
   rightView = view;

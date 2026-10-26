@@ -493,6 +493,9 @@
   #pnote { flex-shrink:0; padding:3px 8px; font-size:0.75rem; color:var(--warn); cursor:pointer;
            border-bottom:1px solid var(--line); background:var(--panel);
            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Green survives a disconnect; red does not. */
+  #pnote[data-kind="tmux"] { color:var(--ok); }
+  #pnote[data-kind="plain"] { color:var(--bad); }
 
   #sessions { flex:1; min-height:0; display:flex; flex-direction:column; }
   .sbar { display:flex; align-items:center; gap:5px; padding:5px 6px; flex-shrink:0; flex-wrap:wrap;

@@ -68,7 +68,7 @@
   };
   /* "session: build · ~/projects/x". The directory is the pane's, so it is what
      the session is working on now, not where it was started. */
-  const sessionNote = () => `session: ${attachedTo}` + (attachedPath ? ` · ${shortPath(attachedPath)}` : "");
+  const sessionNote = () => `tmux: ${attachedTo}` + (attachedPath ? ` · ${shortPath(attachedPath)}` : "");
 
   /* Read the attached session's directory back from tmux and repaint if it
      moved. Quiet on failure: the note keeps the name, which is the part that
@@ -356,8 +356,12 @@
     /** What the host should put in its note line for a view it is showing. */
     noteFor(view) {
       if (view === "sessions") return "tmux sessions on this machine";
-      return attachedTo ? sessionNote() : "no approval gate";
+      // A plain shell dies with its socket, and whatever runs in it — a claude
+      // left going — dies too. Say so, so it is never mistaken for a session.
+      return attachedTo ? sessionNote() : "plain shell, not tmux: it ends when the connection drops";
     },
+    /** "tmux" or "plain", for hosts that colour the note by what survives a disconnect. */
+    shellKind() { return attachedTo ? "tmux" : "plain"; },
     /** The host tells the pane which view it just made visible. */
     showView(view) {
       // tmux knows where the session is now; the copy in hand may be old.

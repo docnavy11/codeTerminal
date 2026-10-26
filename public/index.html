@@ -193,6 +193,9 @@
      of a narrow right pane instead of shortening itself. */
   .pane-hd .warn { color:var(--warn); text-transform:none; letter-spacing:0; margin-left:auto; font-size:0.917rem;
                    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* The shell note: green survives a disconnect (tmux), red does not (plain shell). */
+  #rightnote[data-kind="tmux"] { color:var(--ok); }
+  #rightnote[data-kind="plain"] { color:var(--bad); }
 
   #grip { width:5px; cursor:col-resize; background:var(--line); flex-shrink:0; }
   #grip:hover { background:var(--accent); }

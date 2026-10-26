@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "date": "2026-10-26",
+      "status": "open",
+      "who": "owner",
+      "topic": "Claude sessions lost in terminal panes",
+      "result": "A pane not attached to tmux is a plain shell killed with its socket (src/attach.ts close); conversation 3f6f5f83 ended at 15:27:48, the same second the extension disconnected. The shell note now says 'plain shell, not tmux' in red vs 'tmux: <name>' in green. Open: owner to decide whether every pane should go into tmux automatically."
+    },
+    {
       "date": "2026-10-10",
       "status": "done",
       "topic": "Board: orphaned claims, keeper corrections and cost, richer tasks, history, blockers, auto-dispatch",

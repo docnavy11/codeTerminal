@@ -1451,7 +1451,7 @@ def test_renaming_the_attached_session_keeps_the_attachment(page, server):
 
         page.reload()
         wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
-        wait(page, f"() => document.getElementById('rightnote').textContent.startsWith('session: {renamed}')",
+        wait(page, f"() => document.getElementById('rightnote').textContent.startsWith('tmux: {renamed}')",
              what="came back to the renamed session, not a plain shell")
         wait(page, "() => document.querySelector('#term').innerText.includes('RENAME-42')",
              what="and it is the same session, with its scrollback")
@@ -1477,7 +1477,8 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         # create → attaches, and the terminal view comes forward
         page.fill("#snew", name); page.click("#screate")
         page.wait_for_function("() => !document.getElementById('term').hidden", timeout=LONG)
-        wait(page, f"() => document.getElementById('rightnote').textContent.startsWith('session: {name}')", what="header names the session")
+        wait(page, f"() => document.getElementById('rightnote').textContent.startsWith('tmux: {name}')", what="header names the session")
+        assert page.get_attribute('#rightnote', 'data-kind') == 'tmux'
         # something long-running, then leave the session entirely
         page.click("#term"); page.keyboard.type("echo MARKER-$((6*7))\n")
         wait(page, "() => document.querySelector('#term').innerText.includes('MARKER-42')", what="the session ran it")
@@ -1486,7 +1487,7 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         wait(page, "() => document.querySelector('#dot').classList.contains('on')", 30, "reconnect")
         wait(page, "() => document.querySelector('#term').innerText.includes('MARKER-42')", 30,
              "the session and its scrollback came back after the restart")
-        assert page.text_content("#rightnote").startswith(f"session: {name}")
+        assert page.text_content("#rightnote").startswith(f"tmux: {name}")
         # it is listed as attached, and killing it returns the pane to a plain shell
         page.click('.pane-hd .tab[data-view="sessions"]')
         wait(page, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="listed")
@@ -1498,7 +1499,7 @@ def test_sessions_tab_attaches_and_survives_a_restart(page, server):
         wait_stable(page, "#slist .s")
         page.click(f"#slist .s:has(.nm:text-is('{name}')) button:text-is('sure?')")
         wait(page, f"() => ![...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})", what="gone from the list")
-        wait(page, "() => document.getElementById('rightnote').textContent === 'no approval gate'", what="back to a plain shell")
+        wait(page, "() => document.getElementById('rightnote').textContent.startsWith('plain shell') && document.getElementById('rightnote').dataset.kind === 'plain'", what="back to a plain shell")
         assert page.errors == []
     finally:
         subprocess.run(["tmux", "kill-session", "-t", "=" + name], capture_output=True)
@@ -1525,7 +1526,7 @@ def test_refresh_redraws_the_terminal_without_losing_the_session(page, server):
         wait(page, "() => TERMPANE.ws && TERMPANE.ws.readyState === 1", 20, "the pane redialled")
         wait(page, "() => document.querySelector('#term').innerText.includes('REDRAW-42')", 20,
              "tmux repainted the same session, scrollback and all")
-        assert page.text_content("#rightnote").startswith(f"session: {name}")
+        assert page.text_content("#rightnote").startswith(f"tmux: {name}")
         # One client, not two: a second one would size the session to the
         # smaller window and skew the very thing the button is here to fix.
         # The old client goes away when the server notices its socket closed,
@@ -1640,7 +1641,7 @@ def test_side_panel_has_a_shell_and_the_session_chooser(ext_pages, server):
         pg.click('.tabs .tab[data-view="sessions"]')
         pg.fill("#snew", name); pg.click("#screate")
         wait(pg, "() => !document.getElementById('term').hidden", 20, "attaching brought the terminal forward")
-        wait(pg, f"() => document.getElementById('pnote').textContent.startsWith('session: {name}')",
+        wait(pg, f"() => document.getElementById('pnote').textContent.startsWith('tmux: {name}')",
              20, "the panel says which session it is in")
         pg.click('.tabs .tab[data-view="sessions"]')
         wait(pg, f"() => [...document.querySelectorAll('#slist .s .nm')].some(n => n.textContent === {name!r})",

@@ -19,7 +19,7 @@
     // Only the shell view has anything to say here: which session it is in,
     // and where that session is.
     note.hidden = view !== "shell";
-    if (view === "shell") note.textContent = TERMPANE.noteFor("shell");
+    if (view === "shell") { note.textContent = TERMPANE.noteFor("shell"); note.dataset.kind = TERMPANE.shellKind(); }
   };
 
   PLATFORM.showView = (v) => {
